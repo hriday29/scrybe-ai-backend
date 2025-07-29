@@ -178,7 +178,7 @@ def get_market_pulse():
         performance_data = data_retriever.get_nifty50_performance()
         if not performance_data:
              raise ValueError("Live market data source returned no data.")
-        df = pd.DataFrame.from_dict(performance_data, orient='index')
+        df = pd.DataFrame.from_dict(performance_data['stock_performance'], orient='index')
         nifty_history = yf.Ticker("^NSEI").history(period="35d")
         p_1d = (nifty_history['Close'].iloc[-1] / nifty_history['Close'].iloc[-2] - 1) * 100 if len(nifty_history) >= 2 else 0
         p_5d = (nifty_history['Close'].iloc[-1] / nifty_history['Close'].iloc[-6] - 1) * 100 if len(nifty_history) >= 6 else 0
