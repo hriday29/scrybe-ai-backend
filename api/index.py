@@ -8,7 +8,6 @@ import pandas_market_calendars as mcal
 import pandas as pd
 import yfinance as yf
 import os
-import threading
 
 # Import all project modules
 import database_manager
@@ -16,7 +15,6 @@ import data_retriever
 import config
 from ai_analyzer import AIAnalyzer # Import the new class
 from logger_config import log
-import run_daily_jobs
 
 from flask import request
 from flask_limiter import Limiter
@@ -361,26 +359,6 @@ def submit_faq_question():
     except Exception as e:
         log.error(f"Error submitting FAQ question: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred."}), 500
-
-@app.route('/api/trigger-job/<string:secret_key>', methods=['GET'])
-def trigger_daily_job(secret_key):
-    """A secret endpoint to be triggered by an external cron service."""
-    # --- MODIFICATION START ---
-    # Fetch the secret key from an environment variable for security
-    CRON_SECRET = os.getenv('CRON_SECRET_KEY')
-    # --- MODIFICATION END ---
-
-    if not CRON_SECRET or secret_key != CRON_SECRET:
-        log.warning("Unauthorized attempt to trigger cron job.")
-        return jsonify({"error": "Unauthorized"}), 401
-
-    # Run the long analysis job in a background thread
-    # This allows the API to respond immediately without timing out
-    thread = threading.Thread(target=run_daily_jobs.run_all_jobs)
-    thread.start()
-
-    log.info("--- ✅ Daily job triggered successfully by external cron ---")
-    return jsonify({"status": "success", "message": "Daily analysis job started."}), 200
 
 if __name__ == '__main__':
     log.info("Initializing default database connection...")
