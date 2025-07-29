@@ -11,6 +11,7 @@ import technical_analyzer
 from live_reporter import generate_performance_report
 import uuid
 from notifier import send_daily_briefing
+from index_manager import get_nifty50_tickers
 
 def manage_open_trades():
     """
@@ -173,7 +174,17 @@ def run_all_jobs():
     
     new_signals = [] 
 
-    for ticker in config.FOCUS_STOCKS:
+    # --- MODIFICATION START ---
+    log.info("--- fetching Nifty 50 tickers for analysis ---")
+    nifty50_tickers = get_nifty50_tickers()
+
+    if not nifty50_tickers:
+        log.fatal("Could not fetch Nifty 50 tickers. Aborting analysis.")
+        return
+
+    log.info(f"--- Starting analysis for {len(nifty50_tickers)} tickers ---")
+    for ticker in nifty50_tickers: # This line is now modified
+    # --- MODIFICATION END ---
         vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime)
         
         if not vst_analysis or not _validate_analysis_output(vst_analysis, ticker) or not _validate_trade_plan(vst_analysis):
@@ -216,7 +227,6 @@ def run_all_jobs():
     generate_performance_report()
 
     send_daily_briefing(new_signals, closed_trades)
-
 
 if __name__ == "__main__":
     run_all_jobs()

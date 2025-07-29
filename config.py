@@ -21,15 +21,6 @@ else:
 PRO_MODEL = 'gemini-2.5-pro'
 FLASH_MODEL = 'gemini-2.5-flash'
 
-# --- Stock Universe ---
-# # A diverse list for robust testing.
-
-# In config.py
-FOCUS_STOCKS = [
-    "RELIANCE.NS", 
-    "INFY.NS"
-]
-
 VST_STRATEGY = {
     'name': 'VST',
     'horizon_text': 'Very Short-Term (1-5 Days)',
