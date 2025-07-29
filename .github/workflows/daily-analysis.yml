@@ -1,0 +1,34 @@
+name: Daily Stock Analysis
+
+on:
+  # This schedule runs the job automatically every day
+  schedule:
+    # Runs at 15:30 UTC, which is 9:00 PM IST
+    - cron: '30 15 * * *'
+  
+  # This line adds a manual "Run workflow" button on GitHub
+  workflow_dispatch:
+
+jobs:
+  run-analysis:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the daily analysis script
+        # This section securely passes your GitHub Secrets to the script
+        env:
+          ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
+          SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          MARKETAUX_API_KEY: ${{ secrets.MARKETAUX_API_KEY }}
+        run: python run_daily_jobs.py
