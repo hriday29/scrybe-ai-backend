@@ -1,8 +1,0 @@
-Flask
-Flask-CORS
-Flask-Limiter
-pymongo
-python-dotenv
-certifi
-google-generativeai
-yfinance
