@@ -451,14 +451,13 @@ def get_social_sentiment(ticker_symbol: str):
 
 def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
     """
-    Fetches news using a definitive 3-step intelligent fallback system.
-    Returns a dictionary containing the articles and their context type.
+    Fetches news using a 2-step fallback: yfinance and then MarketAux.
     """
-    log.info(f"[FETCH] Running FINAL 3-step Intelligent Fetch for {ticker_symbol}...")
-    
+    log.info(f"[FETCH] Running news fetch for {ticker_symbol}...")
+
     # --- Attempt 1: yfinance (Highest Relevance) ---
     try:
-        log.info("--> News Fetch Attempt 1: yfinance ticker-specific news...")
+        log.info("--> News Fetch Attempt 1: yfinance...")
         ticker = yf.Ticker(ticker_symbol)
         news_list = ticker.news
         if news_list:
@@ -471,48 +470,34 @@ def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
             log.info("--> Success on Attempt 1: Found news via yfinance.")
             return {"type": "Ticker-Specific News", "articles": formatted_articles[:8]}
     except Exception:
-        log.warning(f"--> yfinance news fetch failed for {ticker_symbol}.")
+        log.warning(f"--> yfinance news fetch failed for {ticker_symbol}. Trying fallback.")
 
-    # --- Attempt 2: NewsAPI Ticker Search (Good Relevance) ---
-    query = ticker_symbol.split('.')[0]
-    if config.NEWS_API_KEY:
+    # --- Attempt 2: MarketAux (Reliable Fallback) ---
+    api_key = config.MARKETAUX_API_KEY # Make sure to add MARKETAUX_API_KEY to your config.py
+    if api_key:
         try:
-            log.info("--> News Fetch Attempt 2: NewsAPI ticker-specific search...")
-            url = f"https://newsapi.org/v2/top-headlines?q={query}&country=in&category=business&apiKey={config.NEWS_API_KEY}"
+            log.info("--> News Fetch Attempt 2: MarketAux...")
+            # Clean the ticker for the API call (e.g., "RELIANCE.NS" -> "RELIANCE")
+            query = ticker_symbol.split('.')[0]
+            url = f"https://api.marketaux.com/v1/news/all?symbols={query}&language=en&api_token={api_key}"
+
             response = requests.get(url, timeout=10)
             response.raise_for_status()
-            articles = response.json().get('articles', [])
-            if articles:
-                formatted_articles = [{
-                    "title": article.get('title'), "url": article.get('url'),
-                    "source_name": article.get('source', {}).get('name'),
-                    "published_at": article.get('publishedAt'), "description": article.get('description')
-                } for article in articles]
-                log.info("--> Success on Attempt 2: Found news via NewsAPI ticker search.")
-                return {"type": "Ticker-Specific News", "articles": formatted_articles}
-        except Exception:
-            log.warning(f"--> NewsAPI ticker search failed for {ticker_symbol}.")
+            articles = response.json().get('data', [])
 
-    # --- Attempt 3: NewsAPI Broader Search (Reliable Safety Net) ---
-    if config.NEWS_API_KEY:
-        try:
-            log.warning("--> No specific news found. Falling back to broader '/everything' search.")
-            # This query is broader but still tries to be relevant
-            everything_query = f'"{query}" AND (stock OR shares OR market)'
-            url = f"https://newsapi.org/v2/everything?q={everything_query}&language=en&sortBy=publishedAt&apiKey={config.NEWS_API_KEY}"
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            articles = response.json().get('articles', [])
             if articles:
+                # Reformat the articles to match what the frontend expects
                 formatted_articles = [{
-                    "title": article.get('title'), "url": article.get('url'),
-                    "source_name": article.get('source', {}).get('name'),
-                    "published_at": article.get('publishedAt'), "description": article.get('description')
+                    "title": article.get('title'),
+                    "url": article.get('url'),
+                    "source_name": article.get('source'),
+                    "published_at": article.get('published_at'),
+                    "description": article.get('description')
                 } for article in articles]
-                log.info("--> Success on Attempt 3: Found news via broad fallback search.")
-                return {"type": "Related Market News", "articles": formatted_articles[:8]}
-        except Exception:
-            log.error(f"--> NewsAPI general fallback failed for {ticker_symbol}.")
+                log.info("--> Success on Attempt 2: Found news via MarketAux.")
+                return {"type": "Related Market News", "articles": formatted_articles[:5]} # Limit to 5 articles
+        except Exception as e:
+            log.error(f"--> MarketAux news fetch failed for {ticker_symbol}. Error: {e}")
 
     # Final fallback if all else fails
     return {"type": "No News Found", "articles": []}
