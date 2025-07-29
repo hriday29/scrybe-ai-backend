@@ -1,0 +1,92 @@
+# config.py
+
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+# --- Database & API Keys ---
+ANALYSIS_DB_URI = os.getenv("ANALYSIS_DB_URI")
+SCHEDULER_DB_URI = os.getenv("SCHEDULER_DB_URI")
+GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
+NEWS_API_KEY = os.getenv("NEWS_API_KEY")
+
+if not all([ANALYSIS_DB_URI, SCHEDULER_DB_URI, GEMINI_API_KEY]):
+    print("⚠️  Warning: One or more environment variables (DB URIs, API Key) are missing.")
+else:
+    print("✅ Secure configuration loaded successfully for both databases.")
+
+# --- Models ---
+PRO_MODEL = 'gemini-2.5-pro'
+FLASH_MODEL = 'gemini-2.5-flash'
+
+# --- Stock Universe ---
+# # A diverse list for robust testing.
+
+# In config.py
+FOCUS_STOCKS = [
+    "RELIANCE.NS", 
+    "INFY.NS"
+]
+
+VST_STRATEGY = {
+    'name': 'VST',
+    'horizon_text': 'Very Short-Term (1-5 Days)',
+    'holding_period': 5,
+    'min_rr_ratio': 1.5
+}
+
+# --- Market Index Analysis Config ---
+# Tickers are from Yahoo Finance
+INDEX_LIST = {
+    # --- Major Broad-Based Indices ---
+    "NIFTY 50": "^NSEI",
+    "SENSEX": "^BSESN",
+    "NIFTY Next 50": "^CNXNXT",
+    "NIFTY 100": "^CNX100",
+    "NIFTY 500": "NIFTY500.NS",
+    "NIFTY Midcap 100": "^CNXMIDCAP",
+    "NIFTY Smallcap 100": "NIFTY_SMALCAP_100.NS",
+    "NIFTY MidSmallcap 400": "NIFTY_MIDSML_400.NS",
+
+    # --- Key Sectoral Indices ---
+    "NIFTY Bank": "^NSEBANK",
+    "NIFTY Financial Services": "NIFTY_FIN_SERVICE.NS",
+    "NIFTY IT": "^CNXIT",
+    "NIFTY Auto": "^CNXAUTO",
+    "NIFTY Pharma": "^CNXPHARMA",
+    "NIFTY FMCG": "^CNXFMCG",
+    "NIFTY Metal": "^CNXMETAL",
+    "NIFTY PSU Bank": "^CNXPSUBANK",
+    "NIFTY Private Bank": "NIFTY_PRIVATEBANK.NS",
+    "NIFTY Oil & Gas": "NIFTY_OIL_AND_GAS.NS",
+
+    # --- Thematic & Strategy Indices ---
+    "NIFTY India Consumption": "^CNXCONSUM",
+    "NIFTY50 Equal Weight": "NIFTY50_EQL_WGT.NS",
+    "NIFTY Alpha 50": "NIFTY_ALPHA_50.NS",
+    "NIFTY Low Volatility 50": "NIFTY_LOW_VOL_50.NS",
+    "NIFTY High Beta 50": "NIFTY_HIGH_BETA_50.NS",
+    "NIFTY Quality 30": "NIFTY_QUALITY_30.NS",
+
+    # --- BSE Indices ---
+    "BSE MidCap": "^BSEMD",
+    "BSE SmallCap": "^BSESM",
+    "BSE Healthcare": "^BSEHC",
+    "BSE FMCG": "^BSEFMC",
+}
+
+VOLUME_SURGE_THRESHOLD = 1.2 # Represents a 20% surge
+ADX_THRESHOLD = 25
+TRADE_EXPIRY_DAYS = 7
+
+BACKTEST_CONFIG = {
+    # Brokerage: e.g., 0.05% per side (buy and sell)
+    "brokerage_pct": 0.05,
+    # Slippage: Estimated price difference due to order execution speed
+    "slippage_pct": 0.02,
+    # STT: Securities Transaction Tax on delivery sell trades
+    "stt_pct": 0.1
+}
+
+BETA_TESTER_EMAILS = ["vighriday@gmail.com"]
