@@ -21,13 +21,10 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
 app = Flask(__name__)
-@app.after_request
-def after_request(response):
-    # Allowed origins can be a specific domain or '*' for public
-    response.headers.add('Access-Control-Allow-Origin', 'https://scrybeai.pages.dev')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
-    return response
+# Get the frontend URL from an environment variable
+frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000') 
+# Initialize CORS with the frontend URL
+CORS(app, resources={r"/api/*": {"origins": frontend_url}})
 
 limiter = Limiter(
     get_remote_address,
