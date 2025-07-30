@@ -20,6 +20,9 @@ from flask import request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
+stock_list_cache = None
+stock_list_cache_timestamp = None
+
 app = Flask(__name__)
 # Get the frontend URL from an environment variable
 frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000') 
@@ -97,13 +100,27 @@ def get_open_trades_endpoint():
 @app.route('/api/stock-list', methods=['GET'])
 def get_stock_list():
     log.info("API call received for /api/stock-list")
+
+    global stock_list_cache, stock_list_cache_timestamp
+
+    # Cache is valid for 1 hour
+    if stock_list_cache and stock_list_cache_timestamp and (datetime.now() - stock_list_cache_timestamp).total_seconds() < 3600:
+        log.info("Serving stock list from cache.")
+        return jsonify(stock_list_cache)
+
+    log.info("Generating new stock list from DB.")
     try:
         database_manager.init_db(purpose='analysis')
         projection = {"ticker": 1, "companyName": 1, "_id": 0}
         stock_list = list(database_manager.analysis_results_collection.find({}, projection))
         if not stock_list:
             return jsonify([])
+
         stock_list.sort(key=lambda x: x.get('companyName', ''))
+
+        stock_list_cache = stock_list
+        stock_list_cache_timestamp = datetime.now()
+
         return jsonify(stock_list)
     except Exception as e:
         log.error(f"Failed to fetch stock list: {e}", exc_info=True)
