@@ -377,6 +377,17 @@ def submit_faq_question():
         log.error(f"Error submitting FAQ question: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred."}), 500
 
+@app.route('/api/all-analysis', methods=['GET'])
+def get_all_analysis():
+    log.info("API call received for /api/all-analysis")
+    try:
+        database_manager.init_db(purpose='analysis')
+        results = list(database_manager.analysis_results_collection.find({}))
+        return Response(json.dumps(results, default=custom_json_serializer), mimetype='application/json')
+    except Exception as e:
+        log.error(f"Failed to fetch all analysis: {e}", exc_info=True)
+        return jsonify({"error": "Could not retrieve all analysis data."}), 500
+    
 if __name__ == '__main__':
     log.info("Initializing default database connection...")
     database_manager.init_db(purpose='analysis')

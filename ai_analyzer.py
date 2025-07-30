@@ -97,7 +97,9 @@ class AIAnalyzer:
     * **Risk/Reward:** The calculated Risk/Reward Ratio MUST be at least **{min_rr_ratio}**. If it fails this final check, the signal MUST be 'HOLD'.
     * **HOLD Signal Logic:** If the signal is 'HOLD' because the price is far from your ideal entry, the `reasonForHold` must state this clearly.
 
-    * **CRITICAL 'HOLD' RULE:** If the final signal is 'HOLD', you MUST set both the `price` AND `rationale` fields within `entryPrice`, `target`, and `stopLoss` to "N/A". The `tradePlan` must not contain any valid plan details. All reasoning must go into the `reasonForHold` field.
+    * **CRITICAL 'HOLD' RULE:** If the final signal is 'HOLD', you MUST provide a concise, actionable reason in the `reasonForHold` field. This reason is critical. It must explain to the user which specific condition was not met. 
+  * **Examples:** 'Waiting for a stronger trend (ADX is below 25)', 'Lacks volume confirmation for a breakout', 'Current price offers a poor Risk/Reward ratio', or 'Stock is trading in a choppy, sideways range'.
+  * You MUST also set all fields within `tradePlan` (price, rationale, etc.) to "N/A".
 
     **7. Final Verdict & Synthesis (The Final Call):**
     * Synthesize all five layers into your final `analystVerdict` and `keyInsight`.
