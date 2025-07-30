@@ -101,6 +101,8 @@ class AIAnalyzer:
   * **Examples:** 'Waiting for a stronger trend (ADX is below 25)', 'Lacks volume confirmation for a breakout', 'Current price offers a poor Risk/Reward ratio', or 'Stock is trading in a choppy, sideways range'.
   * You MUST also set all fields within `tradePlan` (price, rationale, etc.) to "N/A".
 
+  * **"On Radar" Logic:** After your full analysis, you must set the `isOnRadar` boolean. If the signal is 'BUY' or 'SELL', set it to `false`. If the signal is 'HOLD', set `isOnRadar` to `true` ONLY if the stock is very close to meeting all criteria for a signal (e.g., it only failed one of the key checks like volume or ADX). If the stock is in a clear, low-potential sideways chop, set `isOnRadar` to `false`.
+
     **7. Final Verdict & Synthesis (The Final Call):**
     * Synthesize all five layers into your final `analystVerdict` and `keyInsight`.
     * Assign your final **Signal** and **Confidence Score**. A 'Very High' score requires perfect alignment across all six layers.
@@ -114,11 +116,12 @@ class AIAnalyzer:
                 "analystVerdict": {"type": "STRING"},
                 "reasonForHold": {"type": "STRING"},
                 "keyInsight": {"type": "STRING"},
+                "isOnRadar": {"type": "BOOLEAN"},
                 "bullAndBearAnalysis": {"type": "OBJECT", "properties": {"bullCase": {"type": "STRING"}, "bearCase": {"type": "STRING"}}, "required": ["bullCase", "bearCase"]},
                 "technicalBreakdown": { "type": "OBJECT", "properties": { "ADX": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "RSI": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "MACD": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Chart Pattern": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["ADX", "RSI", "MACD", "Chart Pattern"]},
                 "fundamentalBreakdown": { "type": "OBJECT", "properties": { "Valuation": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Profitability": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Ownership": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["Valuation", "Profitability", "Ownership"]},
                 "tradePlan": {"type": "OBJECT", "properties": {"timeframe": {"type": "STRING"}, "strategy": {"type": "STRING"}, "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "target": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "riskRewardRatio": {"type": "STRING"}}, "required": ["timeframe", "strategy", "entryPrice", "target", "stopLoss", "riskRewardRatio"]},
-            }, "required": ["signal", "confidence", "analystVerdict", "keyInsight", "bullAndBearAnalysis", "technicalBreakdown", "fundamentalBreakdown", "tradePlan"]
+            }, "required": ["signal", "confidence", "analystVerdict", "reasonForHold", "isOnRadar", "keyInsight", "bullAndBearAnalysis", "technicalBreakdown", "fundamentalBreakdown", "tradePlan"]
         }
 
         generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema, max_output_tokens=16384)
