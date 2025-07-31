@@ -22,6 +22,8 @@ from flask_limiter.util import get_remote_address
 
 stock_list_cache = None
 stock_list_cache_timestamp = None
+all_analysis_cache = None
+all_analysis_cache_timestamp = None
 
 app = Flask(__name__)
 # Get the frontend URL from an environment variable
@@ -380,9 +382,23 @@ def submit_faq_question():
 @app.route('/api/all-analysis', methods=['GET'])
 def get_all_analysis():
     log.info("API call received for /api/all-analysis")
+
+    global all_analysis_cache, all_analysis_cache_timestamp
+
+    # Cache is valid for 15 minutes (900 seconds)
+    if all_analysis_cache and all_analysis_cache_timestamp and (datetime.now() - all_analysis_cache_timestamp).total_seconds() < 900:
+        log.info("Serving all analysis data from cache.")
+        return Response(json.dumps(all_analysis_cache, default=custom_json_serializer), mimetype='application/json')
+
+    log.info("Generating new all analysis data from DB.")
     try:
         database_manager.init_db(purpose='analysis')
         results = list(database_manager.analysis_results_collection.find({}))
+
+        # Update cache
+        all_analysis_cache = results
+        all_analysis_cache_timestamp = datetime.now()
+
         return Response(json.dumps(results, default=custom_json_serializer), mimetype='application/json')
     except Exception as e:
         log.error(f"Failed to fetch all analysis: {e}", exc_info=True)
