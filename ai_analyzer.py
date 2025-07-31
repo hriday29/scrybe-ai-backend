@@ -136,12 +136,18 @@ class AIAnalyzer:
                     image_part = {"mime_type": "image/png", "data": base64.b64decode(charts[key])}
                     prompt_parts.append(image_part)
         
-        try:
-            response = model.generate_content(prompt_parts, request_options={"timeout": 180})
-            return json.loads(response.text)
-        except Exception as e:
-            log.error(f"AI Scrybe Score generation failed for {live_financial_data['rawDataSheet'].get('symbol', '')}. Error: {e}")
-            return None
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                response = model.generate_content(prompt_parts, request_options={"timeout": 180})
+                return json.loads(response.text) # If successful, return the result and exit the loop
+            except Exception as e:
+                log.warning(f"AI call attempt {attempt + 1} failed for {live_financial_data['rawDataSheet'].get('symbol', '')}. Error: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(5) # Wait 5 seconds before retrying
+                else:
+                    log.error(f"AI Scrybe Score generation failed after {max_retries} attempts.")
+                    return None # If all retries fail, return None
     
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """

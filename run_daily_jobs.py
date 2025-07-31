@@ -221,7 +221,7 @@ def run_all_jobs():
             log.info(f"Signal for {ticker} is 'HOLD'. No active trade will be set.")
             database_manager.set_active_trade(ticker, None)
         
-        time.sleep(5)
+        time.sleep(10)
 
     log.info("--- ✅ All daily jobs finished ---")
     generate_performance_report()
