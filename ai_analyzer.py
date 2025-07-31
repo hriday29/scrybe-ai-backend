@@ -256,7 +256,7 @@ class AIAnalyzer:
             """
             
             generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
-            model = genai.GenerativeModel(config.PRO_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+            model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
             
             try:
                 response = model.generate_content(prompt, request_options={"timeout": 120})
@@ -333,7 +333,7 @@ class AIAnalyzer:
                 f"Technical Indicators: {json.dumps(technical_indicators)}"
             ]
             generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
-            model = genai.GenerativeModel(config.PRO_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+            model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
             
             response = model.generate_content(prompt_parts)
             return json.loads(response.text)
