@@ -84,23 +84,31 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
         return None
 
 def get_live_financial_data(ticker_symbol: str):
-    """Fetches curated live financial data."""
+    """Fetches curated live financial data, now with more detail for DVM scores."""
     log.info(f"Fetching all live financial data for {ticker_symbol}...")
     try:
         ticker = yf.Ticker(ticker_symbol)
         raw_info = ticker.info
+        
+        # Expanded list of curated data points
         curated_data = {
             "currentPrice": raw_info.get("currentPrice", raw_info.get("previousClose")),
             "trailingPE": raw_info.get("trailingPE"),
             "priceToBook": raw_info.get("priceToBook"),
             "profitMargins": raw_info.get("profitMargins"),
-            "heldPercentInstitutions": raw_info.get("heldPercentInstitutions")
+            "heldPercentInstitutions": raw_info.get("heldPercentInstitutions"),
+            "returnOnEquity": raw_info.get("returnOnEquity"),
+            "debtToEquity": raw_info.get("debtToEquity"),
+            "totalCash": raw_info.get("totalCash"),
         }
+
         if curated_data["currentPrice"] is None:
             log.error(f"No price data available for {ticker_symbol}.")
             return None
+            
         log.info(f"Successfully fetched all live financial data for {ticker_symbol}.")
         return {"curatedData": curated_data, "rawDataSheet": raw_info}
+        
     except Exception as e:
         log.error(f"Error fetching live financial data for {ticker_symbol}: {e}")
         return None

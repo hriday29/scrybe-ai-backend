@@ -61,76 +61,70 @@ class AIAnalyzer:
     
     def get_stock_analysis(self, live_financial_data: dict, latest_atr: float, model_name: str, charts: dict, trading_horizon_text: str, technical_indicators: dict, min_rr_ratio: float, market_context: dict, options_data: dict) -> dict:
         """
-        Generates a trade analysis using the final, multi-layer VST Pro prompt with Sector and Options analysis.
+        Generates a trade analysis using a bipolar "Scrybe Score" from -100 to +100 and ATR-based risk management.
         """
-        log.info(f"Generating analysis for {live_financial_data['rawDataSheet'].get('symbol', '')} with horizon: {trading_horizon_text}")
+        log.info(f"Generating Immaculate Scrybe Score for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
 
-        definitive_swing_trading_prompt = f"""
-    You are "Scrybe-Oracle," the Head of Quantitative Strategy at a prestigious investment firm. Your task is to produce institutional-grade trade analysis by following a disciplined, multi-layered protocol. Your reputation depends on it. The desired trading horizon is: **{trading_horizon_text}**.
+        definitive_scoring_prompt = f"""
+        You are "Scrybe-Oracle," a world-class quantitative analyst. Your primary task is to produce an objective, data-driven "Scrybe Score" for a stock on a bipolar scale from -100 (a perfect, high-conviction short setup) to +100 (a perfect, high-conviction long setup). Your analysis must be unemotional and strictly follow the protocol.
 
-    **Your Seven-Layer Analysis Protocol:**
-    **1. Market Regime Filter (Most Important Rule):**
-    * First, check the `CURRENT_MARKET_REGIME` provided in the MARKET CONTEXT data.
-    * **CRITICAL RULE: Trade with the Regime.** Your analysis must be heavily influenced by the overall market regime.
-    * In a **'Bearish'** regime, `BUY` signals are forbidden unless the technical and fundamental setup is a **textbook-perfect, exceptionally strong case**. You must explicitly justify why this specific setup is powerful enough to overcome the negative market-wide trend in your `analystVerdict`.
-    * In a **'Bullish'** regime, `SELL` signals are strongly discouraged and require a similar level of overwhelming evidence to be considered.
-    * In a **'Neutral'** regime, prioritize signals with 'High' or 'Very High' confidence.
+        **Primary Output: The "Scrybe Score" (-100 to +100)**
+        This score is your most important output. It must reflect the holistic quality of the trading setup.
+        * **+75 to +100:** Represents a high-conviction BUY signal.
+        * **+50 to +74:** Represents a moderate-conviction BUY signal.
+        * **-49 to +49:** Represents a HOLD signal. The evidence is mixed, weak, risk is unfavorable, or there is no discernible edge.
+        * **-50 to -74:** Represents a moderate-conviction SELL (short) signal.
+        * **-75 to -100:** Represents a high-conviction SELL (short) signal.
 
-    **2. Sector & Market Context (The Top-Down View):**
-    * First, analyze the provided **Sector Performance data**.
-    * **CRITICAL RULE:** A 'BUY' signal is STRONGLY DISCOURAGED if the stock's sector is one of the day's worst performers. A 'SELL' signal is STRONGLY DISCOURAGED if the sector is a top performer. You must justify your decision in the `analystVerdict` based on this context.
+        **Your Scoring Protocol (The 7 Layers of Analysis):**
+        You must evaluate all seven layers to generate your final score.
 
-    **3. Sentiment Analysis (The Options Market View):**
-    * Next, analyze the provided **Options Chain data**.
-    * **CRITICAL RULE:** A high Put-Call Ratio (PCR) often signals bearish sentiment, while a low PCR signals bullish sentiment. High Implied Volatility (IV) suggests fear or uncertainty. A 'BUY' signal against very bearish options data requires extreme technical conviction.
-
-    **4. Fundamental Context (The Company View):**
-    * Assess the stock's fundamentals from the provided data. This will inform your Bull & Bear cases and the `fundamentalBreakdown` section.
-
-    **5. Technical Deep-Dive (The Core Thesis):**
-    * If the context and sentiment are favorable, proceed to the technicals.
-    * **Trend & Pattern:** Identify the primary trend and chart pattern.
-    * **Confirmation:** The setup MUST be confirmed by a strong trend (**ADX > {config.ADX_THRESHOLD}**) AND a significant **Volume Surge**. If either of these is missing, the signal MUST be 'HOLD'.
-
-    **6. Risk Assessment & Trade Planning (The Execution Plan):**
-    * If all prior conditions are met, formulate the `tradePlan`.
-    * **Risk/Reward:** The calculated Risk/Reward Ratio MUST be at least **{min_rr_ratio}**. If it fails this final check, the signal MUST be 'HOLD'.
-    * **HOLD Signal Logic:** If the signal is 'HOLD' because the price is far from your ideal entry, the `reasonForHold` must state this clearly.
-
-    * **CRITICAL 'HOLD' RULE:** If the final signal is 'HOLD', you MUST provide a concise, actionable reason in the `reasonForHold` field. This reason is critical. It must explain to the user which specific condition was not met. 
-  * **Examples:** 'Waiting for a stronger trend (ADX is below 25)', 'Lacks volume confirmation for a breakout', 'Current price offers a poor Risk/Reward ratio', or 'Stock is trading in a choppy, sideways range'.
-  * You MUST also set all fields within `tradePlan` (price, rationale, etc.) to "N/A".
-
-  * **"On Radar" Logic:** After your full analysis, you must set the `isOnRadar` boolean. If the signal is 'BUY' or 'SELL', set it to `false`. If the signal is 'HOLD', set `isOnRadar` to `true` ONLY if the stock is very close to meeting all criteria for a signal (e.g., it only failed one of the key checks like volume or ADX). If the stock is in a clear, low-potential sideways chop, set `isOnRadar` to `false`.
-
-    **7. Final Verdict & Synthesis (The Final Call):**
-    * Synthesize all five layers into your final `analystVerdict` and `keyInsight`.
-    * Assign your final **Signal** and **Confidence Score**. A 'Very High' score requires perfect alignment across all six layers.
-    """
+        1.  **Market & Sector Context (Weight: 30%):** A stock fighting a bearish market regime cannot receive a high positive score. A stock in a bullish market gets a significant boost.
+        2.  **Sector Strength (Weight: 10%):** A stock in a weak sector receives a penalty to its score, while a stock in a strong sector gets a small bonus.
+        3.  **Sentiment Analysis (Weight: 10%):** Bearish options data negatively impacts the score. Bullish sentiment has a positive impact.
+        4.  **Fundamental Context (Weight: 15%):** Strong fundamentals provide a positive contribution to the score. Weak fundamentals are a penalty.
+        5.  **Technical Deep-Dive (Weight: 25%):** For a high score, the setup MUST be confirmed by a strong trend (ADX > {config.ADX_THRESHOLD}) AND a significant Volume Surge. Lack of these confirmations must pull the score significantly toward zero.
         
-        # The output_schema remains the same, no changes needed there
+        **6. Risk Assessment & Data-Driven Trade Plan (Weight: 10%):**
+        * **CRITICAL RISK RULE:** Your `tradePlan` must not be arbitrary. You MUST use the provided `CURRENT_VOLATILITY_ATR` to calculate your `stopLoss`. A standard professional method is to place the `stopLoss` approximately 2 times the ATR away from the entry price (e.g., `entry - 2*ATR` for a BUY).
+        * Your `target` must then be calculated to meet the required `Risk/Reward` ratio of at least {min_rr_ratio}.
+        * Your `rationale` for both stop-loss and target must state that they are ATR-based. A poor R/R ratio must result in a significant penalty to the final score.
+        
+        **7. Final JSON Output Instructions:**
+        * After calculating the score, you must fill out all other fields.
+        * Your `analystVerdict` must justify the final score, referencing how the layers above contributed.
+        * The `signal` (BUY/SELL/HOLD) MUST be derived logically from the `scrybeScore`.
+        * The `confidence` must reflect the magnitude of the `scrybeScore` (e.g., a score of +/- 85 is 'High' confidence).
+        * If the signal is 'HOLD', the `reasonForHold` must explain the primary factor that kept the score in the neutral zone.
+        * The `isOnRadar` boolean should be `true` for scores between 50-74 and -50 to -74, and `false` for all others.
+        * You must still populate all detailed breakdown objects (`technicalBreakdown`, `fundamentalBreakdown`, etc.).
+        """
+        
         output_schema = {
             "type": "OBJECT", "properties": {
+                "scrybeScore": {"type": "NUMBER"},
                 "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
                 "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]},
                 "analystVerdict": {"type": "STRING"},
                 "reasonForHold": {"type": "STRING"},
+                "isOnRadar": {"type": "BOOLEAN"},
                 "keyInsight": {"type": "STRING"},
                 "isOnRadar": {"type": "BOOLEAN"},
                 "bullAndBearAnalysis": {"type": "OBJECT", "properties": {"bullCase": {"type": "STRING"}, "bearCase": {"type": "STRING"}}, "required": ["bullCase", "bearCase"]},
                 "technicalBreakdown": { "type": "OBJECT", "properties": { "ADX": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "RSI": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "MACD": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Chart Pattern": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["ADX", "RSI", "MACD", "Chart Pattern"]},
                 "fundamentalBreakdown": { "type": "OBJECT", "properties": { "Valuation": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Profitability": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Ownership": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["Valuation", "Profitability", "Ownership"]},
                 "tradePlan": {"type": "OBJECT", "properties": {"timeframe": {"type": "STRING"}, "strategy": {"type": "STRING"}, "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "target": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "riskRewardRatio": {"type": "STRING"}}, "required": ["timeframe", "strategy", "entryPrice", "target", "stopLoss", "riskRewardRatio"]},
-            }, "required": ["signal", "confidence", "analystVerdict", "reasonForHold", "isOnRadar", "keyInsight", "bullAndBearAnalysis", "technicalBreakdown", "fundamentalBreakdown", "tradePlan"]
+            }, 
+            "required": ["scrybeScore", "signal", "confidence", "analystVerdict", "reasonForHold", "isOnRadar", "keyInsight", "bullAndBearAnalysis", "technicalBreakdown", "fundamentalBreakdown", "tradePlan"]
         }
 
         generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema, max_output_tokens=16384)
-        model = genai.GenerativeModel(model_name, system_instruction=definitive_swing_trading_prompt, generation_config=generation_config)
+        model = genai.GenerativeModel(model_name, system_instruction=definitive_scoring_prompt, generation_config=generation_config)
         
         prompt_parts = [
-            "Please populate all fields of the required JSON object with a detailed analysis based on all the data provided.",
+            "Please generate a 'Scrybe Score' and the complete JSON analysis based on all the provided data and your scoring protocol.",
             f"MARKET CONTEXT: {json.dumps(market_context)}",
-            f"OPTIONS SENTIMENT: {json.dumps(options_data)}", # Add the new options data
+            f"OPTIONS SENTIMENT: {json.dumps(options_data)}",
             f"CURRENT_VOLATILITY_ATR: {latest_atr:.2f}",
             f"Financial Data Snapshot: {json.dumps(live_financial_data['curatedData'])}",
             f"Key Technical Indicators: {json.dumps(technical_indicators)}"
@@ -146,7 +140,7 @@ class AIAnalyzer:
             response = model.generate_content(prompt_parts, request_options={"timeout": 180})
             return json.loads(response.text)
         except Exception as e:
-            log.error(f"AI stock analysis call failed for {live_financial_data['rawDataSheet'].get('symbol', '')}. Error: {e}")
+            log.error(f"AI Scrybe Score generation failed for {live_financial_data['rawDataSheet'].get('symbol', '')}. Error: {e}")
             return None
     
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
@@ -262,7 +256,7 @@ class AIAnalyzer:
             """
             
             generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
-            model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+            model = genai.GenerativeModel(config.PRO_MODEL, system_instruction=system_instruction, generation_config=generation_config)
             
             try:
                 response = model.generate_content(prompt, request_options={"timeout": 120})
@@ -339,7 +333,7 @@ class AIAnalyzer:
                 f"Technical Indicators: {json.dumps(technical_indicators)}"
             ]
             generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
-            model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+            model = genai.GenerativeModel(config.PRO_MODEL, system_instruction=system_instruction, generation_config=generation_config)
             
             response = model.generate_content(prompt_parts)
             return json.loads(response.text)
