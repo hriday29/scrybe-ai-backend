@@ -97,7 +97,7 @@ class AIAnalyzer:
         * The `signal` (BUY/SELL/HOLD) MUST be derived logically from the `scrybeScore`.
         * The `confidence` must reflect the magnitude of the `scrybeScore` (e.g., a score of +/- 85 is 'High' confidence).
         * If the signal is 'HOLD', the `reasonForHold` must explain the primary factor that kept the score in the neutral zone.
-        * The `isOnRadar` boolean should be `true` for scores between 50-74 and -50 to -74, and `false` for all others.
+        * The `isOnRadar` boolean should be `true` ONLY for stocks with a 'HOLD' signal that are close to a trigger. Specifically, scores between **40 to 49** and **-40 to -49**. For all other scores, it must be `false`.
         * You must still populate all detailed breakdown objects (`technicalBreakdown`, `fundamentalBreakdown`, etc.).
         """
         
