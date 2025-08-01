@@ -14,6 +14,7 @@ MARKETAUX_API_KEY = os.getenv("MARKETAUX_API_KEY")
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
+
 if not all([ANALYSIS_DB_URI, SCHEDULER_DB_URI, GEMINI_API_KEY]):
     print("⚠️  Warning: One or more environment variables (DB URIs, API Key) are missing.")
 else:

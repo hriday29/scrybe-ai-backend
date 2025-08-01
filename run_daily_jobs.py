@@ -43,10 +43,15 @@ def manage_open_trades():
             close_price = 0
 
             # Ensure expiry_date is a timezone-aware datetime object for comparison
-            if isinstance(trade.get('expiry_date'), str):
-                 trade['expiry_date'] = datetime.fromisoformat(trade['expiry_date'])
+            expiry_date = trade.get('expiry_date')
+            if isinstance(expiry_date, str):
+                expiry_date = datetime.fromisoformat(expiry_date)
 
-            if datetime.now(timezone.utc) >= trade['expiry_date']:
+            # This is the critical fix: make sure the date from the DB is timezone-aware
+            if expiry_date and expiry_date.tzinfo is None:
+                expiry_date = expiry_date.replace(tzinfo=timezone.utc)
+
+            if expiry_date and datetime.now(timezone.utc) >= expiry_date:
                 close_reason = "Trade Closed - Expired"
                 close_price = latest_price
             elif trade['signal'] == 'BUY':
