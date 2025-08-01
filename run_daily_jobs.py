@@ -210,6 +210,7 @@ def run_all_jobs():
                     "entry_date": vst_analysis.get('prediction_date'),
                     "target": float(vst_analysis['tradePlan']['target']['price']),
                     "stop_loss": float(vst_analysis['tradePlan']['stopLoss']['price']),
+                    "risk_reward_ratio": vst_analysis['tradePlan'].get('riskRewardRatio', 'N/A'),
                     "expiry_date": datetime.now(timezone.utc) + timedelta(days=config.TRADE_EXPIRY_DAYS),
                     "confidence": vst_analysis.get('confidence')
                 }

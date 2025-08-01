@@ -5,6 +5,7 @@ from logger_config import log
 import config
 from datetime import datetime, timezone, timedelta
 import data_retriever
+from datetime import datetime, timezone
 
 # --- Global Connection Variables ---
 client = None
@@ -208,7 +209,7 @@ def clear_scheduler_data():
 
 def get_open_trades() -> list:
     """
-    Fetches all active trades and enriches them with the latest market price and P&L.
+    Fetches all active trades and enriches them with the latest market price, P&L, days held, and R/R.
     """
     if analysis_results_collection is None:
         log.error("Cannot get open trades, 'analysis' db not initialized.")
@@ -216,16 +217,14 @@ def get_open_trades() -> list:
 
     try:
         open_trades_list = []
-        # Find all documents that have an active_trade object
         trade_docs = list(analysis_results_collection.find({"active_trade": {"$ne": None}}))
 
         for doc in trade_docs:
             trade = doc['active_trade']
             ticker = doc['ticker']
 
-            # Fetch the latest price
             live_data = data_retriever.get_live_financial_data(ticker)
-            current_price = live_data['curatedData'].get('currentPrice') if live_data else None
+            current_price = live_data['curatedData'].get('currentPrice') if live_data and live_data.get('curatedData') else None
 
             if current_price is None:
                 log.warning(f"Could not fetch current price for open trade {ticker}. Skipping.")
@@ -237,6 +236,9 @@ def get_open_trades() -> list:
                 pnl_percent = ((current_price - entry_price) / entry_price) * 100
             else: # SELL
                 pnl_percent = ((entry_price - current_price) / entry_price) * 100
+            
+            # Calculate days held
+            days_held = (datetime.now(timezone.utc) - trade['entry_date']).days
 
             # Assemble the final object for the UI
             open_trades_list.append({
@@ -249,7 +251,9 @@ def get_open_trades() -> list:
                 "current_price": current_price,
                 "target": trade['target'],
                 "stop_loss": trade['stop_loss'],
+                "risk_reward_ratio": trade.get('risk_reward_ratio', 'N/A'),
                 "pnl_percent": round(pnl_percent, 2),
+                "days_held": days_held,
                 "strategy": trade.get('strategy', 'VST')
             })
             
