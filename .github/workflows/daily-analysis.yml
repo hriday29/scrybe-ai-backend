@@ -24,6 +24,9 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt
 
+      - name: Check if market is open
+        run: python check_market_open.py
+        
       - name: Run the daily analysis script
         # This section securely passes your GitHub Secrets to the script
         env:

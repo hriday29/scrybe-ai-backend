@@ -52,10 +52,14 @@ def send_daily_briefing(new_signals: list, closed_trades: list):
         html_body += "<h2>New Trade Signals</h2>"
         for signal in new_signals:
             signal_class = "buy" if signal['signal'] == 'BUY' else 'sell'
+            score = signal.get('scrybeScore', 0)
+            score_text = f"+{score}" if score > 0 else str(score)
+            
             html_body += f"""
             <div class="trade-item {signal_class}">
-              <p><strong>{signal['signal']} Signal: {signal['ticker']}</strong></p>
-              <p>Confidence: {signal['confidence']}</p>
+                <p><strong>{signal['signal']} Signal: {signal['ticker']}</strong></p>
+                <p><strong>Scrybe Score: {score_text}</strong></p>
+                <p>Confidence: {signal['confidence']}</p>
             </div>
             """
 

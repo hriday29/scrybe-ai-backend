@@ -42,7 +42,7 @@ def manage_open_trades():
             close_reason = None
             close_price = 0
 
-            # Ensure expiry_date is a timezone-aware datetime object for comparison
+            # --- DEFINITIVE FIX FOR DATETIME ERROR ---
             expiry_date = trade.get('expiry_date')
             if isinstance(expiry_date, str):
                 expiry_date = datetime.fromisoformat(expiry_date)
@@ -52,6 +52,7 @@ def manage_open_trades():
                 expiry_date = expiry_date.replace(tzinfo=timezone.utc)
 
             if expiry_date and datetime.now(timezone.utc) >= expiry_date:
+            # --- END FIX ---
                 close_reason = "Trade Closed - Expired"
                 close_price = latest_price
             elif trade['signal'] == 'BUY':
@@ -206,7 +207,8 @@ def run_all_jobs():
             new_signals.append({
                 "ticker": ticker,
                 "signal": vst_analysis.get('signal'),
-                "confidence": vst_analysis.get('confidence')
+                "confidence": vst_analysis.get('confidence'),
+                "scrybeScore": vst_analysis.get('scrybeScore')
             })
             try:
                 trade_object = {

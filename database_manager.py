@@ -237,8 +237,14 @@ def get_open_trades() -> list:
             else: # SELL
                 pnl_percent = ((entry_price - current_price) / entry_price) * 100
             
-            # Calculate days held
-            days_held = (datetime.now(timezone.utc) - trade['entry_date']).days
+            # --- DEFINITIVE FIX FOR DATETIME ERROR ---
+            entry_date = trade['entry_date']
+            # Ensure the date from the DB is timezone-aware before comparison
+            if entry_date.tzinfo is None:
+                entry_date = entry_date.replace(tzinfo=timezone.utc)
+            
+            days_held = (datetime.now(timezone.utc) - entry_date).days
+            # --- END FIX ---
 
             # Assemble the final object for the UI
             open_trades_list.append({

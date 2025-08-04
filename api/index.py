@@ -1,5 +1,5 @@
-# api.py
-from flask import Flask, jsonify, Response
+# index.py
+from flask import Flask, jsonify, Response, request
 from flask_cors import CORS
 import json
 from bson import ObjectId
@@ -7,15 +7,11 @@ from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
 import os
-
-# Import all project modules
 import database_manager
 import data_retriever
 import config
-from ai_analyzer import AIAnalyzer # Import the new class
+from ai_analyzer import AIAnalyzer
 from logger_config import log
-
-from flask import request
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 
@@ -97,35 +93,6 @@ def get_open_trades_endpoint():
     except Exception as e:
         log.error(f"Failed to fetch open trades: {e}", exc_info=True)
         return jsonify({"error": "An internal error occurred while fetching open trades."}), 500
-    
-@app.route('/api/stock-list', methods=['GET'])
-def get_stock_list():
-    log.info("API call received for /api/stock-list")
-
-    global stock_list_cache, stock_list_cache_timestamp
-
-    # Cache is valid for 1 hour
-    if stock_list_cache and stock_list_cache_timestamp and (datetime.now() - stock_list_cache_timestamp).total_seconds() < 3600:
-        log.info("Serving stock list from cache.")
-        return jsonify(stock_list_cache)
-
-    log.info("Generating new stock list from DB.")
-    try:
-        database_manager.init_db(purpose='analysis')
-        projection = {"ticker": 1, "companyName": 1, "_id": 0}
-        stock_list = list(database_manager.analysis_results_collection.find({}, projection))
-        if not stock_list:
-            return jsonify([])
-
-        stock_list.sort(key=lambda x: x.get('companyName', ''))
-
-        stock_list_cache = stock_list
-        stock_list_cache_timestamp = datetime.now()
-
-        return jsonify(stock_list)
-    except Exception as e:
-        log.error(f"Failed to fetch stock list: {e}", exc_info=True)
-        return jsonify({"error": "Could not retrieve stock list."}), 500
 
 @app.route('/api/analyze/<string:ticker>', methods=['GET'])
 def get_analysis(ticker):
