@@ -84,12 +84,13 @@ class AIAnalyzer:
         2.  **Sector Strength (Weight: 10%):** A stock in a weak sector receives a penalty to its score, while a stock in a strong sector gets a small bonus.
         3.  **Sentiment Analysis (Weight: 10%):** Bearish options data negatively impacts the score. Bullish sentiment has a positive impact.
         4.  **Fundamental Context (Weight: 15%):** Strong fundamentals provide a positive contribution to the score. Weak fundamentals are a penalty.
-        5.  **Technical Deep-Dive (Weight: 25%):** For a high score, the setup MUST be confirmed by a strong trend (ADX > {config.ADX_THRESHOLD}) AND a significant Volume Surge. Lack of these confirmations must pull the score significantly toward zero.
+        5.  **Technical Deep-Dive (Weight: 25%):** A setup that lacks a strong trend (ADX < {config.ADX_THRESHOLD}) or a significant Volume Surge should receive a major penalty to its score. A setup that has both receives a significant bonus.
         
         **6. Risk Assessment & Data-Driven Trade Plan (Weight: 10%):**
-        * **CRITICAL RISK RULE:** Your `tradePlan` must not be arbitrary. You MUST use the provided `CURRENT_VOLATILITY_ATR` to calculate your `stopLoss`. A standard professional method is to place the `stopLoss` approximately 2 times the ATR away from the entry price (e.g., `entry - 2*ATR` for a BUY).
-        * Your `target` must then be calculated to meet the required `Risk/Reward` ratio of at least {min_rr_ratio}.
-        * Your `rationale` for both stop-loss and target must state that they are ATR-based. A poor R/R ratio must result in a significant penalty to the final score.
+        * **CRITICAL RISK RULE:** Your `tradePlan` must be technically sound and data-driven.
+        * **Stop-Loss:** You MUST use the provided `CURRENT_VOLATILITY_ATR` to calculate your `stopLoss`. A standard professional method is to place the `stopLoss` approximately 2 times the ATR away from the entry price (e.g., `entry - 2*ATR` for a BUY).
+        * **Target:** Your `target` must be placed at the next logical technical level (e.g., a recent swing high/low or a key resistance/support level visible on the charts).
+        * **Final R/R Validation:** After defining your `target` and `stopLoss`, you MUST calculate the final `riskRewardRatio`. If this ratio is **below {min_rr_ratio}**, the entire setup is invalid. This must result in a significant penalty to the final `scrybeScore`, pushing it into the 'HOLD' range.
         
         **7. Final JSON Output Instructions:**
         * After calculating the score, you must fill out all other fields.
@@ -99,6 +100,8 @@ class AIAnalyzer:
         * If the signal is 'HOLD', the `reasonForHold` must explain the primary factor that kept the score in the neutral zone.
         * The `isOnRadar` boolean should be `true` ONLY for stocks with a 'HOLD' signal that are close to a trigger. Specifically, scores between **40 to 49** and **-40 to -49**. For all other scores, it must be `false`.
         * You must still populate all detailed breakdown objects (`technicalBreakdown`, `fundamentalBreakdown`, etc.).
+        * Your `technicalBreakdown` and `fundamentalBreakdown` objects must contain your detailed, objective analysis of the provided data.
+        * **CRITICAL FINAL RULE:** If the `signal` is 'HOLD', all fields within the `tradePlan` object (price, rationale, etc.) MUST be set to "N/A".
         """
         
         output_schema = {
@@ -113,7 +116,7 @@ class AIAnalyzer:
                 "bullAndBearAnalysis": {"type": "OBJECT", "properties": {"bullCase": {"type": "STRING"}, "bearCase": {"type": "STRING"}}, "required": ["bullCase", "bearCase"]},
                 "technicalBreakdown": { "type": "OBJECT", "properties": { "ADX": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "RSI": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "MACD": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Chart Pattern": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["ADX", "RSI", "MACD", "Chart Pattern"]},
                 "fundamentalBreakdown": { "type": "OBJECT", "properties": { "Valuation": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Profitability": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Ownership": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["Valuation", "Profitability", "Ownership"]},
-                "tradePlan": {"type": "OBJECT", "properties": {"timeframe": {"type": "STRING"}, "strategy": {"type": "STRING"}, "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "target": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "riskRewardRatio": {"type": "STRING"}}, "required": ["timeframe", "strategy", "entryPrice", "target", "stopLoss", "riskRewardRatio"]},
+                "tradePlan": {"type": "OBJECT", "properties": {"timeframe": {"type": "STRING"}, "strategy": {"type": "STRING"}, "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "target": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "riskRewardRatio": {"type": "NUMBER"}}, "required": ["timeframe", "strategy", "entryPrice", "target", "stopLoss", "riskRewardRatio"]},
             }, 
             "required": ["scrybeScore", "signal", "confidence", "analystVerdict", "reasonForHold", "isOnRadar", "keyInsight", "bullAndBearAnalysis", "technicalBreakdown", "fundamentalBreakdown", "tradePlan"]
         }
@@ -339,7 +342,7 @@ class AIAnalyzer:
                 f"Technical Indicators: {json.dumps(technical_indicators)}"
             ]
             generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
-            model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+            model = genai.GenerativeModel(config.PRO_MODEL, system_instruction=system_instruction, generation_config=generation_config)
             
             response = model.generate_content(prompt_parts)
             return json.loads(response.text)
