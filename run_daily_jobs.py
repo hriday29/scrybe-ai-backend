@@ -42,11 +42,17 @@ def manage_open_trades():
             close_reason = None
             close_price = 0
 
-            # Ensure expiry_date is a timezone-aware datetime object for comparison
-            if isinstance(trade.get('expiry_date'), str):
-                 trade['expiry_date'] = datetime.fromisoformat(trade['expiry_date'])
+            # --- DEFINITIVE FIX FOR DATETIME ERROR ---
+            expiry_date = trade.get('expiry_date')
+            if isinstance(expiry_date, str):
+                expiry_date = datetime.fromisoformat(expiry_date)
 
-            if datetime.now(timezone.utc) >= trade['expiry_date']:
+            # This is the critical fix: make sure the date from the DB is timezone-aware
+            if expiry_date and expiry_date.tzinfo is None:
+                expiry_date = expiry_date.replace(tzinfo=timezone.utc)
+
+            if expiry_date and datetime.now(timezone.utc) >= expiry_date:
+            # --- END FIX ---
                 close_reason = "Trade Closed - Expired"
                 close_price = latest_price
             elif trade['signal'] == 'BUY':
@@ -201,7 +207,8 @@ def run_all_jobs():
             new_signals.append({
                 "ticker": ticker,
                 "signal": vst_analysis.get('signal'),
-                "confidence": vst_analysis.get('confidence')
+                "confidence": vst_analysis.get('confidence'),
+                "scrybeScore": vst_analysis.get('scrybeScore')
             })
             try:
                 trade_object = {
@@ -210,6 +217,7 @@ def run_all_jobs():
                     "entry_date": vst_analysis.get('prediction_date'),
                     "target": float(vst_analysis['tradePlan']['target']['price']),
                     "stop_loss": float(vst_analysis['tradePlan']['stopLoss']['price']),
+                    "risk_reward_ratio": vst_analysis['tradePlan'].get('riskRewardRatio', 'N/A'),
                     "expiry_date": datetime.now(timezone.utc) + timedelta(days=config.TRADE_EXPIRY_DAYS),
                     "confidence": vst_analysis.get('confidence')
                 }
@@ -221,7 +229,7 @@ def run_all_jobs():
             log.info(f"Signal for {ticker} is 'HOLD'. No active trade will be set.")
             database_manager.set_active_trade(ticker, None)
         
-        time.sleep(5)
+        time.sleep(10)
 
     log.info("--- ✅ All daily jobs finished ---")
     generate_performance_report()

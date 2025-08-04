@@ -4,7 +4,7 @@ on:
   # This schedule runs the job automatically every day
   schedule:
     # Runs at 15:30 UTC, which is 9:00 PM IST
-    - cron: '30 15 * * *'
+    - cron: '00 14 * * *'
   
   # This line adds a manual "Run workflow" button on GitHub
   workflow_dispatch:
@@ -23,6 +23,9 @@ jobs:
 
       - name: Install dependencies
         run: pip install -r requirements.txt
+
+      - name: Check if market is open
+        run: python check_market_open.py
 
       - name: Run the daily analysis script
         # This section securely passes your GitHub Secrets to the script
