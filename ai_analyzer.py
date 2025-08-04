@@ -83,8 +83,14 @@ class AIAnalyzer:
         1.  **Market & Sector Context (Weight: 30%):** A stock fighting a bearish market regime cannot receive a high positive score. A stock in a bullish market gets a significant boost.
         2.  **Sector Strength (Weight: 10%):** A stock in a weak sector receives a penalty to its score, while a stock in a strong sector gets a small bonus.
         3.  **Sentiment Analysis (Weight: 10%):** Bearish options data negatively impacts the score. Bullish sentiment has a positive impact.
-        4.  **Fundamental Context (Weight: 15%):** Strong fundamentals provide a positive contribution to the score. Weak fundamentals are a penalty.
-        5.  **Technical Deep-Dive (Weight: 25%):** A setup that lacks a strong trend (ADX < {config.ADX_THRESHOLD}) or a significant Volume Surge should receive a major penalty to its score. A setup that has both receives a significant bonus.
+        4.  **Fundamental Context (Weight: 15%):** Your goal is to identify if there is a fundamental reason for the stock to move in the short term.
+            * **Catalyst Check:** Review the provided financial data and news. Is there a recent earnings report, a major product launch, or a sector-wide news event that could act as a catalyst for a price move?
+            * **Quality Filter:** A high 'Durability' score provides a strong safety net for BUY signals. A very poor 'Valuation' score can be a major headwind, even for a technically strong setup. Your score must reflect this context.
+        5.  **Technical Deep-Dive (Weight: 25%):** This is your core technical analysis. You must perform two tasks:
+            * **Visual Chart Analysis:** Meticulously analyze the three provided chart images. Identify any significant bullish or bearish chart patterns (e.g., flags, triangles, head and shoulders) and candlestick patterns (e.g., engulfing, doji, hammer). A clear, confirmed visual pattern should significantly influence the score.
+            * **Indicator Confirmation:** Use the provided numerical indicators (ADX, RSI, MACD) to confirm or deny your visual analysis. A setup confirmed by a strong trend (ADX > {config.ADX_THRESHOLD}) AND a significant Volume Surge receives a major bonus to its score. A setup that lacks these confirmations receives a penalty.
+
+            Pay close attention to the 1-Day chart for intraday price action and its relationship with the VWAP, which is a key level for the current session.
         
         **6. Risk Assessment & Data-Driven Trade Plan (Weight: 10%):**
         * **CRITICAL RISK RULE:** Your `tradePlan` must be technically sound and data-driven.

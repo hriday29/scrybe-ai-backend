@@ -6,6 +6,39 @@ import matplotlib.pyplot as plt
 import io
 import base64
 from logger_config import log
+import data_retriever
+
+def _generate_intraday_chart(data: pd.DataFrame, ticker: str, title: str):
+    """Generates a specialized 1-Day chart with Price and VWAP."""
+    if data.empty or len(data) < 2:
+        return None
+
+    # Calculate VWAP
+    data['VWAP'] = (data['close'] * data['volume']).cumsum() / data['volume'].cumsum()
+    
+    fig, ax = plt.subplots(figsize=(15, 6), facecolor='#1C2130')
+    fig.suptitle(title, fontsize=16, color='white')
+
+    ax.set_facecolor('#1C2130')
+    ax.plot(data.index, data['close'], label='Price', color='#3b82f6', linewidth=1.5)
+    ax.plot(data.index, data['VWAP'], label='VWAP', color='#ffc107', linestyle='--', linewidth=2)
+    
+    ax.set_ylabel('Price', color='white', fontsize=10)
+    ax.set_xlabel('Time', color='white', fontsize=10)
+    ax.legend()
+    ax.grid(True, color='#333A4C', linestyle='--', linewidth=0.5)
+    ax.tick_params(axis='y', labelcolor='white')
+    ax.tick_params(axis='x', labelcolor='white', rotation=20)
+
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    
+    buf = io.BytesIO()
+    plt.savefig(buf, format='png', facecolor=fig.get_facecolor(), transparent=True)
+    plt.close(fig)
+    buf.seek(0)
+    chart_base64 = base64.b64encode(buf.read()).decode('utf-8')
+    buf.close()
+    return chart_base64
 
 def _generate_single_chart(data: pd.DataFrame, ticker: str, title: str):
     """
@@ -83,22 +116,28 @@ def _generate_single_chart(data: pd.DataFrame, ticker: str, title: str):
 
 def generate_focused_charts(full_data: pd.DataFrame, ticker: str) -> dict:
     """
-    Generates a dictionary of charts for 3M, 1M, and 1W timeframes.
+    Generates a dictionary of charts for 3M, 1M, 1W, and 1D timeframes.
     """
     log.info(f"Generating multi-timescale charts for {ticker}...")
     charts = {}
     
-    # Define timeframes using approximate trading days
-    timeframes = {
-        "3M": 63,
-        "1M": 21,
-        "1W": 5
-    }
-    
-    for key, days in timeframes.items():
-        # Slice the data for the specific timeframe
+    # --- Generate Daily Charts (3M, 1M, 1W) ---
+    daily_timeframes = {"3M": 63, "1M": 21, "1W": 5}
+    for key, days in daily_timeframes.items():
         data_slice = full_data.tail(days)
         charts[key] = _generate_single_chart(data_slice, ticker, f'{key} View')
         
-    log.info(f"Successfully generated {len(charts)} charts for {ticker}.")
+    # --- Generate Intraday Chart (1D) ---
+    try:
+        intraday_data = data_retriever.get_intraday_data(ticker)
+        if intraday_data is not None and not intraday_data.empty:
+            # Select only the most recent trading day's data
+            latest_day = intraday_data.index.normalize().max()
+            data_1d_slice = intraday_data[intraday_data.index.normalize() == latest_day]
+            charts["1D"] = _generate_intraday_chart(data_1d_slice, ticker, '1D Intraday View')
+    except Exception as e:
+        log.error(f"Failed to generate 1D intraday chart for {ticker}. Error: {e}")
+        charts["1D"] = None
+        
+    log.info(f"Successfully generated charts for {ticker}.")
     return charts

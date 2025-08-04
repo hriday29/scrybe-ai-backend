@@ -10,7 +10,7 @@ from datetime import datetime
 from datetime import datetime, timezone
 import pandas_ta as ta
 
-# --- FIX: Ensure the cache directory exists on startup ---
+# --- Ensure the cache directory exists on startup ---
 CACHE_DIR = 'cache'
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
@@ -314,14 +314,12 @@ def get_index_option_data(index_ticker: str) -> dict:
         log.warning(f"Could not fetch or process option chain data for {index_ticker}. Error: {e}")
         return None
 
-# In data_retriever.py
-
 def get_intraday_data(ticker_symbol: str):
     """Fetches recent 15-minute intraday data for a stock."""
     try:
         log.info(f"[FETCH] Getting 15-min intraday data for {ticker_symbol}...")
         ticker = yf.Ticker(ticker_symbol)
-        df = ticker.history(period="5d", interval="15m")
+        df = ticker.history(period="2d", interval="15m")
         if df.empty:
             log.warning(f"No intraday data returned for {ticker_symbol}.")
             return None
@@ -335,66 +333,6 @@ def get_intraday_data(ticker_symbol: str):
     except Exception as e:
         log.error(f"Error fetching intraday data for {ticker_symbol}: {e}")
         return None
-
-# In data_retriever.py
-# Make sure you have 'import requests' at the top of the file
-
-def get_news_sentiment(ticker_symbol: str):
-    """
-    Fetches recent news for a stock from NewsAPI.org and performs
-    a simple sentiment analysis to find negative catalysts.
-    """
-    log.info(f"[FETCH] Getting live news sentiment for {ticker_symbol}...")
-    if not config.NEWS_API_KEY:
-        log.warning("News API key not configured. Skipping news analysis.")
-        return {"has_negative_catalyst": False, "latest_headline": "News API not configured."}
-
-    # Define keywords that indicate negative sentiment for a stock
-    negative_keywords = [
-        'downgrade', 'scandal', 'probe', 'investigation', 'misses estimates', 
-        'plummets', 'tumbles', 'falls', 'lawsuit', 'fraud', 'fine'
-    ]
-    
-    # Clean the ticker for the search query (e.g., "RELIANCE.NS" -> "Reliance")
-    query = ticker_symbol.split('.')[0]
-    
-    # Construct the API URL
-    url = (f"https://newsapi.org/v2/everything?"
-           f"q={query}"
-           f"&language=en"
-           f"&sortBy=publishedAt"
-           f"&pageSize=5"
-           f"&apiKey={config.NEWS_API_KEY}")
-
-    try:
-        response = requests.get(url)
-        response.raise_for_status()
-        articles = response.json().get('articles', [])
-
-        if not articles:
-            return {"has_negative_catalyst": False, "latest_headline": "No recent news found."}
-
-        # Check titles and descriptions for negative keywords
-        for article in articles:
-            title = article.get('title') or ""
-            description = article.get('description') or ""
-            text_to_check = (title + description).lower()
-            if any(keyword in text_to_check for keyword in negative_keywords):
-                log.warning(f"Negative catalyst found for {ticker_symbol}: {article['title']}")
-                return {
-                    "has_negative_catalyst": True,
-                    "latest_headline": article['title']
-                }
-        
-        # If no negative keywords found in top articles
-        return {
-            "has_negative_catalyst": False,
-            "latest_headline": articles[0]['title'] # Return the latest headline for context
-        }
-
-    except requests.exceptions.RequestException as e:
-        log.error(f"Failed to fetch news for {ticker_symbol}: {e}")
-        return {"has_negative_catalyst": False, "latest_headline": "Error fetching news."}
 
 def get_options_data(ticker_symbol: str):
     """
