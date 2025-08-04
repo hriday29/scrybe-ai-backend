@@ -139,18 +139,21 @@ class AIAnalyzer:
                     image_part = {"mime_type": "image/png", "data": base64.b64decode(charts[key])}
                     prompt_parts.append(image_part)
         
-        max_retries = 3
+        max_retries = 4
+        delay = 2  # Initial delay of 2 seconds
         for attempt in range(max_retries):
             try:
                 response = model.generate_content(prompt_parts, request_options={"timeout": 180})
-                return json.loads(response.text) # If successful, return the result and exit the loop
+                return json.loads(response.text)
             except Exception as e:
                 log.warning(f"AI call attempt {attempt + 1} failed for {live_financial_data['rawDataSheet'].get('symbol', '')}. Error: {e}")
                 if attempt < max_retries - 1:
-                    time.sleep(5) # Wait 5 seconds before retrying
+                    log.info(f"Waiting for {delay} seconds before retrying...")
+                    time.sleep(delay)
+                    delay *= 2  # Double the delay for the next attempt
                 else:
                     log.error(f"AI Scrybe Score generation failed after {max_retries} attempts.")
-                    return None # If all retries fail, return None
+                    return None
     
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """
@@ -300,55 +303,64 @@ class AIAnalyzer:
     def get_dvm_scores(self, live_financial_data: dict, technical_indicators: dict) -> dict:
         """A method to generate Durability, Valuation, and Momentum scores."""
         log.info("Generating DVM scores...")
-        try:
-            system_instruction = """
-            You are a stringent quantitative financial analyst. Your job is to generate three scores (Durability, Valuation, Momentum) and a corresponding descriptive phrase for each.
+        max_retries = 4
+        delay = 2 # Initial delay of 2 seconds
+        for attempt in range(max_retries):
+            try:
+                system_instruction = """
+                You are a stringent quantitative financial analyst. Your job is to generate three scores (Durability, Valuation, Momentum) and a corresponding descriptive phrase for each.
 
-            **CRITICAL RULES:**
-            1.  The `score` MUST be on a scale of 0 to 100, where 100 is the best possible outcome and 0 is the worst.
-            2.  The `phrase` MUST be logically consistent with the numeric `score`. A low score requires a cautious or negative phrase. A high score requires a positive phrase. There can be no contradictions.
-            3.  The `status` must also align. Scores below 40 are 'Poor', 40-60 are 'Neutral', and above 60 are 'Good'.
+                **CRITICAL RULES:**
+                1.  The `score` MUST be on a scale of 0 to 100, where 100 is the best possible outcome and 0 is the worst.
+                2.  The `phrase` MUST be logically consistent with the numeric `score`. A low score requires a cautious or negative phrase. A high score requires a positive phrase. There can be no contradictions.
+                3.  The `status` must also align. Scores below 40 are 'Poor', 40-60 are 'Neutral', and above 60 are 'Good'.
 
-            **Example of a GOOD, LOGICAL output:**
-            {
-              "durability": {
-                "score": 85,
-                "status": "Good",
-                "phrase": "The company shows excellent financial health with low debt and strong cash flow, indicating superior durability."
-              }
-            }
+                **Example of a GOOD, LOGICAL output:**
+                {
+                "durability": {
+                    "score": 85,
+                    "status": "Good",
+                    "phrase": "The company shows excellent financial health with low debt and strong cash flow, indicating superior durability."
+                }
+                }
 
-            **Example of a BAD, CONTRADICTORY output (DO NOT DO THIS):**
-            {
-              "durability": {
-                "score": 15,
-                "status": "Poor",
-                "phrase": "The company shows excellent financial health."
-              }
-            }
+                **Example of a BAD, CONTRADICTORY output (DO NOT DO THIS):**
+                {
+                "durability": {
+                    "score": 15,
+                    "status": "Poor",
+                    "phrase": "The company shows excellent financial health."
+                }
+                }
 
-            Your analysis must be strict and the scores must directly reflect the data provided.
-            """
-            output_schema = {
-                "type": "OBJECT", "properties": {
-                    "durability": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
-                    "valuation": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
-                    "momentum": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
-                }, "required": ["durability", "valuation", "momentum"]
-            }
-            prompt_parts = [
-                "Generate the DVM scores based on this data:",
-                f"Financial Data: {json.dumps(live_financial_data['curatedData'])}",
-                f"Technical Indicators: {json.dumps(technical_indicators)}"
-            ]
-            generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
-            model = genai.GenerativeModel(config.PRO_MODEL, system_instruction=system_instruction, generation_config=generation_config)
-            
-            response = model.generate_content(prompt_parts)
-            return json.loads(response.text)
-        except Exception as e:
-            log.error(f"[DVM Scoring] An unexpected error occurred: {e}")
-            return None
+                Your analysis must be strict and the scores must directly reflect the data provided.
+                """
+                output_schema = {
+                    "type": "OBJECT", "properties": {
+                        "durability": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
+                        "valuation": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
+                        "momentum": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
+                    }, "required": ["durability", "valuation", "momentum"]
+                }
+                prompt_parts = [
+                    "Generate the DVM scores based on this data:",
+                    f"Financial Data: {json.dumps(live_financial_data['curatedData'])}",
+                    f"Technical Indicators: {json.dumps(technical_indicators)}"
+                ]
+                generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+                model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+                
+                response = model.generate_content(prompt_parts)
+                return json.loads(response.text) # Success: return and exit loop
+            except Exception as e:
+                log.warning(f"[DVM Scoring] Attempt {attempt + 1} failed. Error: {e}")
+                if attempt < max_retries - 1:
+                    log.info(f"Waiting for {delay} seconds before retrying...")
+                    time.sleep(delay)
+                    delay *= 2 # Double the delay for the next attempt
+                else:
+                    log.error(f"[DVM Scoring] Failed after {max_retries} attempts.")
+                    return None # All retries failed
     
     def get_conversational_answer(self, question: str, analysis_context: dict) -> dict:
         """
