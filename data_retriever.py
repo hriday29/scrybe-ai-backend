@@ -397,11 +397,11 @@ def get_social_sentiment(ticker_symbol: str):
 
 def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
     """
-    Fetches news using a 2-step fallback: yfinance and then MarketAux.
+    Fetches news using a 2-step fallback: yfinance and then Finnhub.
     """
     log.info(f"[FETCH] Running news fetch for {ticker_symbol}...")
 
-    # --- Attempt 1: yfinance (Highest Relevance) ---
+    # --- Attempt 1: yfinance (Always try first for high relevance) ---
     try:
         log.info("--> News Fetch Attempt 1: yfinance...")
         ticker = yf.Ticker(ticker_symbol)
@@ -411,41 +411,49 @@ def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
                 "title": article.get('title'), "url": article.get('link'),
                 "source_name": article.get('publisher'),
                 "published_at": datetime.fromtimestamp(article['providerPublishTime'], tz=timezone.utc).isoformat(),
-                "description": ""
+                "description": article.get('summary', '') # Try to get summary if available
             } for article in news_list]
             log.info("--> Success on Attempt 1: Found news via yfinance.")
             return {"type": "Ticker-Specific News", "articles": formatted_articles[:8]}
     except Exception:
         log.warning(f"--> yfinance news fetch failed for {ticker_symbol}. Trying fallback.")
 
-    # --- Attempt 2: MarketAux (Reliable Fallback) ---
-    api_key = config.MARKETAUX_API_KEY # Make sure to add MARKETAUX_API_KEY to your config.py
-    if api_key:
+    # --- Attempt 2: Finnhub (High-Quality Fallback) ---
+    api_key = config.FINNHUB_API_KEY
+    if api_key and "YOUR_FINNHUB" not in api_key:
         try:
-            log.info("--> News Fetch Attempt 2: MarketAux...")
-            # Clean the ticker for the API call (e.g., "RELIANCE.NS" -> "RELIANCE")
-            query = ticker_symbol.split('.')[0]
-            url = f"https://api.marketaux.com/v1/news/all?symbols={query}&language=en&api_token={api_key}"
+            log.info("--> News Fetch Attempt 2: Finnhub...")
+            
+            # 1. Define the date range for the news search (e.g., last 7 days)
+            end_date = datetime.now().strftime('%Y-%m-%d')
+            start_date = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d')
 
+            # 2. Construct the URL and make the request
+            url = f"https://finnhub.io/api/v1/company-news?symbol={ticker_symbol}&from={start_date}&to={end_date}&token={api_key}"
             response = requests.get(url, timeout=10)
             response.raise_for_status()
-            articles = response.json().get('data', [])
+            articles = response.json()
 
             if articles:
-                # Reformat the articles to match what the frontend expects
-                formatted_articles = [{
-                    "title": article.get('title'),
-                    "url": article.get('url'),
-                    "source_name": article.get('source'),
-                    "published_at": article.get('published_at'),
-                    "description": article.get('description')
-                } for article in articles]
-                log.info("--> Success on Attempt 2: Found news via MarketAux.")
-                return {"type": "Related Market News", "articles": formatted_articles[:5]} # Limit to 5 articles
+                # 3. CRITICAL STEP: Format the Finnhub response to match your standard structure.
+                formatted_articles = []
+                for article in articles:
+                    formatted_articles.append({
+                        "title": article.get('headline'),
+                        "url": article.get('url'),
+                        "source_name": article.get('source'),
+                        "published_at": datetime.fromtimestamp(article['datetime'], tz=timezone.utc).isoformat(),
+                        "description": article.get('summary')
+                    })
+
+                log.info(f"--> Success on Attempt 2: Found {len(formatted_articles)} news articles via Finnhub.")
+                return {"type": "Related Market News", "articles": formatted_articles[:5]} # Limit to 5
+
         except Exception as e:
-            log.error(f"--> MarketAux news fetch failed for {ticker_symbol}. Error: {e}")
+            log.error(f"--> Finnhub news fetch failed for {ticker_symbol}. Error: {e}")
 
     # Final fallback if all else fails
+    log.warning(f"All news sources failed for {ticker_symbol}.")
     return {"type": "No News Found", "articles": []}
 
 def get_market_regime() -> str:
