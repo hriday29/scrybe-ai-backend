@@ -124,7 +124,7 @@ def generate_focused_charts(full_data: pd.DataFrame, ticker: str) -> dict:
     # --- Generate Daily Charts (3M, 1M, 1W) ---
     daily_timeframes = {"3M": 63, "1M": 21, "1W": 5}
     for key, days in daily_timeframes.items():
-        data_slice = full_data.tail(days)
+        data_slice = full_data.tail(days).copy()
         charts[key] = _generate_single_chart(data_slice, ticker, f'{key} View')
         
     # --- Generate Intraday Chart (1D) ---
@@ -133,7 +133,7 @@ def generate_focused_charts(full_data: pd.DataFrame, ticker: str) -> dict:
         if intraday_data is not None and not intraday_data.empty:
             # Select only the most recent trading day's data
             latest_day = intraday_data.index.normalize().max()
-            data_1d_slice = intraday_data[intraday_data.index.normalize() == latest_day]
+            data_1d_slice = intraday_data[intraday_data.index.normalize() == latest_day].copy()
             charts["1D"] = _generate_intraday_chart(data_1d_slice, ticker, '1D Intraday View')
     except Exception as e:
         log.error(f"Failed to generate 1D intraday chart for {ticker}. Error: {e}")

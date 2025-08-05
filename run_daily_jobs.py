@@ -166,75 +166,87 @@ def run_all_jobs():
     """Runs the VST-only analysis pipeline with Market Regime and Email Notifications."""
     log.info("--- 🚀 Kicking off ALL DAILY JOBS (VST-Only Mode) ---")
     
-    closed_trades = manage_open_trades()
-
-    log.info("--- 🔍 Starting New Analysis Generation ---")
+    # <--- MODIFICATION START --->
+    # We wrap the entire function logic in a try...finally block.
     try:
-        analyzer = AIAnalyzer(api_key=config.GEMINI_API_KEY)
-    except ValueError as e: return log.fatal(f"Failed to initialize AI Analyzer: {e}. Aborting.")
+        # ALL of your original code is now indented inside the 'try' block.
+        closed_trades = manage_open_trades()
 
-    market_data = data_retriever.get_nifty50_performance()
-    if not market_data: return log.error("Could not fetch market performance data. Aborting.")
+        log.info("--- 🔍 Starting New Analysis Generation ---")
+        try:
+            analyzer = AIAnalyzer(api_key=config.GEMINI_API_KEY)
+        except ValueError as e: 
+            log.fatal(f"Failed to initialize AI Analyzer: {e}. Aborting.")
+            return # Added return to ensure script stops
 
-    market_regime = data_retriever.get_market_regime()
-    
-    new_signals = [] 
+        market_data = data_retriever.get_nifty50_performance()
+        if not market_data: 
+            log.error("Could not fetch market performance data. Aborting.")
+            return # Added return to ensure script stops
 
-    # --- MODIFICATION START ---
-    log.info("--- fetching Nifty 50 tickers for analysis ---")
-    nifty50_tickers = get_nifty50_tickers()
-
-    if not nifty50_tickers:
-        log.fatal("Could not fetch Nifty 50 tickers. Aborting analysis.")
-        return
-
-    log.info(f"--- Starting analysis for {len(nifty50_tickers)} tickers ---")
-    for ticker in nifty50_tickers: # This line is now modified
-    # --- MODIFICATION END ---
-        vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime)
+        market_regime = data_retriever.get_market_regime()
         
-        if not vst_analysis or not _validate_analysis_output(vst_analysis, ticker) or not _validate_trade_plan(vst_analysis):
-            log.warning(f"No valid VST analysis was generated for {ticker}.")
-            if vst_analysis:
-                database_manager.save_vst_analysis(ticker, vst_analysis)
-            continue
+        new_signals = [] 
 
-        database_manager.init_db(purpose='analysis')
-        database_manager.save_vst_analysis(ticker, vst_analysis)
-        database_manager.save_live_prediction(vst_analysis)
+        log.info("--- fetching Nifty 50 tickers for analysis ---")
+        nifty50_tickers = get_nifty50_tickers()
 
-        if vst_analysis.get('signal') in ['BUY', 'SELL']:
-            new_signals.append({
-                "ticker": ticker,
-                "signal": vst_analysis.get('signal'),
-                "confidence": vst_analysis.get('confidence'),
-                "scrybeScore": vst_analysis.get('scrybeScore')
-            })
-            try:
-                trade_object = {
-                    "signal": vst_analysis.get('signal'), "strategy": vst_analysis.get('strategy'),
-                    "entry_price": vst_analysis.get('price_at_prediction'),
-                    "entry_date": vst_analysis.get('prediction_date'),
-                    "target": float(vst_analysis['tradePlan']['target']['price']),
-                    "stop_loss": float(vst_analysis['tradePlan']['stopLoss']['price']),
-                    "risk_reward_ratio": vst_analysis['tradePlan'].get('riskRewardRatio', 'N/A'),
-                    "expiry_date": datetime.now(timezone.utc) + timedelta(days=config.TRADE_EXPIRY_DAYS),
-                    "confidence": vst_analysis.get('confidence')
-                }
-                database_manager.set_active_trade(ticker, trade_object)
-            except (KeyError, ValueError, TypeError) as e:
-                log.error(f"Could not create trade object for {ticker}: {e}")
+        if not nifty50_tickers:
+            log.fatal("Could not fetch Nifty 50 tickers. Aborting analysis.")
+            return
+
+        log.info(f"--- Starting analysis for {len(nifty50_tickers)} tickers ---")
+        for ticker in nifty50_tickers:
+            vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime)
+            
+            if not vst_analysis or not _validate_analysis_output(vst_analysis, ticker) or not _validate_trade_plan(vst_analysis):
+                log.warning(f"No valid VST analysis was generated for {ticker}.")
+                if vst_analysis:
+                    database_manager.save_vst_analysis(ticker, vst_analysis)
+                continue
+
+            database_manager.init_db(purpose='analysis')
+            database_manager.save_vst_analysis(ticker, vst_analysis)
+            database_manager.save_live_prediction(vst_analysis)
+
+            if vst_analysis.get('signal') in ['BUY', 'SELL']:
+                new_signals.append({
+                    "ticker": ticker,
+                    "signal": vst_analysis.get('signal'),
+                    "confidence": vst_analysis.get('confidence'),
+                    "scrybeScore": vst_analysis.get('scrybeScore')
+                })
+                try:
+                    trade_object = {
+                        "signal": vst_analysis.get('signal'), "strategy": vst_analysis.get('strategy'),
+                        "entry_price": vst_analysis.get('price_at_prediction'),
+                        "entry_date": vst_analysis.get('prediction_date'),
+                        "target": float(vst_analysis['tradePlan']['target']['price']),
+                        "stop_loss": float(vst_analysis['tradePlan']['stopLoss']['price']),
+                        "risk_reward_ratio": vst_analysis['tradePlan'].get('riskRewardRatio', 'N/A'),
+                        "expiry_date": datetime.now(timezone.utc) + timedelta(days=config.TRADE_EXPIRY_DAYS),
+                        "confidence": vst_analysis.get('confidence')
+                    }
+                    database_manager.set_active_trade(ticker, trade_object)
+                except (KeyError, ValueError, TypeError) as e:
+                    log.error(f"Could not create trade object for {ticker}: {e}")
+                    database_manager.set_active_trade(ticker, None)
+            else:
+                log.info(f"Signal for {ticker} is 'HOLD'. No active trade will be set.")
                 database_manager.set_active_trade(ticker, None)
-        else:
-            log.info(f"Signal for {ticker} is 'HOLD'. No active trade will be set.")
-            database_manager.set_active_trade(ticker, None)
-        
-        time.sleep(10)
+            
+            time.sleep(10)
 
-    log.info("--- ✅ All daily jobs finished ---")
-    generate_performance_report()
+        log.info("--- ✅ All daily jobs finished ---")
+        generate_performance_report()
 
-    send_daily_briefing(new_signals, closed_trades)
+        send_daily_briefing(new_signals, closed_trades)
+    
+    finally:
+        # This 'finally' block is guaranteed to run at the end, ensuring a clean shutdown.
+        database_manager.close_db_connection()
+    # <--- MODIFICATION END --->
+
 
 if __name__ == "__main__":
     run_all_jobs()

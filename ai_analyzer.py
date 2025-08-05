@@ -100,13 +100,13 @@ class AIAnalyzer:
         
         **7. Final JSON Output Instructions:**
         * After calculating the score, you must fill out all other fields.
-        * Your `analystVerdict` must justify the final score, referencing how the layers above contributed.
+        * Your `analystVerdict` must **concisely** justify the final score **in 1-2 sentences**, referencing the most critical layers.
         * The `signal` (BUY/SELL/HOLD) MUST be derived logically from the `scrybeScore`.
         * The `confidence` must reflect the magnitude of the `scrybeScore` (e.g., a score of +/- 85 is 'High' confidence).
         * If the signal is 'HOLD', the `reasonForHold` must explain the primary factor that kept the score in the neutral zone.
         * The `isOnRadar` boolean should be `true` ONLY for stocks with a 'HOLD' signal that are close to a trigger. Specifically, scores between **40 to 49** and **-40 to -49**. For all other scores, it must be `false`.
         * You must still populate all detailed breakdown objects (`technicalBreakdown`, `fundamentalBreakdown`, etc.).
-        * Your `technicalBreakdown` and `fundamentalBreakdown` objects must contain your detailed, objective analysis of the provided data.
+        * Your `technicalBreakdown` and `fundamentalBreakdown` objects must contain your **brief, objective analysis (1 sentence per item)** of the provided data.
         * **CRITICAL FINAL RULE:** If the `signal` is 'HOLD', all fields within the `tradePlan` object (price, rationale, etc.) MUST be set to "N/A".
         """
         

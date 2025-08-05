@@ -243,7 +243,7 @@ def get_open_trades() -> list:
             if entry_date.tzinfo is None:
                 entry_date = entry_date.replace(tzinfo=timezone.utc)
             
-            days_held = (datetime.now(timezone.utc) - entry_date).days
+            days_held = (datetime.now(timezone.utc).date() - entry_date.date()).days
             # --- END FIX ---
 
             # Assemble the final object for the UI
@@ -366,3 +366,11 @@ def save_faq_submission(submission_data: dict):
     except Exception as e:
         log.error(f"Failed to save FAQ submission. Error: {e}")
         return None
+
+def close_db_connection():
+    """Closes the global MongoDB client connection if it's open."""
+    global client
+    if client:
+        client.close()
+        client = None # Reset the client
+        log.info("--- Database connection successfully closed. ---")

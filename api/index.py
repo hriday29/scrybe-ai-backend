@@ -14,11 +14,19 @@ from ai_analyzer import AIAnalyzer
 from logger_config import log
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
+from flask_caching import Cache
+import zoneinfo
 
-all_analysis_cache = None
-all_analysis_cache_timestamp = None
-individual_analysis_cache = {} # Use a dictionary for multiple tickers
-index_analysis_cache = {}      # Use a dictionary for multiple indices
+
+def convert_utc_to_ist_string(utc_dt: datetime) -> str:
+    """Converts a timezone-aware UTC datetime object to a user-friendly IST string."""
+    if not isinstance(utc_dt, datetime):
+        return "Invalid Date"
+    
+    ist_zone = zoneinfo.ZoneInfo("Asia/Kolkata")
+    ist_dt = utc_dt.astimezone(ist_zone)
+    # This format is more descriptive for a main title
+    return ist_dt.strftime("%I:%M:%S %p %Z on %b %d, %Y") 
 
 app = Flask(__name__)
 # Get the frontend URL from an environment variable
@@ -31,6 +39,15 @@ limiter = Limiter(
     app=app,
     default_limits=["200 per day", "50 per hour"]
 )
+
+# Change "config" to "cache_config"
+cache_config = {
+    "DEBUG": True,          # some Flask specific configs
+    "CACHE_TYPE": "SimpleCache",  # use SimpleCache for development
+    "CACHE_DEFAULT_TIMEOUT": 300 # default timeout in seconds
+}
+app.config.from_mapping(cache_config)
+cache = Cache(app)
 
 # Initialize the AI Analyzer once on startup for efficiency
 try:
@@ -87,7 +104,6 @@ def custom_json_serializer(obj):
 def get_open_trades_endpoint():
     log.info("API call received for /api/open-trades")
     try:
-        database_manager.init_db(purpose='analysis')
         open_trades = database_manager.get_open_trades()
         return Response(json.dumps(open_trades, default=custom_json_serializer), mimetype='application/json')
     except Exception as e:
@@ -95,30 +111,23 @@ def get_open_trades_endpoint():
         return jsonify({"error": "An internal error occurred while fetching open trades."}), 500
 
 @app.route('/api/analyze/<string:ticker>', methods=['GET'])
+@cache.cached(timeout=3600) # Cache each ticker's analysis for 1 hour
 def get_analysis(ticker):
-    log.info(f"API call received for /api/analyze/{ticker}") # Moved to the top
+    log.info(f"API call received for /api/analyze/{ticker} - Running DB query.")
     ticker = ticker.upper()
-
-    # Cache is valid for 1 hour (3600 seconds)
-    if ticker in individual_analysis_cache and (datetime.now() - individual_analysis_cache[ticker]['timestamp']).total_seconds() < 3600:
-        log.info(f"Serving analysis for {ticker} from cache.")
-        return Response(json.dumps(individual_analysis_cache[ticker]['data'], default=custom_json_serializer), mimetype='application/json')
-    
-    log.info(f"Generating new analysis for {ticker} from DB.")
     try:
-        database_manager.init_db(purpose='analysis')
-        analysis_data = database_manager.get_precomputed_analysis(ticker) # Removed ticker.upper() as it's done above
+        analysis_data = database_manager.get_precomputed_analysis(ticker)
         if analysis_data is None:
             return jsonify({"error": "Analysis not found for the requested stock."}), 404
-            
-        individual_analysis_cache[ticker] = {
-            'data': analysis_data,
-            'timestamp': datetime.now()
-        }
+        
+        utc_timestamp = analysis_data.get('timestamp')
+        if utc_timestamp:
+            analysis_data['display_timestamp'] = convert_utc_to_ist_string(utc_timestamp)
+        
         return Response(json.dumps(analysis_data, default=custom_json_serializer), mimetype='application/json')
     except Exception as e:
         log.error(f"Failed to fetch analysis for {ticker}: {e}", exc_info=True)
-        return jsonify({"error": "An internal error occurred."}), 500
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 @app.route('/api/indices', methods=['GET'])
 def get_indices_list():
@@ -131,13 +140,9 @@ def get_indices_list():
         return jsonify({"error": "Could not retrieve indices list."}), 500
 
 @app.route('/api/index-analysis/<path:index_ticker>', methods=['GET'])
+@cache.cached(timeout=3600) # Cache each index's analysis for 1 hour
 def get_index_analysis_data(index_ticker):
-    log.info(f"API call received for /api/index-analysis/{index_ticker}")
-    
-    # Cache is valid for 1 hour (3600 seconds)
-    if index_ticker in index_analysis_cache and (datetime.now() - index_analysis_cache[index_ticker]['timestamp']).total_seconds() < 3600:
-        log.info(f"Serving index analysis for {index_ticker} from cache.")
-        return Response(json.dumps(index_analysis_cache[index_ticker]['data'], default=custom_json_serializer), mimetype='application/json')
+    log.info(f"API call for /api/index-analysis/{index_ticker} - Running LIVE AI analysis.")
         
     if not ai_analyzer_instance:
         return jsonify({"error": "AI Analyzer is not available."}), 503
@@ -147,21 +152,15 @@ def get_index_analysis_data(index_ticker):
         return jsonify({"error": "Invalid index ticker provided."}), 404
 
     try:
-        log.info(f"No valid cache found. Running LIVE index analysis for {index_ticker}...")
         analysis_data = ai_analyzer_instance.get_index_analysis(index_name, index_ticker)
         
         if analysis_data is None or "error" in analysis_data:
             return jsonify({"error": analysis_data.get("error", "Failed to generate index analysis.")}), 500
 
-        index_analysis_cache[index_ticker] = {
-            'data': analysis_data,
-            'timestamp': datetime.now()
-        }
-
         return Response(json.dumps(analysis_data, default=custom_json_serializer), mimetype='application/json')
     except Exception as e:
         log.error(f"Failed to fetch index analysis for {index_name}: {e}", exc_info=True)
-        return jsonify({"error": "An internal error occurred."}), 500
+        return jsonify({"error": "An internal server error occurred."}), 500
 
 @app.route('/api/market-pulse', methods=['GET'])
 def get_market_pulse():
@@ -185,7 +184,6 @@ def get_market_pulse():
 def get_track_record():
     log.info("API call received for /api/track-record")
     try:
-        database_manager.init_db(purpose='analysis')
         
         # This now correctly fetches the results from your live daily runs
         results = database_manager.get_live_track_record()
@@ -200,7 +198,6 @@ def get_news_for_ticker_endpoint(ticker):
     log.info(f"API call received for /api/news/{ticker}")
     try:
         # No need to init_db if it's already done, but safe to keep
-        database_manager.init_db(purpose='analysis') 
         
         articles = data_retriever.get_news_articles_for_ticker(ticker.upper())
         
@@ -243,7 +240,6 @@ def log_user_trade():
         return jsonify({"error": "Invalid trade log data provided."}), 400
 
     try:
-        database_manager.init_db(purpose='analysis')
         insert_id = database_manager.save_user_trade(trade_log_data)
         
         if insert_id:
@@ -267,7 +263,6 @@ def record_analysis_vote():
         return jsonify({"error": "analysis_id and vote_type are required."}), 400
 
     try:
-        database_manager.init_db(purpose='analysis')
         success = database_manager.add_analysis_vote(analysis_id, vote_type)
         
         if success:
@@ -282,7 +277,6 @@ def record_analysis_vote():
 def get_analysis_votes(analysis_id):
     log.info(f"API call received for /api/analysis/votes/{analysis_id}")
     try:
-        database_manager.init_db(purpose='analysis')
         feedback_collection = database_manager.db.analysis_feedback
         
         votes = feedback_collection.find_one({"analysis_id": analysis_id})
@@ -320,7 +314,6 @@ def submit_feedback():
         return jsonify({"error": "Feedback text is required."}), 400
 
     try:
-        database_manager.init_db(purpose='analysis')
         insert_id = database_manager.save_feedback(data)
         
         if insert_id:
@@ -341,7 +334,6 @@ def submit_faq_question():
         return jsonify({"error": "Question text is required."}), 400
 
     try:
-        database_manager.init_db(purpose='analysis')
         insert_id = database_manager.save_faq_submission(data)
         
         if insert_id:
@@ -353,25 +345,11 @@ def submit_faq_question():
         return jsonify({"error": "An internal server error occurred."}), 500
 
 @app.route('/api/all-analysis', methods=['GET'])
+@cache.cached(timeout=900) # Cache the result of this function for 900 seconds (15 mins)
 def get_all_analysis():
-    log.info("API call received for /api/all-analysis") # Moved to the top
-    
-    global all_analysis_cache, all_analysis_cache_timestamp
-
-    # Cache is valid for 15 minutes (900 seconds)
-    if all_analysis_cache and all_analysis_cache_timestamp and (datetime.now() - all_analysis_cache_timestamp).total_seconds() < 900:
-        log.info("Serving all analysis data from cache.")
-        return Response(json.dumps(all_analysis_cache, default=custom_json_serializer), mimetype='application/json')
-    
-    log.info("Generating new all analysis data from DB.")
+    log.info("API call received for /api/all-analysis - Running DB query.")
     try:
-        database_manager.init_db(purpose='analysis')
         results = list(database_manager.analysis_results_collection.find({}))
-
-        # Update cache (removed duplicates)
-        all_analysis_cache = results
-        all_analysis_cache_timestamp = datetime.now()
-        
         return Response(json.dumps(results, default=custom_json_serializer), mimetype='application/json')
     except Exception as e:
         log.error(f"Failed to fetch all analysis: {e}", exc_info=True)
