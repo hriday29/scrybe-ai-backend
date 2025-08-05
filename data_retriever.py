@@ -395,7 +395,7 @@ def get_social_sentiment(ticker_symbol: str):
         "source": "X/Twitter (Simulated)"
     }
 
-def get_news_articles(ticker_symbol: str) -> dict:
+def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
     """
     Fetches news articles related to the stock ticker using NewsAPI (Free Tier compliant).
     """
