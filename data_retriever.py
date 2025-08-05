@@ -7,7 +7,7 @@ import os
 import config
 from logger_config import log
 from datetime import datetime
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 import pandas_ta as ta
 
 # --- Ensure the cache directory exists on startup ---
