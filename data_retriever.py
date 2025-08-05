@@ -397,49 +397,52 @@ def get_social_sentiment(ticker_symbol: str):
 
 def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
     """
-    Fetches news articles related to the stock ticker using NewsAPI (Free Tier compliant).
+    Fetches business news articles related to a stock ticker using NewsAPI (Free Tier).
     """
-    log.info(f"[FETCH] Fetching news for {ticker_symbol}...")
+    log.info(f"[FETCH] Running news fetch for {ticker_symbol} using NewsAPI...")
 
     try:
-        api_key = config.NEWSAPI_API_KEY
-        if not api_key:
+        if not NEWSAPI_API_KEY:
             raise ValueError("NewsAPI key not configured.")
 
-        # Free plan only allows simple 'q' search, no qInTitle, no sortBy
-        query = ticker_symbol.split('.')[0]
-        from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
+        # Use plain ticker name for best results
+        query = ticker_symbol.split('.')[0]  # e.g. 'BHARTIARTL' from 'BHARTIARTL.NS'
 
         url = (
-            f"https://newsapi.org/v2/everything?"
-            f"q={query}&from={from_date}&language=en&apiKey={api_key}"
+            "https://newsapi.org/v2/top-headlines"
+            f"?q={query}&language=en&country=in&category=business&apiKey={NEWSAPI_API_KEY}"
         )
 
-        log.info(f"[REQUEST] NewsAPI URL: {url}")
-        resp = requests.get(url, timeout=10)
-        resp.raise_for_status()
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
 
-        data = resp.json()
-
-        articles = [
-            {
-                "title": a.get("title", ""),
-                "url": a.get("url"),
-                "source_name": a.get("source", {}).get("name", ""),
-                "published_at": a.get("publishedAt", ""),
-                "description": a.get("description", "")
-            }
-            for a in data.get("articles", [])
-        ]
+        articles = response.json().get('articles', [])
 
         if articles:
-            return {"type": "Related Market News", "articles": articles[:5]}
+            formatted_articles = [
+                {
+                    "title": article.get("title"),
+                    "url": article.get("url"),
+                    "source_name": article.get("source", {}).get("name"),
+                    "published_at": article.get("publishedAt"),
+                    "description": article.get("description"),
+                }
+                for article in articles
+            ]
+
+            log.info(f"✅ NewsAPI success: Found {len(formatted_articles)} articles for {query}")
+            return {"type": "Market News", "articles": formatted_articles[:5]}
+
         else:
+            log.warning(f"⚠️ No articles found for {query}")
             return {"type": "No News Found", "articles": []}
 
+    except requests.exceptions.HTTPError as http_err:
+        log.error(f"❌ HTTP error: {http_err}")
     except Exception as e:
-        log.error(f"NewsAPI failed for {ticker_symbol}: {e}")
-        return {"type": "NewsAPI Error", "articles": []}
+        log.error(f"❌ NewsAPI fetch failed for {ticker_symbol}: {e}")
+
+    return {"type": "NewsAPI Error", "articles": []}
 
 def get_market_regime() -> str:
     """
