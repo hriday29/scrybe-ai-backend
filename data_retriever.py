@@ -397,90 +397,75 @@ def get_social_sentiment(ticker_symbol: str):
 
 def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
     """
-    Fetches recent news articles about a stock ticker using a 2-step fallback:
-    1. yfinance (high relevance)
-    2. NewsAPI (broad coverage)
-
-    Returns:
-        dict: {
-            "type": "Ticker-Specific News" or "Related Market News" or "No News Found",
-            "articles": List[Dict[str, str]]
-        }
+    Fetches recent news articles for a stock ticker using yfinance first,
+    and NewsAPI (free tier compliant) as fallback.
     """
-    log.info(f"[FETCH] Running news fetch for {ticker_symbol}...")
+    log.info(f"[FETCH] Fetching news for {ticker_symbol}...")
 
-    # --- Attempt 1: yfinance ---
+    # --- Try yfinance ---
     try:
-        log.info("--> News Fetch Attempt 1: yfinance...")
+        log.info("--> Attempt 1: yfinance")
         ticker = yf.Ticker(ticker_symbol)
         news_list = ticker.news
 
-        formatted_articles = []
+        articles = []
         for article in news_list:
-            try:
-                provider_ts = article.get('providerPublishTime')
-                if not provider_ts:
-                    log.warning("--> Skipped malformed yfinance article: Missing 'providerPublishTime'")
-                    continue
+            ts = article.get("providerPublishTime")
+            if not ts:
+                log.warning("--> Skipped yfinance article: Missing 'providerPublishTime'")
+                continue
 
-                formatted_articles.append({
-                    "title": (article.get('title') or '').strip(),
-                    "url": article.get('link'),
-                    "source_name": article.get('publisher', ''),
-                    "published_at": datetime.fromtimestamp(provider_ts, tz=timezone.utc).isoformat(),
-                    "description": (article.get('summary') or '').strip()
-                })
-            except Exception as parse_err:
-                log.warning(f"--> Skipped malformed yfinance article: {parse_err}")
+            articles.append({
+                "title": article.get("title", ""),
+                "url": article.get("link"),
+                "source_name": article.get("publisher", ""),
+                "published_at": datetime.utcfromtimestamp(ts).isoformat(),
+                "description": article.get("summary", "")
+            })
 
-        if formatted_articles:
-            log.info(f"--> Success on Attempt 1: Found {len(formatted_articles)} articles via yfinance.")
-            return {"type": "Ticker-Specific News", "articles": formatted_articles[:8]}
+        if articles:
+            return {"type": "Ticker-Specific News", "articles": articles[:8]}
 
     except Exception as e:
-        log.warning(f"--> yfinance news fetch failed for {ticker_symbol}. Trying fallback. Error: {e}")
+        log.warning(f"yfinance failed for {ticker_symbol}: {e}")
 
-    # --- Attempt 2: NewsAPI.org ---
-    api_key = config.NEWSAPI_API_KEY
-    if api_key:
-        try:
-            log.info("--> News Fetch Attempt 2: NewsAPI.org...")
+    # --- Try NewsAPI (free-compatible) ---
+    try:
+        log.info("--> Attempt 2: NewsAPI (free tier mode)")
+        api_key = config.NEWSAPI_API_KEY
+        if not api_key:
+            raise ValueError("No NewsAPI key configured")
 
-            query = ticker_symbol.split('.')[0]
-            from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
+        query = ticker_symbol.split('.')[0]
+        from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
 
-            # NOTE: Use 'q=' not 'qInTitle=' for free-tier compatibility
-            url = (
-                f"https://newsapi.org/v2/everything?"
-                f"q={query}&from={from_date}&language=en&sortBy=relevancy&apiKey={api_key}"
-            )
+        url = (
+            f"https://newsapi.org/v2/everything?"
+            f"q={query}&from={from_date}&language=en&apiKey={api_key}"
+        )
 
-            response = requests.get(url, timeout=10)
-            response.raise_for_status()
-            articles = response.json().get('articles', [])
+        resp = requests.get(url, timeout=10)
+        resp.raise_for_status()
 
-            formatted_articles = []
-            for article in articles:
-                try:
-                    formatted_articles.append({
-                        "title": (article.get('title') or '').strip(),
-                        "url": article.get('url'),
-                        "source_name": article.get('source', {}).get('name', ''),
-                        "published_at": article.get('publishedAt'),  # Already in ISO format
-                        "description": (article.get('description') or '').strip()
-                    })
-                except Exception as parse_err:
-                    log.warning(f"--> Skipped malformed NewsAPI article: {parse_err}")
+        data = resp.json()
+        articles = []
+        for a in data.get("articles", []):
+            articles.append({
+                "title": a.get("title", ""),
+                "url": a.get("url"),
+                "source_name": a.get("source", {}).get("name", ""),
+                "published_at": a.get("publishedAt", ""),
+                "description": a.get("description", "")
+            })
 
-            if formatted_articles:
-                log.info(f"--> Success on Attempt 2: Found {len(formatted_articles)} articles via NewsAPI.")
-                return {"type": "Related Market News", "articles": formatted_articles[:5]}
+        if articles:
+            return {"type": "Related Market News", "articles": articles[:5]}
 
-        except Exception as e:
-            log.error(f"--> NewsAPI.org news fetch failed for {ticker_symbol}. Error: {e}")
+    except Exception as e:
+        log.error(f"NewsAPI failed for {ticker_symbol}: {e}")
 
-    # --- Final fallback ---
-    log.warning(f"All news sources failed for {ticker_symbol}.")
+    # --- Fallback ---
+    log.warning(f"All news sources failed for {ticker_symbol}")
     return {"type": "No News Found", "articles": []}
 
 def get_market_regime() -> str:
