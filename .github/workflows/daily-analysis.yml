@@ -3,8 +3,8 @@ name: Daily Stock Analysis
 on:
   # This schedule runs the job automatically every day
   schedule:
-    # Runs at 15:30 UTC, which is 9:00 PM IST
-    - cron: '00 14 * * *'
+    # Runs at 14:00 UTC, which is 7:30 PM IST
+    - cron: '00 14 * * 1-5'
   
   # This line adds a manual "Run workflow" button on GitHub
   workflow_dispatch:
@@ -27,25 +27,11 @@ jobs:
       - name: Check if market is open
         run: python check_market_open.py
 
-      - name: Debug - Check if NEWSAPI_API_KEY Secret is set
-        run: |
-          if [ -z "${{ secrets.NEWSAPI_API_KEY }}" ]; then
-            echo "::error:: The NEWSAPI_API_KEY secret is NOT set in GitHub."
-          else
-            echo "✅ The NEWSAPI_API_KEY secret IS available to the job."
-          fi
-
-      # <--- ADD DEBUG STEP 2 HERE --->
-      - name: Debug - Display the contents of config.py
-        run: |
-          echo "--- Contents of config.py being used by the runner ---"
-          cat config.py
-          echo "--- End of config.py ---"
       - name: Run the daily analysis script
         # This section securely passes your GitHub Secrets to the script
         env:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
+          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
         run: python run_daily_jobs.py
