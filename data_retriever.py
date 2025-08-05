@@ -395,47 +395,18 @@ def get_social_sentiment(ticker_symbol: str):
         "source": "X/Twitter (Simulated)"
     }
 
-def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
+def get_news_articles(ticker_symbol: str) -> dict:
     """
-    Fetches recent news articles for a stock ticker using yfinance first,
-    and NewsAPI (free tier compliant) as fallback.
+    Fetches news articles related to the stock ticker using NewsAPI (Free Tier compliant).
     """
     log.info(f"[FETCH] Fetching news for {ticker_symbol}...")
 
-    # --- Try yfinance ---
     try:
-        log.info("--> Attempt 1: yfinance")
-        ticker = yf.Ticker(ticker_symbol)
-        news_list = ticker.news
-
-        articles = []
-        for article in news_list:
-            ts = article.get("providerPublishTime")
-            if not ts:
-                log.warning("--> Skipped yfinance article: Missing 'providerPublishTime'")
-                continue
-
-            articles.append({
-                "title": article.get("title", ""),
-                "url": article.get("link"),
-                "source_name": article.get("publisher", ""),
-                "published_at": datetime.utcfromtimestamp(ts).isoformat(),
-                "description": article.get("summary", "")
-            })
-
-        if articles:
-            return {"type": "Ticker-Specific News", "articles": articles[:8]}
-
-    except Exception as e:
-        log.warning(f"yfinance failed for {ticker_symbol}: {e}")
-
-    # --- Try NewsAPI (free-compatible) ---
-    try:
-        log.info("--> Attempt 2: NewsAPI (free tier mode)")
         api_key = config.NEWSAPI_API_KEY
         if not api_key:
-            raise ValueError("No NewsAPI key configured")
+            raise ValueError("NewsAPI key not configured.")
 
+        # Free plan only allows simple 'q' search, no qInTitle, no sortBy
         query = ticker_symbol.split('.')[0]
         from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
 
@@ -444,29 +415,31 @@ def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
             f"q={query}&from={from_date}&language=en&apiKey={api_key}"
         )
 
+        log.info(f"[REQUEST] NewsAPI URL: {url}")
         resp = requests.get(url, timeout=10)
         resp.raise_for_status()
 
         data = resp.json()
-        articles = []
-        for a in data.get("articles", []):
-            articles.append({
+
+        articles = [
+            {
                 "title": a.get("title", ""),
                 "url": a.get("url"),
                 "source_name": a.get("source", {}).get("name", ""),
                 "published_at": a.get("publishedAt", ""),
                 "description": a.get("description", "")
-            })
+            }
+            for a in data.get("articles", [])
+        ]
 
         if articles:
             return {"type": "Related Market News", "articles": articles[:5]}
+        else:
+            return {"type": "No News Found", "articles": []}
 
     except Exception as e:
         log.error(f"NewsAPI failed for {ticker_symbol}: {e}")
-
-    # --- Fallback ---
-    log.warning(f"All news sources failed for {ticker_symbol}")
-    return {"type": "No News Found", "articles": []}
+        return {"type": "NewsAPI Error", "articles": []}
 
 def get_market_regime() -> str:
     """
