@@ -397,68 +397,76 @@ def get_social_sentiment(ticker_symbol: str):
 
 def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
     """
-    Fetches news using a 2-step fallback: yfinance and then newsdata.io.
+    Fetches news using a 2-step fallback: yfinance (high relevance) and NewsAPI.org (broad search).
+    Returns a dict with article data or fallback notice.
     """
     log.info(f"[FETCH] Running news fetch for {ticker_symbol}...")
 
-    # --- Attempt 1: yfinance (Always try first for high relevance) ---
+    # --- Attempt 1: yfinance ---
     try:
         log.info("--> News Fetch Attempt 1: yfinance...")
         ticker = yf.Ticker(ticker_symbol)
         news_list = ticker.news
-        if news_list:
-            formatted_articles = [{
-                "title": article.get('title'),
-                "url": article.get('link'),
-                "source_name": article.get('publisher'),
-                "published_at": datetime.fromtimestamp(article['providerPublishTime'], tz=timezone.utc).isoformat(),
-                "description": article.get('summary', '')
-            } for article in news_list]
-            log.info("--> Success on Attempt 1: Found news via yfinance.")
-            return {"type": "Ticker-Specific News", "articles": formatted_articles[:8]}
-    except Exception:
-        log.warning(f"--> yfinance news fetch failed for {ticker_symbol}. Trying fallback.")
 
-    # --- Attempt 2: newsdata.io (High-Quality Fallback) ---
-    api_key = config.NEWSDATA_API_KEY
+        if news_list:
+            formatted_articles = []
+            for article in news_list:
+                try:
+                    formatted_articles.append({
+                        "title": article.get('title', '').strip(),
+                        "url": article.get('link'),
+                        "source_name": article.get('publisher', ''),
+                        "published_at": datetime.fromtimestamp(article['providerPublishTime'], tz=timezone.utc).isoformat(),
+                        "description": article.get('summary', '').strip()
+                    })
+                except Exception as parse_err:
+                    log.warning(f"--> Skipped malformed yfinance article: {parse_err}")
+            if formatted_articles:
+                log.info(f"--> Success on Attempt 1: Found {len(formatted_articles)} articles via yfinance.")
+                return {"type": "Ticker-Specific News", "articles": formatted_articles[:8]}
+    except Exception as e:
+        log.warning(f"--> yfinance news fetch failed for {ticker_symbol}. Trying fallback. Error: {e}")
+
+    # --- Attempt 2: NewsAPI.org ---
+    api_key = config.NEWSAPI_API_KEY
     if api_key:
         try:
-            log.info("--> News Fetch Attempt 2: newsdata.io...")
-            
-            # 1. Construct the URL using the confirmed parameters.
-            query = ticker_symbol.split('.')[0]
-            url = f"https://newsdata.io/api/1/news?apikey={api_key}&qInTitle={query}&language=en&country=in&category=business"
-            
+            log.info("--> News Fetch Attempt 2: NewsAPI.org...")
+
+            query = ticker_symbol.split('.')[0]  # e.g., remove '.NS'
+            from_date = (datetime.utcnow() - timedelta(days=7)).strftime('%Y-%m-%d')
+
+            url = (
+                f"https://newsapi.org/v2/everything?"
+                f"qInTitle={query}&from={from_date}&language=en&sortBy=relevancy&apiKey={api_key}"
+            )
+
             response = requests.get(url, timeout=10)
             response.raise_for_status()
-            articles = response.json().get('results', [])
+            articles = response.json().get('articles', [])
 
             if articles:
-                # 2. Format the newsdata.io response using the confirmed field names.
                 formatted_articles = []
                 for article in articles:
-                    pub_date_str = article.get('pubDate')
-                    published_at_iso = ""
-                    if pub_date_str:
-                        # Parse the confirmed date format: 'YYYY-MM-DD HH:MM:SS'
-                        dt_obj = datetime.strptime(pub_date_str, '%Y-%m-%d %H:%M:%S')
-                        published_at_iso = dt_obj.replace(tzinfo=timezone.utc).isoformat()
-                    
-                    formatted_articles.append({
-                        "title": article.get('title'),
-                        "url": article.get('link'),
-                        "source_name": article.get('source_id'),
-                        "published_at": published_at_iso,
-                        "description": article.get('description')
-                    })
+                    try:
+                        formatted_articles.append({
+                            "title": (article.get('title') or '').strip(),
+                            "url": article.get('url'),
+                            "source_name": article.get('source', {}).get('name', ''),
+                            "published_at": article.get('publishedAt'),  # Already ISO format
+                            "description": (article.get('description') or '').strip()
+                        })
+                    except Exception as parse_err:
+                        log.warning(f"--> Skipped malformed NewsAPI article: {parse_err}")
 
-                log.info(f"--> Success on Attempt 2: Found {len(formatted_articles)} news articles via newsdata.io.")
-                return {"type": "Related Market News", "articles": formatted_articles[:5]}
+                if formatted_articles:
+                    log.info(f"--> Success on Attempt 2: Found {len(formatted_articles)} articles via NewsAPI.")
+                    return {"type": "Related Market News", "articles": formatted_articles[:5]}
 
         except Exception as e:
-            log.error(f"--> newsdata.io news fetch failed for {ticker_symbol}. Error: {e}")
+            log.error(f"--> NewsAPI.org news fetch failed for {ticker_symbol}. Error: {e}")
 
-    # Final fallback if all else fails
+    # --- Final fallback if all sources fail ---
     log.warning(f"All news sources failed for {ticker_symbol}.")
     return {"type": "No News Found", "articles": []}
 
