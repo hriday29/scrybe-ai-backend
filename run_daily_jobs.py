@@ -12,6 +12,7 @@ from live_reporter import generate_performance_report
 import uuid
 from notifier import send_daily_briefing
 from index_manager import get_nifty50_tickers
+from utils import APIKeyManager
 
 def manage_open_trades():
     """
@@ -166,38 +167,50 @@ def run_all_jobs():
     """Runs the VST-only analysis pipeline with Market Regime and Email Notifications."""
     log.info("--- 🚀 Kicking off ALL DAILY JOBS (VST-Only Mode) ---")
     
-    # <--- MODIFICATION START --->
-    # We wrap the entire function logic in a try...finally block.
     try:
-        # ALL of your original code is now indented inside the 'try' block.
+        # --- MODIFICATION: Initialize DB and AI Manager once at the start ---
+        database_manager.init_db(purpose='analysis')
+        
+        try:
+            key_manager = APIKeyManager(api_keys=config.GEMINI_API_KEY_POOL)
+            analyzer = AIAnalyzer(api_key=key_manager.get_key())
+        except ValueError as e: 
+            log.fatal(f"Failed to initialize AI Analyzer: {e}. Aborting.")
+            return
+
+        # --- The rest of the script now uses the single DB connection ---
         closed_trades = manage_open_trades()
 
         log.info("--- 🔍 Starting New Analysis Generation ---")
-        try:
-            analyzer = AIAnalyzer(api_key=config.GEMINI_API_KEY)
-        except ValueError as e: 
-            log.fatal(f"Failed to initialize AI Analyzer: {e}. Aborting.")
-            return # Added return to ensure script stops
-
+        
         market_data = data_retriever.get_nifty50_performance()
         if not market_data: 
             log.error("Could not fetch market performance data. Aborting.")
-            return # Added return to ensure script stops
+            return
 
         market_regime = data_retriever.get_market_regime()
-        
         new_signals = [] 
-
-        log.info("--- fetching Nifty 50 tickers for analysis ---")
-        nifty50_tickers = get_nifty50_tickers()
-
-        if not nifty50_tickers:
-            log.fatal("Could not fetch Nifty 50 tickers. Aborting analysis.")
-            return
+        nifty50_tickers = config.NIFTY_50_TICKERS
 
         log.info(f"--- Starting analysis for {len(nifty50_tickers)} tickers ---")
         for ticker in nifty50_tickers:
-            vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime)
+            # --- MODIFICATION: Resilient analysis loop with key rotation ---
+            max_retries = len(key_manager.api_keys)
+            vst_analysis = None
+            for attempt in range(max_retries):
+                try:
+                    vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime)
+                    break # If successful, exit the retry loop
+                except Exception as e:
+                    log.warning(f"Analysis pipeline failed for {ticker} on attempt {attempt + 1}. Error: {e}")
+                    if attempt < max_retries - 1:
+                        new_key = key_manager.rotate_key()
+                        analyzer = AIAnalyzer(api_key=new_key)
+                        log.info("Retrying analysis with the new key...")
+                        time.sleep(2)
+                    else:
+                        log.error(f"All API keys failed for {ticker}. Analysis for this stock failed.")
+            # --- End of resilient loop ---
             
             if not vst_analysis or not _validate_analysis_output(vst_analysis, ticker) or not _validate_trade_plan(vst_analysis):
                 log.warning(f"No valid VST analysis was generated for {ticker}.")
@@ -205,7 +218,7 @@ def run_all_jobs():
                     database_manager.save_vst_analysis(ticker, vst_analysis)
                 continue
 
-            database_manager.init_db(purpose='analysis')
+            # Note: No more init_db() calls needed here
             database_manager.save_vst_analysis(ticker, vst_analysis)
             database_manager.save_live_prediction(vst_analysis)
 
@@ -239,13 +252,11 @@ def run_all_jobs():
 
         log.info("--- ✅ All daily jobs finished ---")
         generate_performance_report()
-
         send_daily_briefing(new_signals, closed_trades)
     
     finally:
-        # This 'finally' block is guaranteed to run at the end, ensuring a clean shutdown.
+        # This block remains the same, ensuring a clean shutdown.
         database_manager.close_db_connection()
-    # <--- MODIFICATION END --->
 
 
 if __name__ == "__main__":

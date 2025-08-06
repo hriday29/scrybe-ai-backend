@@ -48,7 +48,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
             os.remove(STATE_FILE)
 
     try:
-        key_manager = APIKeyManager(api_keys=config.GEMINI_BACKTESTING_KEYS)
+        key_manager = APIKeyManager(api_keys=config.GEMINI_API_KEY_POOL)
         analyzer = AIAnalyzer(api_key=key_manager.get_key())
         
         log.info(f"Pre-loading historical data for {len(stocks_to_test)} stocks...")

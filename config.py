@@ -11,7 +11,7 @@ SCHEDULER_DB_URI = os.getenv("SCHEDULER_DB_URI")
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
 NEWSAPI_API_KEY = os.getenv('NEWSAPI_API_KEY')
 
-GEMINI_BACKTESTING_KEYS = [
+GEMINI_API_KEY_POOL = [
     key for key in [
         os.getenv("GOOGLE_API_KEY_1"),
         os.getenv("GOOGLE_API_KEY_2"),

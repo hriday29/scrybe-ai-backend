@@ -32,6 +32,13 @@ jobs:
         env:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          # The main key, can be a duplicate of key_1 or a separate one
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }} 
+          # The new pool of keys for the APIKeyManager
+          GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
+          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
+          GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
+          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
+          # The News API key, keep it here for when we re-enable it
           NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
         run: python run_daily_jobs.py
