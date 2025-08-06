@@ -11,6 +11,15 @@ SCHEDULER_DB_URI = os.getenv("SCHEDULER_DB_URI")
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
 NEWSAPI_API_KEY = os.getenv('NEWSAPI_API_KEY')
 
+GEMINI_BACKTESTING_KEYS = [
+    key for key in [
+        os.getenv("GOOGLE_API_KEY_1"),
+        os.getenv("GOOGLE_API_KEY_2"),
+        os.getenv("GOOGLE_API_KEY_3"),
+        os.getenv("GOOGLE_API_KEY_4"),
+    ] if key
+]
+
 # --- Email Configuration ---
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")

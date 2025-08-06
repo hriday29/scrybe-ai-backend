@@ -486,3 +486,33 @@ def get_market_regime() -> str:
         log.error(f"Failed to determine market regime: {e}")
         # Default to Neutral in case of any error
         return "Neutral"
+    
+def calculate_regime_from_data(historical_data: pd.DataFrame) -> str:
+    """
+    Calculates the market regime from a given DataFrame of historical index data.
+    Returns 'Bullish', 'Bearish', or 'Neutral'.
+    """
+    if historical_data is None or len(historical_data) < 100:
+        return "Neutral" # Not enough data to determine
+
+    try:
+        # Use a copy to avoid SettingWithCopyWarning
+        data = historical_data.copy()
+        data.ta.ema(length=20, append=True)
+        data.ta.ema(length=50, append=True)
+        data.ta.ema(length=100, append=True)
+        data.dropna(inplace=True)
+
+        latest_emas = data.iloc[-1]
+        ema_20 = latest_emas['EMA_20']
+        ema_50 = latest_emas['EMA_50']
+        ema_100 = latest_emas['EMA_100']
+
+        if ema_20 > ema_50 > ema_100:
+            return "Bullish"
+        elif ema_20 < ema_50 < ema_100:
+            return "Bearish"
+        else:
+            return "Neutral"
+    except Exception:
+        return "Neutral" # Default to Neutral on any error

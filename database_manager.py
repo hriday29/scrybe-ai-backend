@@ -156,12 +156,13 @@ def get_precomputed_analysis(ticker: str) -> dict | None:
 
 # --- Functions for HISTORICAL Backtesting ---
 
-def save_prediction_for_backtesting(prediction_doc: dict):
+def save_prediction_for_backtesting(prediction_doc: dict, batch_id: str):
     """Saves a pre-formatted prediction document to the scheduler database."""
     if predictions_collection is None:
         log.error("Cannot save prediction, 'scheduler' database not initialized.")
         return
     try:
+        prediction_doc['batch_id'] = batch_id
         predictions_collection.insert_one(prediction_doc)
         log.info(f"Saved new backtest prediction for {prediction_doc['ticker']} on {prediction_doc['prediction_date'].strftime('%Y-%m-%d')}.")
     except Exception as e:
