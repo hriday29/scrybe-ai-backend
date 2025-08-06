@@ -164,7 +164,10 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
         return None
 
 def run_all_jobs():
-    """Runs the VST-only analysis pipeline with Market Regime and Email Notifications."""
+    """
+    Runs the VST-only analysis pipeline with Market Regime and Email Notifications.
+    This version includes resilient API key rotation.
+    """
     log.info("--- 🚀 Kicking off ALL DAILY JOBS (VST-Only Mode) ---")
     
     try:
@@ -174,11 +177,10 @@ def run_all_jobs():
         try:
             key_manager = APIKeyManager(api_keys=config.GEMINI_API_KEY_POOL)
             analyzer = AIAnalyzer(api_key=key_manager.get_key())
-        except ValueError as e: 
-            log.fatal(f"Failed to initialize AI Analyzer: {e}. Aborting.")
+        except (ValueError, AttributeError) as e: 
+            log.fatal(f"Failed to initialize AI Analyzer. Check GEMINI_API_KEY_POOL in config. Error: {e}. Aborting.")
             return
 
-        # --- The rest of the script now uses the single DB connection ---
         closed_trades = manage_open_trades()
 
         log.info("--- 🔍 Starting New Analysis Generation ---")
@@ -199,17 +201,23 @@ def run_all_jobs():
             vst_analysis = None
             for attempt in range(max_retries):
                 try:
+                    # The analysis pipeline is called within the try block
                     vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime)
-                    break # If successful, exit the retry loop
+                    # If the call succeeds, we break out of the retry loop
+                    break 
+                
                 except Exception as e:
                     log.warning(f"Analysis pipeline failed for {ticker} on attempt {attempt + 1}. Error: {e}")
-                    if attempt < max_retries - 1:
+                    # If it's a quota error and we haven't run out of keys, we rotate and retry
+                    if "429" in str(e) and "quota" in str(e).lower() and attempt < max_retries - 1:
                         new_key = key_manager.rotate_key()
-                        analyzer = AIAnalyzer(api_key=new_key)
+                        analyzer = AIAnalyzer(api_key=new_key) # Re-initialize analyzer with new key
                         log.info("Retrying analysis with the new key...")
                         time.sleep(2)
+                    # If it's another type of error, or we've run out of keys, we stop trying for this stock
                     else:
-                        log.error(f"All API keys failed for {ticker}. Analysis for this stock failed.")
+                        log.error(f"Could not recover from error for {ticker}. Analysis for this stock failed.")
+                        break # Exit the retry loop
             # --- End of resilient loop ---
             
             if not vst_analysis or not _validate_analysis_output(vst_analysis, ticker) or not _validate_trade_plan(vst_analysis):
@@ -218,7 +226,6 @@ def run_all_jobs():
                     database_manager.save_vst_analysis(ticker, vst_analysis)
                 continue
 
-            # Note: No more init_db() calls needed here
             database_manager.save_vst_analysis(ticker, vst_analysis)
             database_manager.save_live_prediction(vst_analysis)
 
@@ -255,9 +262,7 @@ def run_all_jobs():
         send_daily_briefing(new_signals, closed_trades)
     
     finally:
-        # This block remains the same, ensuring a clean shutdown.
         database_manager.close_db_connection()
-
-
+        
 if __name__ == "__main__":
     run_all_jobs()

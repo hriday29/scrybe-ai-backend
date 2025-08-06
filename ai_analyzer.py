@@ -152,11 +152,17 @@ class AIAnalyzer:
                 response = model.generate_content(prompt_parts, request_options={"timeout": 180})
                 return json.loads(response.text)
             except Exception as e:
+                # Check if the error is a quota error
+                if "429" in str(e) and "quota" in str(e).lower():
+                    log.error("Quota exceeded. Raising exception to trigger key rotation.")
+                    # Re-raise the exception so the outer loop can catch it
+                    raise e 
+                
                 log.warning(f"AI call attempt {attempt + 1} failed for {live_financial_data['rawDataSheet'].get('symbol', '')}. Error: {e}")
                 if attempt < max_retries - 1:
                     log.info(f"Waiting for {delay} seconds before retrying...")
                     time.sleep(delay)
-                    delay *= 2  # Double the delay for the next attempt
+                    delay *= 2
                 else:
                     log.error(f"AI Scrybe Score generation failed after {max_retries} attempts.")
                     return None
