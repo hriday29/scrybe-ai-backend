@@ -33,5 +33,5 @@ jobs:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
           GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
-          NEWS_API_KEY: ${{ secrets.NEWS_API_KEY }}
+          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
         run: python run_daily_jobs.py
