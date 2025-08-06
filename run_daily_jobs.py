@@ -160,8 +160,14 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
         log.info(f"--- ✅ SUCCESS: VST analysis complete for {ticker} ---")
         return analysis_result
     except Exception as e:
-        log.error(f"--- ❌ FAILURE: VST analysis for {ticker} failed. Error: {e} ---", exc_info=True)
-        return None
+            # If the error is a quota error, we MUST re-raise it
+            # so the outer rotation loop in run_all_jobs() can catch it and rotate the key.
+            if "429" in str(e) and "quota" in str(e).lower():
+                raise e
+            
+            # For all other types of errors, we log them and continue to the next stock.
+            log.error(f"--- ❌ FAILURE: VST analysis for {ticker} failed. Error: {e} ---", exc_info=True)
+            return None
 
 def run_all_jobs():
     """
