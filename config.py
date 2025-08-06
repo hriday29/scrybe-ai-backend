@@ -10,6 +10,7 @@ ANALYSIS_DB_URI = os.getenv("ANALYSIS_DB_URI")
 SCHEDULER_DB_URI = os.getenv("SCHEDULER_DB_URI")
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
 NEWSAPI_API_KEY = os.getenv('NEWSAPI_API_KEY')
+CLERK_SECRET_KEY = os.getenv("CLERK_SECRET_KEY")
 
 GEMINI_API_KEY_POOL = [
     key for key in [
