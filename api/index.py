@@ -15,7 +15,6 @@ from logger_config import log
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_caching import Cache
-from clerk_sdk import Clerk
 import zoneinfo
 
 
@@ -40,9 +39,6 @@ limiter = Limiter(
     app=app,
     default_limits=["200 per day", "50 per hour"]
 )
-
-clerk_secret_key = os.getenv("CLERK_SECRET_KEY")
-clerk = Clerk(secret_key=clerk_secret_key)
 
 # Change "config" to "cache_config"
 cache_config = {
@@ -105,7 +101,6 @@ def custom_json_serializer(obj):
 # --- Stock Analysis Endpoints ---
 
 @app.route('/api/open-trades', methods=['GET'])
-@clerk.require_auth
 def get_open_trades_endpoint():
     log.info("API call received for /api/open-trades")
     try:
@@ -116,7 +111,6 @@ def get_open_trades_endpoint():
         return jsonify({"error": "An internal error occurred while fetching open trades."}), 500
 
 @app.route('/api/analyze/<string:ticker>', methods=['GET'])
-@clerk.require_auth
 @cache.cached(timeout=3600) # Cache each ticker's analysis for 1 hour
 def get_analysis(ticker):
     log.info(f"API call received for /api/analyze/{ticker} - Running DB query.")
@@ -187,7 +181,6 @@ def get_market_pulse():
         return jsonify({"error": "Market Pulse data is currently unavailable."}), 503
 
 @app.route('/api/track-record', methods=['GET'])
-@clerk.require_auth
 def get_track_record():
     log.info("API call received for /api/track-record")
     try:
@@ -201,7 +194,6 @@ def get_track_record():
         return jsonify({"error": "Could not retrieve AI track record."}), 500
 
 @app.route('/api/news/<string:ticker>', methods=['GET'])
-@clerk.require_auth
 def get_news_for_ticker_endpoint(ticker):
     log.info(f"API call received for /api/news/{ticker}")
     try:
@@ -215,7 +207,6 @@ def get_news_for_ticker_endpoint(ticker):
         return jsonify({"error": "An internal error occurred while fetching news."}), 500
 
 @app.route('/api/analysis/ask', methods=['POST'])
-@clerk.require_auth
 @limiter.limit("25 per day") # Allow more queries per day than heavy analysis
 def ask_conversational_question():
     log.info("API call received for /api/analysis/ask")
@@ -241,7 +232,6 @@ def ask_conversational_question():
         return jsonify({"error": "An internal server error occurred."}), 500
     
 @app.route('/api/trades/log', methods=['POST'])
-@clerk.require_auth
 def log_user_trade():
     log.info("API call received for /api/trades/log")
     
@@ -261,7 +251,6 @@ def log_user_trade():
         return jsonify({"error": "An internal server error occurred."}), 500
 
 @app.route('/api/analysis/vote', methods=['POST'])
-@clerk.require_auth
 @limiter.limit("50 per day")
 def record_analysis_vote():
     log.info("API call received for /api/analysis/vote")
