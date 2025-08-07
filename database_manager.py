@@ -269,7 +269,7 @@ def get_open_trades() -> list:
         log.error(f"Failed to fetch and process open trades: {e}", exc_info=True)
         return []
     
-def save_user_trade(trade_data: dict):
+def save_user_trade(trade_data: dict, user_id: str): # Accept the user_id
     """Saves a user-submitted trade log to the user_trades collection."""
     if db is None:
         log.error("Cannot save user trade, 'analysis' db not initialized.")
@@ -277,12 +277,11 @@ def save_user_trade(trade_data: dict):
     try:
         user_trades_collection = db.user_trades
         
-        # Add a timestamp and placeholder for future user ID
         trade_data['logged_at'] = datetime.now(timezone.utc)
-        trade_data['user_id'] = "anonymous_beta_user" # Placeholder for now
+        trade_data['user_id'] = user_id # Use the real user_id
         
         result = user_trades_collection.insert_one(trade_data)
-        log.info(f"Successfully saved user trade with ID: {result.inserted_id}")
+        log.info(f"Successfully saved user trade with ID: {result.inserted_id} for user {user_id}")
         return result.inserted_id
     except Exception as e:
         log.error(f"Failed to save user trade. Error: {e}")
@@ -330,7 +329,7 @@ def add_analysis_vote(analysis_id: str, vote_type: str):
         log.error(f"Failed to add analysis vote. Error: {e}", exc_info=True)
         return False
     
-def save_feedback(feedback_data: dict):
+def save_feedback(feedback_data: dict, user_id: str): # <-- 1. Add user_id here
     """Saves user-submitted feedback to the feedback collection."""
     if db is None:
         log.error("Cannot save feedback, 'analysis' db not initialized.")
@@ -338,9 +337,8 @@ def save_feedback(feedback_data: dict):
     try:
         feedback_collection = db.feedback
         
-        # Add a timestamp and placeholder for future user ID
         feedback_data['submitted_at'] = datetime.now(timezone.utc)
-        feedback_data['user_id'] = "anonymous_beta_user" # Placeholder for now
+        feedback_data['user_id'] = user_id # <-- 2. Use the real user_id
         
         result = feedback_collection.insert_one(feedback_data)
         log.info(f"Successfully saved user feedback with ID: {result.inserted_id}")
@@ -349,7 +347,7 @@ def save_feedback(feedback_data: dict):
         log.error(f"Failed to save user feedback. Error: {e}")
         return None
     
-def save_faq_submission(submission_data: dict):
+def save_faq_submission(submission_data: dict, user_id: str): # <-- 1. Add user_id here
     """Saves a user-submitted question to the faq_submissions collection."""
     if db is None:
         log.error("Cannot save FAQ submission, 'analysis' db not initialized.")
@@ -358,8 +356,8 @@ def save_faq_submission(submission_data: dict):
         faq_submissions_collection = db.faq_submissions
         
         submission_data['submitted_at'] = datetime.now(timezone.utc)
-        submission_data['user_id'] = "anonymous_beta_user" # Placeholder for now
-        submission_data['status'] = "new" # For tracking reviewed questions
+        submission_data['user_id'] = user_id # <-- 2. Use the real user_id
+        submission_data['status'] = "new" 
         
         result = faq_submissions_collection.insert_one(submission_data)
         log.info(f"Successfully saved FAQ submission with ID: {result.inserted_id}")

@@ -16,6 +16,9 @@ from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from flask_caching import Cache
 import zoneinfo
+from functools import wraps
+import firebase_admin
+from firebase_admin import credentials, auth
 
 
 def convert_utc_to_ist_string(utc_dt: datetime) -> str:
@@ -29,7 +32,42 @@ def convert_utc_to_ist_string(utc_dt: datetime) -> str:
     return ist_dt.strftime("%I:%M:%S %p %Z on %b %d, %Y") 
 
 app = Flask(__name__)
-# Get the frontend URL from an environment variable
+
+try:
+    # IMPORTANT: This assumes your `firebase-service-account.json` is in the root
+    # directory and your script is in a subdirectory like /api.
+    # Adjust the path if your structure is different.
+    cred_path = os.path.join(os.path.dirname(__file__), '..', 'firebase-service-account.json')
+    cred = credentials.Certificate(cred_path)
+    firebase_admin.initialize_app(cred)
+    log.info("✅ Firebase Admin SDK initialized successfully.")
+except Exception as e:
+    log.fatal(f"🔥 Firebase Admin SDK initialization failed. Error: {e}")
+
+def token_required(f):
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        auth_header = request.headers.get('Authorization')
+        if not auth_header or not auth_header.startswith('Bearer '):
+            return jsonify({"error": "Authorization token is missing or invalid."}), 401
+
+        id_token = auth_header.split('Bearer ')[1]
+        
+        try:
+            # Verify the token
+            decoded_token = auth.verify_id_token(id_token)
+            # Pass the decoded token to the route
+            return f(decoded_token, *args, **kwargs)
+        except firebase_admin.auth.ExpiredIdTokenError:
+            return jsonify({"error": "Token has expired. Please log in again."}), 401
+        except firebase_admin.auth.InvalidIdTokenError:
+            return jsonify({"error": "Token is invalid."}), 401
+        except Exception as e:
+            log.error(f"An unexpected error occurred during token verification: {e}")
+            return jsonify({"error": "Could not verify authorization."}), 500
+            
+    return decorated_function
+
 frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000') 
 # Initialize CORS with the frontend URL
 CORS(app, resources={r"/api/*": {"origins": frontend_url}})
@@ -64,8 +102,9 @@ def health_check():
     return jsonify({"status": "healthy", "message": "Scrybe AI Backend is running."}), 200
 
 @app.route('/api/news/analyze-one', methods=['POST'])
+@token_required
 @limiter.limit("10 per day") # Apply the specific rate limit for this endpoint
-def analyze_single_news_article():
+def analyze_single_news_article(current_user):
     log.info("API call received for /api/news/analyze-one")
     
     if not ai_analyzer_instance:
@@ -101,7 +140,8 @@ def custom_json_serializer(obj):
 # --- Stock Analysis Endpoints ---
 
 @app.route('/api/open-trades', methods=['GET'])
-def get_open_trades_endpoint():
+@token_required
+def get_open_trades_endpoint(current_user):
     log.info("API call received for /api/open-trades")
     try:
         open_trades = database_manager.get_open_trades()
@@ -207,8 +247,9 @@ def get_news_for_ticker_endpoint(ticker):
         return jsonify({"error": "An internal error occurred while fetching news."}), 500
 
 @app.route('/api/analysis/ask', methods=['POST'])
+@token_required
 @limiter.limit("25 per day") # Allow more queries per day than heavy analysis
-def ask_conversational_question():
+def ask_conversational_question(current_user):
     log.info("API call received for /api/analysis/ask")
     
     if not ai_analyzer_instance:
@@ -231,16 +272,19 @@ def ask_conversational_question():
         log.error(f"Error during conversational Q&A: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred."}), 500
     
+# in index.py
 @app.route('/api/trades/log', methods=['POST'])
-def log_user_trade():
-    log.info("API call received for /api/trades/log")
+@token_required
+def log_user_trade(current_user): # Add the decorator and current_user
+    log.info(f"API call to log trade for user: {current_user['uid']}")
     
     trade_log_data = request.json
     if not trade_log_data or 'ticker' not in trade_log_data:
         return jsonify({"error": "Invalid trade log data provided."}), 400
 
     try:
-        insert_id = database_manager.save_user_trade(trade_log_data)
+        # Pass the real user ID to your database function
+        insert_id = database_manager.save_user_trade(trade_log_data, current_user['uid'])
         
         if insert_id:
             return jsonify({"status": "success", "trade_id": str(insert_id)}), 201
@@ -251,8 +295,9 @@ def log_user_trade():
         return jsonify({"error": "An internal server error occurred."}), 500
 
 @app.route('/api/analysis/vote', methods=['POST'])
+@token_required
 @limiter.limit("50 per day")
-def record_analysis_vote():
+def record_analysis_vote(current_user):
     log.info("API call received for /api/analysis/vote")
     
     data = request.json
@@ -298,9 +343,10 @@ def get_analysis_votes(analysis_id):
         return jsonify({"error": "An internal server error occurred."}), 500
     
 @app.route('/api/feedback/submit', methods=['POST'])
+@token_required
 @limiter.limit("10 per hour") # Prevent spam
-def submit_feedback():
-    log.info("API call received for /api/feedback/submit")
+def submit_feedback(current_user):
+    log.info(f"API call received for /api/feedback/submit from user {current_user['uid']}")
     
     data = request.json
     
@@ -314,7 +360,8 @@ def submit_feedback():
         return jsonify({"error": "Feedback text is required."}), 400
 
     try:
-        insert_id = database_manager.save_feedback(data)
+        # Pass the user's ID to the database function
+        insert_id = database_manager.save_feedback(data, current_user['uid'])
         
         if insert_id:
             return jsonify({"status": "success", "feedback_id": str(insert_id)}), 201
@@ -325,16 +372,18 @@ def submit_feedback():
         return jsonify({"error": "An internal server error occurred."}), 500
     
 @app.route('/api/faq/submit', methods=['POST'])
+@token_required
 @limiter.limit("5 per hour") # Prevent spam
-def submit_faq_question():
-    log.info("API call received for /api/faq/submit")
+def submit_faq_question(current_user):
+    log.info(f"API call received for /api/faq/submit from user {current_user['uid']}")
     
     data = request.json
     if not data.get('question_text'):
         return jsonify({"error": "Question text is required."}), 400
 
     try:
-        insert_id = database_manager.save_faq_submission(data)
+        # Pass the user's ID to the database function
+        insert_id = database_manager.save_faq_submission(data, current_user['uid'])
         
         if insert_id:
             return jsonify({"status": "success", "submission_id": str(insert_id)}), 201
