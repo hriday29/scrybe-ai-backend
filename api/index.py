@@ -19,6 +19,8 @@ import zoneinfo
 from functools import wraps
 import firebase_admin
 from firebase_admin import credentials, auth
+import sentry_sdk
+from sentry_sdk.integrations.flask import FlaskIntegration
 
 
 def convert_utc_to_ist_string(utc_dt: datetime) -> str:
@@ -32,6 +34,17 @@ def convert_utc_to_ist_string(utc_dt: datetime) -> str:
     return ist_dt.strftime("%I:%M:%S %p %Z on %b %d, %Y") 
 
 app = Flask(__name__)
+
+sentry_sdk.init(
+    dsn=os.getenv("SENTRY_DSN"),
+    integrations=[
+        FlaskIntegration(),
+    ],
+    # Set traces_sample_rate to 1.0 to capture 100%
+    # of transactions for performance monitoring.
+    # We recommend adjusting this value in production.
+    traces_sample_rate=1.0,
+)
 
 try:
     # IMPORTANT: This assumes your `firebase-service-account.json` is in the root
@@ -403,7 +416,12 @@ def get_all_analysis():
     except Exception as e:
         log.error(f"Failed to fetch all analysis: {e}", exc_info=True)
         return jsonify({"error": "Could not retrieve all analysis data."}), 500
-    
+
+@app.route('/debug-sentry')
+def trigger_error():
+    division_by_zero = 1 / 0
+    return "This will never be reached."
+
 if __name__ == '__main__':
     log.info("Initializing default database connection...")
     database_manager.init_db(purpose='analysis')
