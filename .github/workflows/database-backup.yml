@@ -1,0 +1,38 @@
+name: Daily Database Backup
+
+on:
+  schedule:
+    # This runs the backup every Sunday at 16:30 UTC (10:00 PM IST)
+    - cron: '30 16 * * 0'
+  workflow_dispatch: # Allows you to run this workflow manually from the Actions tab
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Install MongoDB Database Tools
+        run: |
+          curl -fsSL https://www.mongodb.org/static/pgp/server-6.0.asc | sudo gpg --dearmor -o /usr/share/keyrings/mongodb-archive-keyring.gpg
+          echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-archive-keyring.gpg ] https://repo.mongodb.org/apt/ubuntu focal/mongodb-org/6.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-6.0.list
+          sudo apt-get update
+          sudo apt-get install -y mongodb-database-tools
+
+      - name: Run mongodump for Analysis DB
+        env:
+          DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
+        run: mongodump --uri="$DB_URI" --archive="analysis-backup-$(date +%Y-%m-%d).gz" --gzip
+
+      - name: Run mongodump for Scheduler DB
+        env:
+          DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
+        run: mongodump --uri="$DB_URI" --archive="scheduler-backup-$(date +%Y-%m-%d).gz" --gzip
+
+      - name: Upload Backup Artifact
+        uses: actions/upload-artifact@v3
+        with:
+          name: database-backups-${{ github.run_id }}
+          path: ./*.gz
+          retention-days: 14
