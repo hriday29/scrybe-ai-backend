@@ -1,21 +1,26 @@
-# Scrybe AI - Backend API
+<div align="center">
+  <img src="public/logo512.png" alt="Scrybe AI Logo" width="140">
+</div>
+
+# Scrybe AI
 
 <div align="center">
 
-**The server-side engine that powers the Scrybe AI analysis platform**
+**AI-Powered Swing Trading Analysis for the Modern Trader**
+
+[**🚀 View Live Application**](https://scrybe-ai-frontend.onrender.com/)
 
 ![Build Status](https://img.shields.io/badge/build-passing-brightgreen?style=for-the-badge&logo=github&logoColor=white)
 ![Code Coverage](https://img.shields.io/badge/coverage-95%25-brightgreen?style=for-the-badge&logo=codecov&logoColor=white)
+![Status](https://img.shields.io/badge/Status-Beta-blue.svg?style=for-the-badge)
 ![License](https://img.shields.io/badge/License-Proprietary-red.svg?style=for-the-badge)
+![Render](https://img.shields.io/badge/Render-Deployment-46E3B7?style=for-the-badge&logo=render&logoColor=white)
 
-![Python](https://img.shields.io/badge/Python-3776AB?style=for-the-badge&logo=python&logoColor=white)
-![Flask](https://img.shields.io/badge/Flask-000000?style=for-the-badge&logo=flask&logoColor=white)
-![MongoDB](https://img.shields.io/badge/MongoDB-4EA94B?style=for-the-badge&logo=mongodb&logoColor=white)
+![React](https://img.shields.io/badge/React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
+![Tailwind CSS](https://img.shields.io/badge/Tailwind_CSS-38B2AC?style=for-the-badge&logo=tailwind-css&logoColor=white)
+![Framer Motion](https://img.shields.io/badge/Framer_Motion-0055FF?style=for-the-badge&logo=framer&logoColor=white)
 ![Firebase](https://img.shields.io/badge/Firebase-FFCA28?style=for-the-badge&logo=firebase&logoColor=black)
-![Google AI](https://img.shields.io/badge/Google_AI-4285F4?style=for-the-badge&logo=google&logoColor=white)
-![Render](https://img.shields.io/badge/Render-46E3B7?style=for-the-badge&logo=render&logoColor=white)
 ![Sentry](https://img.shields.io/badge/Sentry-362D59?style=for-the-badge&logo=sentry&logoColor=white)
-![GitHub Actions](https://img.shields.io/badge/GitHub_Actions-2088FF?style=for-the-badge&logo=github-actions&logoColor=white)
 
 </div>
 
@@ -23,89 +28,76 @@
 
 ## 📋 Table of Contents
 
-- [🚀 About The Project](#-about-the-project)
-- [🏗️ Core Architecture](#️-core-architecture)
+- [🚀 About Scrybe AI](#-about-scrybe-ai)
+- [✨ Key Features](#-key-features)
 - [🛠️ Technology Stack](#️-technology-stack)
-- [⚙️ Key System Components](#️-key-system-components)
 - [🏁 Getting Started](#-getting-started)
 - [💻 Usage](#-usage)
 - [🗺️ Roadmap](#️-roadmap)
+- [❗ Important Disclaimers](#-important-disclaimers)
 - [🤝 Contributing](#-contributing)
 - [⚖️ License](#️-license)
 - [📞 Contact](#-contact)
 
 ---
 
-## 🚀 About The Project
+## 🚀 About Scrybe AI
 
-This repository contains the backend service for the Scrybe AI platform. This API serves as the core engine responsible for all data processing, analysis, and user management. It acts as the single source of truth for the React frontend, providing all necessary data via a secure and efficient RESTful API.
+In today's complex financial markets, traders are inundated with data, noise, and conflicting opinions. **Scrybe AI** is engineered to bring clarity and discipline to this chaos. Our platform leverages **generative AI** to perform deep, institutional-grade analysis on stocks, distilling vast amounts of information into a single, objective **"Scrybe Score"**.
 
-The system is engineered for **reliability** and **scalability**, featuring automated daily jobs, robust error monitoring, and a secure authentication layer to protect user-specific endpoints. Built with modern Python technologies and cloud-native architecture, it delivers high-performance financial analysis powered by cutting-edge AI.
+This provides users with a data-driven edge to identify and research high-probability swing trading setups. Our React-powered frontend delivers a fast, responsive, and intuitive interface that makes sophisticated financial analysis accessible to modern traders.
 
-### ✨ Key Features
-
-- **🔒 Secure Authentication** - Firebase-based JWT token verification
-- **🤖 AI-Powered Analysis** - Integration with Google's Generative AI (Gemini)
-- **⏰ Automated Processing** - Daily analysis pipeline via GitHub Actions
-- **📊 Real-time Monitoring** - Comprehensive error tracking with Sentry
-- **☁️ Cloud-Native** - Deployed on Render with MongoDB Atlas
-- **🔄 Automated Backups** - Weekly database backups for data protection
+### 🎯 **Our Mission**
+Transform the way traders approach swing trading by providing AI-driven insights that cut through market noise and deliver actionable intelligence.
 
 ---
 
-## 🏗️ Core Architecture
+## ✨ Key Features
 
-The backend is built as a modular Flask application with clear separation of concerns:
+### 🤖 **AI-Powered Stock Analysis**
+Get instant, comprehensive reports with objective **"Scrybe Scores"** ranging from -100 to +100, providing clear directional bias for any stock.
 
-### 🌐 **API Layer (`api/index.py`)**
-Defines all public and protected REST endpoints, handles incoming requests, and manages rate limiting.
+### 📈 **Actionable Trade Plans**
+Every analysis includes detailed trade plans with precise entry points, profit targets, and stop-loss levels - no guesswork required.
 
-### 🧠 **Service Layer (`ai_analyzer.py`, `data_retriever.py`)**
-Contains the core business logic, including integration with Google's Generative AI and external financial data sources.
+### 🎯 **"On The Radar" Watchlist**
+Curated list of stocks our AI has identified as being on the verge of generating trading signals, giving you a competitive edge.
 
-### 🗄️ **Data Layer (`database_manager.py`)**
-Manages all interactions with the MongoDB Atlas database clusters.
+### 🌍 **Market & Index Analysis**
+High-level strategic overview of entire markets and major indices to help you understand the broader market context.
 
-### 🚀 **Automation (`.github/workflows`)**
-GitHub Actions are used for scheduled tasks, including running the daily analysis pipeline and performing automated database backups.
+### 📊 **Transparent Track Record**
+Complete performance log of every trade signal the AI has generated, with full transparency on wins, losses, and overall performance.
+
+### 🔐 **Secure Authentication**
+Enterprise-grade security with Google and Microsoft sign-in options, powered by Firebase Authentication.
+
+### 📱 **Fully Responsive Design**
+Seamless experience across all devices - desktop, tablet, and mobile - built with modern responsive design principles.
 
 ---
 
 ## 🛠️ Technology Stack
 
-### **Core Technologies**
-- **Framework:** Flask - Lightweight and flexible web framework
-- **Language:** Python 3.9+ - Modern, powerful programming language
-- **Database:** MongoDB - NoSQL database for flexible data storage
+### **Frontend Framework**
+- **React 18** - Modern JavaScript library for building user interfaces
+- **JavaScript/ES6+** - Latest JavaScript features for optimal performance
+
+### **Styling & Animation**
+- **Tailwind CSS** - Utility-first CSS framework for rapid development
+- **Framer Motion** - Production-ready motion library for React
 
 ### **Authentication & Security**
-- **Authentication:** Firebase Admin SDK - Secure JWT verification
-- **Error Monitoring:** Sentry - Real-time error tracking and performance monitoring
+- **Firebase Authentication** - Secure, scalable auth with social providers
+- **JWT Tokens** - Stateless authentication for API security
 
-### **AI & Data Processing**
-- **AI Engine:** Google Generative AI (Gemini) - Advanced language model for analysis
-- **Data Processing:** PyMongo - MongoDB driver for Python
+### **Monitoring & Analytics**
+- **Sentry** - Real-time error monitoring and performance tracking
+- **Firebase Analytics** - User behavior and app performance insights
 
-### **Deployment & Operations**
-- **Hosting:** Render - Cloud platform with automatic scaling
-- **Server:** Gunicorn - WSGI HTTP Server
-- **CI/CD:** GitHub Actions - Automated workflows and cron jobs
-
----
-
-## ⚙️ Key System Components
-
-### 🔐 **Secure Authentication**
-Protects user-specific endpoints by verifying Firebase ID Tokens passed in the `Authorization` header, ensuring data privacy and security.
-
-### 📈 **Automated Daily Analysis**
-A scheduled GitHub Action (`run_daily_jobs.py`) runs the complete analysis pipeline for all tracked stocks every trading day, keeping data fresh and relevant.
-
-### 💾 **Automated Backups**
-A scheduled GitHub Action (`database-backup.yml`) performs a full `mongodump` of the production databases weekly, storing artifacts securely for disaster recovery.
-
-### 🚨 **Real-time Error Monitoring**
-The Sentry SDK captures and reports any unhandled exceptions that occur on the live server, enabling rapid response to issues.
+### **Deployment & Hosting**
+- **Render** - Modern cloud platform with automatic deployments
+- **CDN Integration** - Fast global content delivery
 
 ---
 
@@ -113,108 +105,136 @@ The Sentry SDK captures and reports any unhandled exceptions that occur on the l
 
 ### **Prerequisites**
 
-Ensure you have the following installed:
-- **Python 3.9+** and pip
-- Access to all necessary API keys and database URIs
-- Git for version control
+Before you begin, ensure you have the following installed:
+- **Node.js** (v16.0 or higher)
+- **npm** or **yarn** package manager
+- **Git** for version control
 
 ### **Installation**
 
 1. **Clone the repository**
    ```bash
-   git clone https://github.com/your-username/scrybe-ai-backend.git
-   cd scrybe-ai-backend
+   git clone https://github.com/your-username/scrybe-ai-frontend.git
+   cd scrybe-ai-frontend
    ```
 
-2. **Create virtual environment**
+2. **Install dependencies**
    ```bash
-   python -m venv venv
-   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   npm install
+   # or
+   yarn install
    ```
 
-3. **Install dependencies**
+3. **Environment setup**
    ```bash
-   pip install -r requirements.txt
-   ```
-
-4. **Environment setup**
-   ```bash
-   # Create .env file in project root
-   touch .env
+   # Create environment file
+   touch .env.local
    ```
    
    Add the following environment variables:
    ```env
-   ANALYSIS_DB_URI=your_mongodb_uri
-   SENTRY_DSN=your_sentry_dsn
-   GOOGLE_API_KEY=your_google_api_key
-   FIREBASE_PROJECT_ID=your_firebase_project_id
+   REACT_APP_FIREBASE_API_KEY=your_firebase_api_key
+   REACT_APP_FIREBASE_AUTH_DOMAIN=your_auth_domain
+   REACT_APP_FIREBASE_PROJECT_ID=your_project_id
+   REACT_APP_FIREBASE_STORAGE_BUCKET=your_storage_bucket
+   REACT_APP_FIREBASE_MESSAGING_SENDER_ID=your_sender_id
+   REACT_APP_FIREBASE_APP_ID=your_app_id
+   REACT_APP_SENTRY_DSN=your_sentry_dsn
+   REACT_APP_API_BASE_URL=your_backend_api_url
    ```
 
-5. **Firebase setup**
+4. **Start development server**
    ```bash
-   # Place your Firebase service account JSON file in project root
-   cp path/to/firebase-service-account.json ./firebase-service-account.json
+   npm start
+   # or
+   yarn start
    ```
 
-6. **Run the development server**
-   ```bash
-   python api/index.py
-   ```
+The application will open in your browser at `http://localhost:3000`.
 
-The server will start on `http://localhost:5000` by default.
+### **Build for Production**
+
+```bash
+npm run build
+# or
+yarn build
+```
 
 ---
 
 ## 💻 Usage
 
-### **API Endpoints**
+### **Getting Started as a User**
 
-#### **Public Endpoints**
-- `GET /health` - Health check endpoint
-- `GET /api/public/stocks` - Get public stock data
+1. **Sign Up/Sign In**
+   - Visit the live application
+   - Choose Google or Microsoft authentication
+   - Complete your profile setup
 
-#### **Protected Endpoints**
-All protected endpoints require a valid Firebase ID token in the Authorization header:
+2. **Analyze Stocks**
+   - Enter any stock symbol in the search bar
+   - Wait for AI analysis to complete
+   - Review your Scrybe Score and trade plan
+
+3. **Track Performance**
+   - Monitor your watchlist in "On The Radar"
+   - Review historical performance in the track record
+   - Stay informed with market analysis
+
+### **Key User Workflows**
+
+#### **Stock Analysis Flow**
 ```
-Authorization: Bearer <your-firebase-id-token>
+Search Symbol → AI Processing → Scrybe Score → Trade Plan → Execution
 ```
 
-- `GET /api/user/portfolio` - Get user's portfolio
-- `POST /api/user/analysis` - Request new analysis
-- `GET /api/user/history` - Get analysis history
-
-### **Authentication**
-
-Include the Firebase ID token in your requests:
-```javascript
-const response = await fetch('/api/user/portfolio', {
-  headers: {
-    'Authorization': `Bearer ${firebaseIdToken}`,
-    'Content-Type': 'application/json'
-  }
-});
+#### **Watchlist Management**
+```
+Discover Stocks → Add to Radar → Monitor Signals → Execute Trades
 ```
 
 ---
 
 ## 🗺️ Roadmap
 
-- [ ] **Enhanced AI Models** - Integration with additional AI providers
-- [ ] **Real-time Data Streaming** - WebSocket support for live updates
-- [ ] **Advanced Analytics** - Machine learning-based prediction models
-- [ ] **API Rate Limiting** - Enhanced rate limiting and quota management
-- [ ] **Microservices Architecture** - Split into smaller, focused services
-- [ ] **GraphQL Support** - Alternative query interface
-- [ ] **Multi-tenant Support** - Enterprise-grade organization features
+### **Phase 1: Core Enhancements** *(Q2 2025)*
+- [ ] **Advanced Portfolio Tracking** - Comprehensive P&L tracking
+- [ ] **Real-time Notifications** - Push alerts for trade signals
+- [ ] **Mobile App** - Native iOS and Android applications
 
-See the [open issues](https://github.com/your-username/scrybe-ai-backend/issues) for a full list of proposed features and known issues.
+### **Phase 2: Advanced Features** *(Q3 2025)*
+- [ ] **Social Trading** - Follow and copy successful traders
+- [ ] **Options Analysis** - AI-powered options strategies
+- [ ] **Backtesting Engine** - Test strategies on historical data
+
+### **Phase 3: Enterprise Features** *(Q4 2025)*
+- [ ] **API Access** - RESTful API for institutional clients
+- [ ] **White Label Solutions** - Customizable platform for brokers
+- [ ] **Advanced Analytics** - Deep dive performance metrics
+
+See our [public roadmap](https://github.com/your-username/scrybe-ai-frontend/projects) for detailed progress tracking.
+
+---
+
+## ❗ Important Disclaimers
+
+### **⚠️ Not Financial Advice**
+The content and data provided by Scrybe AI are for **informational and educational purposes only**. Our platform is **not** financial advice, investment advice, or trading advice. Always consult with qualified financial professionals before making investment decisions.
+
+### **📋 User Responsibility**
+You assume **complete responsibility** for evaluating the merits and risks of any information provided by our service. You are **100% responsible** for all trading and investment decisions and any resulting profits or losses.
+
+### **🛡️ No Warranties**
+Scrybe AI is provided on an **"AS IS"** and **"AS AVAILABLE"** basis. We make no warranties regarding the accuracy, timeliness, or reliability of the information provided. Past performance does not guarantee future results.
+
+### **⚖️ Risk Warning**
+Trading stocks involves substantial risk of loss and is not suitable for all investors. You should carefully consider your financial situation and risk tolerance before using our platform.
 
 ---
 
 ## 🤝 Contributing
 
-We appreciate your interest in contributing to Scrybe AI Backend! However, please note that this is a **proprietary, closed-source project**. 
+We appreciate your interest in contributing to Scrybe AI! However, please note that this is a **proprietary, closed-source project**.
 
 ### **For Internal Team Members**
 
@@ -224,16 +244,18 @@ We appreciate your interest in contributing to Scrybe AI Backend! However, pleas
 4. **Push** to the branch (`git push origin feature/amazing-feature`)
 5. **Open** a Pull Request
 
-### **Code Standards**
+### **Development Guidelines**
 
-- Follow PEP 8 style guidelines
-- Write comprehensive tests for new features
-- Update documentation for any API changes
-- Ensure all tests pass before submitting PR
+- Follow React best practices and hooks patterns
+- Use TypeScript for type safety (when applicable)
+- Write comprehensive tests for components
+- Follow our ESLint and Prettier configurations
+- Ensure responsive design across all breakpoints
+- Test authentication flows thoroughly
 
 ### **External Contributors**
 
-If you're interested in contributing and are not part of the internal team, please reach out to discuss collaboration opportunities.
+This is a closed-source project. External contributions are not currently accepted. For partnership or collaboration inquiries, please contact our team directly.
 
 ---
 
@@ -245,20 +267,53 @@ If you're interested in contributing and are not part of the internal team, plea
 ### **Proprietary License**
 This is a proprietary, closed-source project. The code contained within this repository is the sole intellectual property of Scrybe AI. You may not fork, copy, modify, distribute, or use this code in any way without express written permission from the copyright holder.
 
-**Unauthorized use, reproduction, or distribution of this software is strictly prohibited and may result in severe civil and criminal penalties.**
+### **Business Source License (BUSL-1.1)**
+This software is licensed under a Business Source License with the following restrictions:
+- **Commercial Use**: Prohibited without written permission from Scrybe AI
+- **Distribution**: Not permitted without explicit authorization
+- **Modification**: Creating derivative works is strictly forbidden
+- **Reverse Engineering**: Decompilation or reverse engineering is prohibited
 
-For licensing inquiries, please contact our legal team.
+### **Intellectual Property**
+The Service and its original content, features, and functionality are and will remain the exclusive property of Scrybe AI and its licensors. This includes but is not limited to:
+
+- Proprietary algorithms and AI models
+- User interface designs and user experience
+- Trade analysis methodologies
+- Brand elements and trademarks
+
+### **Legal Notice**
+```
+/*
+ * Copyright (c) 2025 Scrybe AI
+ * Proprietary and confidential. Not for public use.
+ * Unauthorized reproduction or usage is strictly prohibited.
+ */
+```
+
+**VIOLATIONS**: Unauthorized use, reproduction, or distribution of this software constitutes a violation of copyright law and may result in severe civil and criminal penalties, including immediate legal action, monetary damages, injunctive relief, and attorney fees.
 
 ---
 
 ## 📞 Contact
 
-**Scrybe AI Development Team**
+### **User Support**
+For feedback, bug reports, or user support, please use the **"Feedback" widget** located within the live application.
 
-- **Project Repository:** [https://github.com/your-username/scrybe-ai-backend](https://github.com/your-username/scrybe-ai-backend)
-- **Email:** dev@scrybe-ai.com
+### **Business Inquiries**
+- **Email:** business@scrybe-ai.com
 - **Website:** [https://scrybe-ai.com](https://scrybe-ai.com)
-- **Documentation:** [https://docs.scrybe-ai.com](https://docs.scrybe-ai.com)
+- **Live Application:** [https://scrybe-ai-frontend.onrender.com/](https://scrybe-ai-frontend.onrender.com/)
+
+### **Development Team**
+- **Technical Support:** dev@scrybe-ai.com
+- **API Documentation:** [https://docs.scrybe-ai.com](https://docs.scrybe-ai.com)
+- **Status Page:** [https://status.scrybe-ai.com](https://status.scrybe-ai.com)
+
+### **Legal & Compliance**
+- **Legal Inquiries:** legal@scrybe-ai.com
+- **Privacy Policy:** [https://scrybe-ai.com/privacy](https://scrybe-ai.com/privacy)
+- **Terms of Service:** [https://scrybe-ai.com/terms](https://scrybe-ai.com/terms)
 
 ---
 
@@ -266,6 +321,8 @@ For licensing inquiries, please contact our legal team.
 
 **Built with ❤️ by the Scrybe AI Team**
 
-[⬆ Back to Top](#scrybe-ai---backend-api)
+*Empowering traders with AI-driven insights since 2025*
+
+[⬆ Back to Top](#scrybe-ai)
 
 </div>
