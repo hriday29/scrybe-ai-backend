@@ -417,11 +417,6 @@ def get_all_analysis():
         log.error(f"Failed to fetch all analysis: {e}", exc_info=True)
         return jsonify({"error": "Could not retrieve all analysis data."}), 500
 
-@app.route('/debug-sentry')
-def trigger_error():
-    division_by_zero = 1 / 0
-    return "This will never be reached."
-
 if __name__ == '__main__':
     log.info("Initializing default database connection...")
     database_manager.init_db(purpose='analysis')
