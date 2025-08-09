@@ -98,9 +98,9 @@ class AIAnalyzer:
             * **Step B: Calculate Stop-Loss.** The `stopLoss` MUST be calculated as exactly 2 times the `CURRENT_VOLATILITY_ATR` away from the `entryPrice`. You must state this calculation in your rationale.
                 * For a BUY: `stopLoss` = `entryPrice` - (2 * `CURRENT_VOLATILITY_ATR`).
                 * For a SELL: `stopLoss` = `entryPrice` + (2 * `CURRENT_VOLATILITY_ATR`).
-            * **Step C: Calculate Initial Target.** The initial `target` MUST be calculated to achieve a `riskRewardRatio` of AT LEAST {min_rr_ratio}.
-                * For a BUY: `target` = `entryPrice` + ({min_rr_ratio} * (`entryPrice` - `stopLoss`)).
-                * For a SELL: `target` = `entryPrice` - ({min_rr_ratio} * (`stopLoss` - `entryPrice`)).
+            * **Step C: Calculate Initial Target.** Your risk per trade is exactly (2 * `CURRENT_VOLATILITY_ATR`). To achieve the required {min_rr_ratio} Risk/Reward Ratio, your target must be calculated with this simplified, direct formula.
+                * For a BUY: `target` = `entryPrice` + ({min_rr_ratio * 2} * `CURRENT_VOLATILITY_ATR`).
+                * For a SELL: `target` = `entryPrice` - ({min_rr_ratio * 2} * `CURRENT_VOLATILITY_ATR`).
             * **Step D: Perform Realism Check.** You must now validate your calculated target. A target predicting a move greater than 6 times the `CURRENT_VOLATILITY_ATR` is highly improbable for a short-term trade.
                 * If `abs(target - entryPrice)` > (6 * `CURRENT_VOLATILITY_ATR`), you MUST adjust the target down to the nearest logical resistance/support level visible on the charts that is within this 6*ATR range. If no such level exists, the trade is invalid.
             * **Step E: Final R/R Validation.** After setting your final target, you MUST re-calculate the final `riskRewardRatio`. If it is below {min_rr_ratio}, the setup is invalid. You MUST then set the `signal` to 'HOLD' and provide this validation failure as the `reasonForHold`.

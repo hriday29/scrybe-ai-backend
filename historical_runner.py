@@ -93,7 +93,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
 
                 for ticker in stocks_to_test:
                     if ticker not in full_historical_data_cache: continue
-                    data_slice = full_historical_data_cache[ticker].loc[:day_str]
+                    data_slice = full_historical_data_cache[ticker].loc[:day_str].copy()
                     
                     if len(data_slice) < 100: continue
 
