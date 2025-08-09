@@ -74,9 +74,9 @@ def process_single_trade(trade: dict, historical_data: pd.DataFrame):
         stop_loss_price = float(trade_plan.get('stopLoss', {}).get('price', 0))
         holding_period = config.VST_STRATEGY['holding_period']
 
-        # --- NEW VALIDATION LOGIC ---
-        # Define a realistic threshold (e.g., a 50% move in 5 days is highly unlikely)
-        REALISTIC_THRESHOLD_PCT = 50.0 
+        # --- UPDATED VALIDATION LOGIC ---
+        # A 20% move in 5 days is a more realistic upper limit for a swing trade.
+        REALISTIC_THRESHOLD_PCT = 20.0  # <-- CHANGED FROM 50.0 to 20.0
         
         target_pct_change = abs(target_price - price_at_prediction) / price_at_prediction * 100
         stop_loss_pct_change = abs(stop_loss_price - price_at_prediction) / price_at_prediction * 100
