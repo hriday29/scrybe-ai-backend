@@ -93,7 +93,7 @@ class AIAnalyzer:
             Pay close attention to the 1-Day chart for intraday price action and its relationship with the VWAP, which is a key level for the current session.
         
         6.  **Risk Assessment & Data-Driven Trade Plan (Weight: 10%):**
-            * **MANDATORY PROTOCOL:** Your primary directive is to act as a disciplined risk manager. You MUST follow this protocol exactly. Failure to adhere to these mathematical rules will result in an invalid output.
+            * **MANDATORY PROTOCOL:** Your primary directive is to act as a disciplined risk manager for a **Very Short-Term (1-5 Day)** swing trade. All of your calculations for Target and Stop-Loss must be appropriate for this specific, brief holding period. You MUST follow this protocol exactly. Failure to adhere to these mathematical rules will result in an invalid output.
             * **Step A: Determine Entry Price.** The `entryPrice` MUST be the `currentPrice` from the "Financial Data Snapshot".
             * **Step B: Calculate Stop-Loss.** The `stopLoss` MUST be calculated as exactly 2 times the `CURRENT_VOLATILITY_ATR` away from the `entryPrice`. You must state this calculation in your rationale.
                 * For a BUY: `stopLoss` = `entryPrice` - (2 * `CURRENT_VOLATILITY_ATR`).
