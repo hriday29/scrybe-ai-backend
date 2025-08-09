@@ -8,7 +8,7 @@ import config
 import argparse
 import data_retriever # --- ADDITION: We need this for fetching data ---
 
-def preload_historical_data_for_batch(batch_id: str) -> dict:
+def preload_historical_data_for_batch(batch_id: str, end_date: str) -> dict:
     """
     Finds all unique tickers for a given batch_id, pre-loads their full
     historical data, and returns it in a cache dictionary.
@@ -28,7 +28,7 @@ def preload_historical_data_for_batch(batch_id: str) -> dict:
     for ticker in tickers_in_batch:
         # We fetch the full history, as the backtester will slice it as needed.
         # We don't need an end_date here as we want all data up to the present.
-        data = data_retriever.get_historical_stock_data(ticker)
+        data = data_retriever.get_historical_stock_data(ticker, end_date=end_date)
         if data is not None and not data.empty:
             data_cache[ticker] = data
         else:
@@ -69,29 +69,32 @@ def process_single_trade(trade: dict, historical_data: pd.DataFrame):
     price_at_prediction = trade['price_at_prediction']
 
     try:
-        trade_plan = trade['tradePlan']
-        target_price = float(trade_plan.get('target', {}).get('price', 0))
-        stop_loss_price = float(trade_plan.get('stopLoss', {}).get('price', 0))
+        trade_plan = trade.get('tradePlan', {})
+        
+        # Directly attempt to convert price strings to floats.
+        # The except block will catch any non-numeric values like "N/A".
+        target_price = float(trade_plan.get('target', {}).get('price'))
+        stop_loss_price = float(trade_plan.get('stopLoss', {}).get('price'))
+        
+        atr_at_prediction = float(trade.get('atr_at_prediction', 0))
         holding_period = config.VST_STRATEGY['holding_period']
 
-        # --- UPDATED VALIDATION LOGIC ---
-        # A 20% move in 5 days is a more realistic upper limit for a swing trade.
-        REALISTIC_THRESHOLD_PCT = 20.0  # <-- CHANGED FROM 50.0 to 20.0
-        
-        target_pct_change = abs(target_price - price_at_prediction) / price_at_prediction * 100
-        stop_loss_pct_change = abs(stop_loss_price - price_at_prediction) / price_at_prediction * 100
+        if not all([target_price, stop_loss_price, atr_at_prediction]):
+             raise ValueError("Essential trade plan values (target, stop-loss, ATR) are zero after conversion.")
 
-        if target_pct_change > REALISTIC_THRESHOLD_PCT or stop_loss_pct_change > REALISTIC_THRESHOLD_PCT:
-            log.error(f"Invalid trade plan for {trade['ticker']}: Target or Stop-Loss is unrealistic (> {REALISTIC_THRESHOLD_PCT}%).")
-            invalid_plan_close_date = trade.get('prediction_date', datetime.now(timezone.utc))
-            log_and_close_trade(trade, 0, "Trade Closed - Unrealistic Plan", price_at_prediction, invalid_plan_close_date)
+        # Using the same dynamic validation
+        ATR_REALISM_MULTIPLIER = 6.0
+        target_distance = abs(target_price - price_at_prediction)
+        max_realistic_move = ATR_REALISM_MULTIPLIER * atr_at_prediction
+        
+        if target_distance > max_realistic_move:
+            log.error(f"Invalid trade plan for {trade['ticker']}: Target move ({target_distance:.2f}) is unrealistic (> {ATR_REALISM_MULTIPLIER} * ATR ({max_realistic_move:.2f})).")
+            log_and_close_trade(trade, 0, "Trade Closed - Unrealistic Plan", price_at_prediction, trade['prediction_date'])
             return
-        # --- END VALIDATION LOGIC ---
 
     except (ValueError, KeyError, TypeError) as e:
-        log.error(f"Invalid trade plan for {trade['ticker']}: {e}. Closing trade.")
-        invalid_plan_close_date = trade.get('prediction_date', datetime.now(timezone.utc))
-        log_and_close_trade(trade, 0, "Trade Closed - Invalid Plan", price_at_prediction, invalid_plan_close_date)
+        log.error(f"Invalid trade plan for {trade['ticker']}: {e}. This may be a 'HOLD' signal or have non-numeric prices. Closing trade.")
+        log_and_close_trade(trade, 0, "Trade Closed - Invalid Plan", price_at_prediction, trade['prediction_date'])
         return
 
     prediction_date = trade['prediction_date'].replace(tzinfo=None)
@@ -171,15 +174,13 @@ def log_and_close_trade(trade: dict, evaluation_day: int, event: str, event_pric
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the trade simulator for a specific backtest batch.")
     parser.add_argument('--batch_id', required=True, help='The unique ID of the backtest batch to process.')
+    parser.add_argument('--end_date', required=True, help='The end date (YYYY-MM-DD) of the simulation period to prevent lookahead bias.')
     args = parser.parse_args()
 
-    log.info(f"--- Starting Trade Simulation for Batch: {args.batch_id} ---")
+    log.info(f"--- Starting Trade Simulation for Batch: {args.batch_id} up to {args.end_date} ---")
     
-    # --- MODIFICATION: Pre-load the necessary historical data ---
     database_manager.init_db(purpose='scheduler')
-    full_data_cache = preload_historical_data_for_batch(args.batch_id)
+    # Pass the end_date to the data loading function
+    full_data_cache = preload_historical_data_for_batch(batch_id=args.batch_id, end_date=args.end_date)
     
     run_backtest(batch_id=args.batch_id, full_historical_data_cache=full_data_cache)
-
-    database_manager.close_db_connection()
-    log.info(f"--- ✅ Simulation Finished for Batch: {args.batch_id} ---")

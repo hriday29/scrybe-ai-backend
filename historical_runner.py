@@ -145,7 +145,8 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                                     'status': 'open',
                                     'strategy': config.VST_STRATEGY['name'],
                                     'dvmScores': dvm_scores,
-                                    'correlations': correlations
+                                    'correlations': correlations,
+                                    'atr_at_prediction': latest_row['ATRr_14']
                                 })
                                 database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
                             

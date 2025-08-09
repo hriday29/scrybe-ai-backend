@@ -93,16 +93,17 @@ class AIAnalyzer:
             Pay close attention to the 1-Day chart for intraday price action and its relationship with the VWAP, which is a key level for the current session.
         
         6.  **Risk Assessment & Data-Driven Trade Plan (Weight: 10%):**
-            * **MANDATORY PROTOCOL:** Your `tradePlan` MUST be mathematically derived from the provided `CURRENT_VOLATILITY_ATR`. There is no room for interpretation. Your output will be rejected if this protocol is not followed.
-            * **Entry Price:** The `entryPrice` MUST be the `currentPrice` from the "Financial Data Snapshot".
-            * **Stop-Loss Calculation:** The `stopLoss` MUST be calculated as exactly 2 times the `CURRENT_VOLATILITY_ATR` away from the `entryPrice`.
-                * For a BUY signal: `stopLoss` = `entryPrice` - (2 * `CURRENT_VOLATILITY_ATR`).
-                * For a SELL signal: `stopLoss` = `entryPrice` + (2 * `CURRENT_VOLATILITY_ATR`).
-            * **Target Calculation:** The `target` MUST be calculated to achieve a `riskRewardRatio` of AT LEAST {min_rr_ratio}.
-                * For a BUY signal: `target` = `entryPrice` + ({min_rr_ratio} * (`entryPrice` - `stopLoss`)).
-                * For a SELL signal: `target` = `entryPrice` - ({min_rr_ratio} * (`stopLoss` - `entryPrice`)).
-            * **REALISM VALIDATION:** You must check your calculated target against the provided charts. If your calculated target is clearly unrealistic (e.g., far beyond any recent price history or major technical level), you MUST adjust it down to the nearest logical resistance/support level.
-            * **Final R/R Calculation:** After setting your final target, you MUST re-calculate and state the final `riskRewardRatio`. If it is below {min_rr_ratio}, the setup is invalid, and the `scrybeScore` MUST be in the 'HOLD' range (-49 to +49).
+            * **MANDATORY PROTOCOL:** Your primary directive is to act as a disciplined risk manager. You MUST follow this protocol exactly. Failure to adhere to these mathematical rules will result in an invalid output.
+            * **Step A: Determine Entry Price.** The `entryPrice` MUST be the `currentPrice` from the "Financial Data Snapshot".
+            * **Step B: Calculate Stop-Loss.** The `stopLoss` MUST be calculated as exactly 2 times the `CURRENT_VOLATILITY_ATR` away from the `entryPrice`. You must state this calculation in your rationale.
+                * For a BUY: `stopLoss` = `entryPrice` - (2 * `CURRENT_VOLATILITY_ATR`).
+                * For a SELL: `stopLoss` = `entryPrice` + (2 * `CURRENT_VOLATILITY_ATR`).
+            * **Step C: Calculate Initial Target.** The initial `target` MUST be calculated to achieve a `riskRewardRatio` of AT LEAST {min_rr_ratio}.
+                * For a BUY: `target` = `entryPrice` + ({min_rr_ratio} * (`entryPrice` - `stopLoss`)).
+                * For a SELL: `target` = `entryPrice` - ({min_rr_ratio} * (`stopLoss` - `entryPrice`)).
+            * **Step D: Perform Realism Check.** You must now validate your calculated target. A target predicting a move greater than 6 times the `CURRENT_VOLATILITY_ATR` is highly improbable for a short-term trade.
+                * If `abs(target - entryPrice)` > (6 * `CURRENT_VOLATILITY_ATR`), you MUST adjust the target down to the nearest logical resistance/support level visible on the charts that is within this 6*ATR range. If no such level exists, the trade is invalid.
+            * **Step E: Final R/R Validation.** After setting your final target, you MUST re-calculate the final `riskRewardRatio`. If it is below {min_rr_ratio}, the setup is invalid. You MUST then set the `signal` to 'HOLD' and provide this validation failure as the `reasonForHold`.
         
         **7. Final JSON Output Instructions:**
         * After calculating the score, you must fill out all other fields.
@@ -128,7 +129,12 @@ class AIAnalyzer:
                 "bullAndBearAnalysis": {"type": "OBJECT", "properties": {"bullCase": {"type": "STRING"}, "bearCase": {"type": "STRING"}}, "required": ["bullCase", "bearCase"]},
                 "technicalBreakdown": { "type": "OBJECT", "properties": { "ADX": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "RSI": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "MACD": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Chart Pattern": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["ADX", "RSI", "MACD", "Chart Pattern"]},
                 "fundamentalBreakdown": { "type": "OBJECT", "properties": { "Valuation": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Profitability": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Ownership": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["Valuation", "Profitability", "Ownership"]},
-                "tradePlan": {"type": "OBJECT", "properties": {"timeframe": {"type": "STRING"}, "strategy": {"type": "STRING"}, "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "target": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "STRING"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, "riskRewardRatio": {"type": "NUMBER"}}, "required": ["timeframe", "strategy", "entryPrice", "target", "stopLoss", "riskRewardRatio"]},
+                "tradePlan": {"type": "OBJECT", "properties": {"timeframe": {"type": "STRING"}, "strategy": {"type": "STRING"}, 
+                    "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, 
+                    "target": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, 
+                    "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, 
+                    "riskRewardRatio": {"type": "NUMBER"}}, 
+                    "required": ["timeframe", "strategy", "entryPrice", "target", "stopLoss", "riskRewardRatio"]},
             }, 
             "required": ["scrybeScore", "signal", "confidence", "analystVerdict", "reasonForHold", "isOnRadar", "keyInsight", "bullAndBearAnalysis", "technicalBreakdown", "fundamentalBreakdown", "tradePlan"]
         }
