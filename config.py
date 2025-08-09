@@ -93,6 +93,11 @@ BACKTEST_CONFIG = {
     "stt_pct": 0.1
 }
 
+BACKTEST_PORTFOLIO_CONFIG = {
+    "initial_capital": 100000.0,      # Start with 1 Lakh
+    "position_size_pct_of_capital": 10.0 # Allocate 10% of initial capital to each trade
+}
+
 BETA_TESTER_EMAILS = ["vighriday@gmail.com"]
 
 NIFTY_50_TICKERS = [

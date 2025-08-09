@@ -5,17 +5,48 @@ import pandas as pd
 from datetime import datetime, timezone
 from logger_config import log
 import config
+import argparse
+import data_retriever # --- ADDITION: We need this for fetching data ---
 
-def run_backtest(full_historical_data_cache: dict):
+def preload_historical_data_for_batch(batch_id: str) -> dict:
+    """
+    Finds all unique tickers for a given batch_id, pre-loads their full
+    historical data, and returns it in a cache dictionary.
+    """
+    log.info(f"Pre-loading all historical data for tickers in batch: {batch_id}...")
+    
+    # Find all unique tickers that have a prediction in this batch
+    tickers_in_batch = database_manager.predictions_collection.distinct("ticker", {"batch_id": batch_id})
+    
+    if not tickers_in_batch:
+        log.warning(f"No tickers found for batch '{batch_id}'.")
+        return {}
+
+    log.info(f"Found {len(tickers_in_batch)} unique tickers to load data for.")
+    
+    data_cache = {}
+    for ticker in tickers_in_batch:
+        # We fetch the full history, as the backtester will slice it as needed.
+        # We don't need an end_date here as we want all data up to the present.
+        data = data_retriever.get_historical_stock_data(ticker)
+        if data is not None and not data.empty:
+            data_cache[ticker] = data
+        else:
+            log.warning(f"Could not load historical data for {ticker}.")
+            
+    log.info("✅ Data pre-loading complete.")
+    return data_cache
+
+def run_backtest(batch_id: str, full_historical_data_cache: dict):
     """
     Finds all open BUY/SELL predictions and evaluates them against a provided cache of full historical data.
     """
-    log.info("\n--- 📈 Starting Consolidated Backtesting Job ---")
+    log.info(f"\n--- 📈 Starting Consolidated Backtesting Job for Batch: {batch_id} ---")
     database_manager.init_db(purpose='scheduler')
     
-    query = {"status": "open", "signal": {"$in": ["BUY", "SELL"]}}
+    query = {"status": "open", "signal": {"$in": ["BUY", "SELL"]}, "batch_id": batch_id}
     open_trades = list(database_manager.predictions_collection.find(query))
-    log.info(f"Found {len(open_trades)} open trades to evaluate.")
+    log.info(f"Found {len(open_trades)} open trades to evaluate in this batch.")
 
     for trade in open_trades:
         try:
@@ -27,26 +58,40 @@ def run_backtest(full_historical_data_cache: dict):
             process_single_trade(trade, full_historical_data_cache[ticker])
 
         except Exception as e:
-            log.error(f"--- ❌ FAILED to process {trade.get('ticker')}. Error: {e} ---", exc_info=True)
+            log.error(f"--- ❌ FAILED to process trade {trade.get('_id')} for {trade.get('ticker')}. Error: {e} ---", exc_info=True)
 
-    log.info(f"--- ✅ Consolidated Backtesting Job Finished ---")
+    log.info(f"--- ✅ Consolidated Backtesting Job Finished for Batch: {batch_id} ---")
 
 def process_single_trade(trade: dict, historical_data: pd.DataFrame):
-    """Evaluates a single BUY or SELL trade against its plan."""
+    """Evaluates a single BUY or SELL trade against its plan with robust validation."""
     log.info(f"Processing trade for {trade['ticker']} predicted on {trade['prediction_date'].strftime('%Y-%m-%d')}...")
     signal = trade.get('signal')
+    price_at_prediction = trade['price_at_prediction']
 
     try:
         trade_plan = trade['tradePlan']
         target_price = float(trade_plan.get('target', {}).get('price', 0))
         stop_loss_price = float(trade_plan.get('stopLoss', {}).get('price', 0))
-        # Use VST_STRATEGY directly since it's the only one
-        strategy_name = config.VST_STRATEGY['name']
         holding_period = config.VST_STRATEGY['holding_period']
+
+        # --- NEW VALIDATION LOGIC ---
+        # Define a realistic threshold (e.g., a 50% move in 5 days is highly unlikely)
+        REALISTIC_THRESHOLD_PCT = 50.0 
+        
+        target_pct_change = abs(target_price - price_at_prediction) / price_at_prediction * 100
+        stop_loss_pct_change = abs(stop_loss_price - price_at_prediction) / price_at_prediction * 100
+
+        if target_pct_change > REALISTIC_THRESHOLD_PCT or stop_loss_pct_change > REALISTIC_THRESHOLD_PCT:
+            log.error(f"Invalid trade plan for {trade['ticker']}: Target or Stop-Loss is unrealistic (> {REALISTIC_THRESHOLD_PCT}%).")
+            invalid_plan_close_date = trade.get('prediction_date', datetime.now(timezone.utc))
+            log_and_close_trade(trade, 0, "Trade Closed - Unrealistic Plan", price_at_prediction, invalid_plan_close_date)
+            return
+        # --- END VALIDATION LOGIC ---
+
     except (ValueError, KeyError, TypeError) as e:
         log.error(f"Invalid trade plan for {trade['ticker']}: {e}. Closing trade.")
         invalid_plan_close_date = trade.get('prediction_date', datetime.now(timezone.utc))
-        log_and_close_trade(trade, 0, "Trade Closed - Invalid Plan", trade['price_at_prediction'], invalid_plan_close_date)
+        log_and_close_trade(trade, 0, "Trade Closed - Invalid Plan", price_at_prediction, invalid_plan_close_date)
         return
 
     prediction_date = trade['prediction_date'].replace(tzinfo=None)
@@ -87,27 +132,21 @@ def log_and_close_trade(trade: dict, evaluation_day: int, event: str, event_pric
     price_at_prediction = trade['price_at_prediction']
     signal = trade.get('signal')
     strategy_name = trade.get('strategy', 'unknown')
+    batch_id = trade.get('batch_id')
     
-    # --- REALISTIC COST CALCULATION ---
-    
-    # 1. Calculate Gross Return
-    if signal == 'SELL':
-        gross_return_pct = ((price_at_prediction - event_price) / price_at_prediction) * 100
-    else: # BUY
-        gross_return_pct = ((event_price - price_at_prediction) / price_at_prediction) * 100
+    # If the plan was invalid or unrealistic, the return is neutralized to zero.
+    if "Invalid Plan" in event or "Unrealistic Plan" in event:
+        gross_return_pct = 0.0
+    else:
+        # Otherwise, calculate the return based on the entry and exit price.
+        if signal == 'SELL':
+            gross_return_pct = ((price_at_prediction - event_price) / price_at_prediction) * 100
+        else: # BUY
+            gross_return_pct = ((event_price - price_at_prediction) / price_at_prediction) * 100
 
-    # 2. Calculate Total Transaction Costs
+    # Calculate net return by subtracting transaction costs
     costs = config.BACKTEST_CONFIG
-    # Brokerage for entry and exit
-    total_brokerage_pct = costs['brokerage_pct'] * 2
-    # Slippage for entry and exit
-    total_slippage_pct = costs['slippage_pct'] * 2
-    # STT is only on the sell-side for delivery
-    stt_cost_pct = costs['stt_pct']
-    
-    total_costs_pct = total_brokerage_pct + total_slippage_pct + stt_cost_pct
-    
-    # 3. Calculate Net Return
+    total_costs_pct = (costs['brokerage_pct'] * 2) + (costs['slippage_pct'] * 2) + costs['stt_pct']
     net_return_pct = gross_return_pct - total_costs_pct
 
     performance_doc = {
@@ -117,13 +156,30 @@ def log_and_close_trade(trade: dict, evaluation_day: int, event: str, event_pric
         "signal": signal, 
         "status": "Closed", 
         "open_date": trade['prediction_date'],
-        "close_date": close_date,
-        "evaluation_days": evaluation_day,
+        "close_date": close_date, 
+        "evaluation_days": evaluation_day, 
         "closing_reason": event, 
         "gross_return_pct": round(gross_return_pct, 2),
-        "net_return_pct": round(net_return_pct, 2) # Save the new net return
+        "net_return_pct": round(net_return_pct, 2), 
+        "batch_id": batch_id
     }
     
     database_manager.performance_collection.insert_one(performance_doc)
     database_manager.predictions_collection.update_one({"_id": trade['_id']}, {"$set": {"status": "Closed"}})
-    log.info(f"--> ✅ PERFORMANCE LOGGED: {trade['ticker']} - Gross: {gross_return_pct:.2f}%, Net: {net_return_pct:.2f}%")
+    log.info(f"--> ✅ PERFORMANCE LOGGED: {trade['ticker']} - Net: {net_return_pct:.2f}%")
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run the trade simulator for a specific backtest batch.")
+    parser.add_argument('--batch_id', required=True, help='The unique ID of the backtest batch to process.')
+    args = parser.parse_args()
+
+    log.info(f"--- Starting Trade Simulation for Batch: {args.batch_id} ---")
+    
+    # --- MODIFICATION: Pre-load the necessary historical data ---
+    database_manager.init_db(purpose='scheduler')
+    full_data_cache = preload_historical_data_for_batch(args.batch_id)
+    
+    run_backtest(batch_id=args.batch_id, full_historical_data_cache=full_data_cache)
+
+    database_manager.close_db_connection()
+    log.info(f"--- ✅ Simulation Finished for Batch: {args.batch_id} ---")

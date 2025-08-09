@@ -92,11 +92,17 @@ class AIAnalyzer:
 
             Pay close attention to the 1-Day chart for intraday price action and its relationship with the VWAP, which is a key level for the current session.
         
-        **6. Risk Assessment & Data-Driven Trade Plan (Weight: 10%):**
-        * **CRITICAL RISK RULE:** Your `tradePlan` must be technically sound and data-driven.
-        * **Stop-Loss:** You MUST use the provided `CURRENT_VOLATILITY_ATR` to calculate your `stopLoss`. A standard professional method is to place the `stopLoss` approximately 2 times the ATR away from the entry price (e.g., `entry - 2*ATR` for a BUY).
-        * **Target:** Your `target` must be placed at the next logical technical level (e.g., a recent swing high/low or a key resistance/support level visible on the charts).
-        * **Final R/R Validation:** After defining your `target` and `stopLoss`, you MUST calculate the final `riskRewardRatio`. If this ratio is **below {min_rr_ratio}**, the entire setup is invalid. This must result in a significant penalty to the final `scrybeScore`, pushing it into the 'HOLD' range.
+        6.  **Risk Assessment & Data-Driven Trade Plan (Weight: 10%):**
+                * **CRITICAL RISK RULE:** Your `tradePlan` MUST be technically sound and mathematically derived from the provided `CURRENT_VOLATILITY_ATR`. Do not invent numbers.
+                * **Entry Price:** Your `entryPrice` should be the current price listed in the "Financial Data Snapshot".
+                * **Stop-Loss Calculation:** You MUST place the `stopLoss` approximately 2 times the `CURRENT_VOLATILITY_ATR` away from the entry price.
+                    * For a BUY: `stopLoss` = `entryPrice` - (2 * `CURRENT_VOLATILITY_ATR`).
+                    * For a SELL: `stopLoss` = `entryPrice` + (2 * `CURRENT_VOLATILITY_ATR`).
+                * **Target Calculation:** Your `target` must achieve a `riskRewardRatio` of AT LEAST {min_rr_ratio}. This means the potential profit must be at least {min_rr_ratio} times the potential loss.
+                    * For a BUY: `target` = `entryPrice` + ({min_rr_ratio} * (`entryPrice` - `stopLoss`)).
+                    * For a SELL: `target` = `entryPrice` - ({min_rr_ratio} * (`stopLoss` - `entryPrice`)).
+                * **REALISM CAP:** For a short-term swing trade, a target more than 6 times the ATR from entry is unrealistic. If your calculated target exceeds this (`entry` +/- 6 * `ATR`), you MUST adjust it down to the nearest logical resistance/support level visible on the charts that is within this 6*ATR range.
+                * **Final R/R Validation:** After calculating your final target, you MUST re-calculate and state the final `riskRewardRatio`. If it is below {min_rr_ratio}, the entire setup is invalid, and the `scrybeScore` must be pushed into the 'HOLD' range.
         
         **7. Final JSON Output Instructions:**
         * After calculating the score, you must fill out all other fields.
