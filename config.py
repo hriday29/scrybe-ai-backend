@@ -17,6 +17,7 @@ GEMINI_API_KEY_POOL = [
         os.getenv("GOOGLE_API_KEY_2"),
         os.getenv("GOOGLE_API_KEY_3"),
         os.getenv("GOOGLE_API_KEY_4"),
+        os.getenv("GOOGLE_API_KEY_5"),
     ] if key
 ]
 

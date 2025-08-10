@@ -57,6 +57,7 @@ jobs:
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
           GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
+          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
         run: |
           python historical_runner.py \
             --batch_id "${{ github.event.inputs.batch_id }}" \
