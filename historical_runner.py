@@ -130,6 +130,25 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                             )
 
                             if analysis_result:
+                                if analysis_result.get('signal') in ['BUY', 'SELL']:
+                                    log.info(f"AI signal is '{analysis_result['signal']}'. Calculating trade plan deterministically.")
+                                    signal = analysis_result['signal']
+                                    entry_price = latest_row['close']
+                                    atr = latest_row['ATRr_14']
+                                    rr_ratio = config.VST_STRATEGY['min_rr_ratio']
+                                    stop_loss_price = entry_price - (2 * atr) if signal == 'BUY' else entry_price + (2 * atr)
+                                    target_price = entry_price + ((2 * atr) * rr_ratio) if signal == 'BUY' else entry_price - ((2 * atr) * rr_ratio)
+                                    analysis_result['tradePlan'] = {
+                                        "timeframe": config.VST_STRATEGY['horizon_text'],
+                                        "strategy": "ATR-based R/R",
+                                        "entryPrice": {"price": round(entry_price, 2), "rationale": "Closing price on prediction day."},
+                                        "target": {"price": round(target_price, 2), "rationale": f"Calculated using {rr_ratio} R/R based on {atr:.2f} ATR."},
+                                        "stopLoss": {"price": round(stop_loss_price, 2), "rationale": f"Calculated using 2*ATR ({atr:.2f} ATR)."},
+                                        "riskRewardRatio": rr_ratio
+                                    }
+                                else:
+                                    analysis_result['tradePlan'] = {}
+
                                 log.info(f"Generating DVM scores for {ticker}...")
                                 dvm_scores = analyzer.get_dvm_scores(live_financial_data, latest_indicators)
 

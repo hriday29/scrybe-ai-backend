@@ -1,4 +1,5 @@
-# test_prompt.py
+# In test_prompt.py
+
 import pandas as pd
 import config
 from logger_config import log
@@ -9,7 +10,7 @@ from datetime import datetime
 
 def run_single_prompt_test():
     """
-    A fast, single-API-call test to validate a prompt change.
+    A fast, single-API-call test to validate the final, robust prompt and calculation architecture.
     """
     # --- 1. SETUP: Define our single test case ---
     TICKER_TO_TEST = "TATASTEEL.NS"
@@ -18,21 +19,17 @@ def run_single_prompt_test():
     log.info(f"--- 🧪 Running Strategy Laboratory Test ---")
     log.info(f"Testing new prompt on {TICKER_TO_TEST} for date {DATE_TO_TEST}")
 
-    # --- 2. PREPARATION: Recreate the exact data the AI saw on that day ---
+    # --- 2. PREPARATION: Recreate the exact data the AI will see ---
     try:
-        # Load the corrected AI Analyzer with the new prompt
         analyzer = AIAnalyzer(api_key=config.GEMINI_API_KEY)
 
-        # Get all historical data up to our test date
         full_historical_data = data_retriever.get_historical_stock_data(TICKER_TO_TEST, end_date=DATE_TO_TEST)
         if full_historical_data is None or len(full_historical_data) < 100:
             log.error("Could not get enough historical data for the test.")
             return
 
-        # The data slice is the data as it existed AT THE MOMENT of prediction
         data_slice = full_historical_data.loc[:DATE_TO_TEST].copy()
 
-        # Re-calculate the exact same indicators
         data_slice.ta.bbands(length=20, append=True)
         data_slice.ta.rsi(length=14, append=True)
         data_slice.ta.macd(fast=12, slow=26, signal=9, append=True)
@@ -41,27 +38,26 @@ def run_single_prompt_test():
         data_slice.dropna(inplace=True)
 
         latest_row = data_slice.iloc[-1]
-        latest_atr = latest_row['ATRr_14']
         price_at_prediction = latest_row['close']
+        atr_at_prediction = latest_row['ATRr_14']
 
-        log.info(f"Price at prediction: {price_at_prediction:.2f}, ATR at prediction: {latest_atr:.2f}")
+        log.info(f"Price at prediction: {price_at_prediction:.2f}, ATR at prediction: {atr_at_prediction:.2f}")
 
-        # This data is passed to the AI, we are simulating it here
         live_financial_data = {"curatedData": {}, "rawDataSheet": {"symbol": TICKER_TO_TEST}}
-        latest_indicators = {"ADX": f"{latest_row['ADX_14']:.2f}", "RSI": f"{latest_row['RSI_14']:.2f}"}
+        latest_indicators = {"ADX": f"{latest_row['ADX_14']:.2f}", "RSI": f"{latest_row['RSI_14']:.2f}", "Bollinger Band Width Percent": f"{(latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0'] * 100:.2f}"}
         market_context = {"CURRENT_MARKET_REGIME": "Neutral"}
 
     except Exception as e:
         log.error(f"Error during data preparation: {e}")
         return
 
-    # --- 3. EXECUTION: Make one single API call with the refined prompt ---
+    # --- 3. EXECUTION: Make one single API call ---
     log.info("Making a single API call with the refined prompt...")
     analysis_result = analyzer.get_stock_analysis(
         live_financial_data=live_financial_data,
-        latest_atr=latest_atr,
+        latest_atr=atr_at_prediction,
         model_name=config.PRO_MODEL,
-        charts={},  # No charts needed for this logic test
+        charts={},
         trading_horizon_text=config.VST_STRATEGY['horizon_text'],
         technical_indicators=latest_indicators,
         min_rr_ratio=config.VST_STRATEGY['min_rr_ratio'],
@@ -69,33 +65,38 @@ def run_single_prompt_test():
         options_data={}
     )
 
-    # --- 4. VERIFICATION: Analyze the result ---
-    if not analysis_result or 'tradePlan' not in analysis_result:
+    # --- 4. VERIFICATION & SIMULATION ---
+    # NEW, CORRECT VALIDATION CHECK
+    if not analysis_result or 'signal' not in analysis_result:
         log.error("AI analysis failed or returned an invalid structure.")
         return
 
-    trade_plan = analysis_result.get('tradePlan', {})
-    signal = analysis_result.get('signal')
-    
-    log.info(f"--- ✅ Test Complete. AI Analysis Result ---")
-    log.info(f"Signal: {signal}")
-    log.info(f"Trade Plan: {trade_plan}")
+    log.info("--- ✅ AI Analysis Received Successfully ---")
+    log.info(f"Signal: {analysis_result.get('signal')}")
+    log.info(f"Scrybe Score: {analysis_result.get('scrybeScore')}")
+    log.info(f"Verdict: {analysis_result.get('analystVerdict')}")
 
-    if signal != 'HOLD':
-        target = trade_plan.get('target', {}).get('price', 0)
+    # SIMULATE the Python-based trade plan calculation
+    if analysis_result.get('signal') in ['BUY', 'SELL']:
+        log.info("--- ⚙️ Simulating Deterministic Trade Plan Calculation ---")
+        signal = analysis_result['signal']
+        rr_ratio = config.VST_STRATEGY['min_rr_ratio']
         
-        # The crucial check
-        expected_reward = (config.VST_STRATEGY['min_rr_ratio'] * 2) * latest_atr
-        actual_reward = abs(target - price_at_prediction)
+        stop_loss_price = price_at_prediction - (2 * atr_at_prediction) if signal == 'BUY' else price_at_prediction + (2 * atr_at_prediction)
+        target_price = price_at_prediction + ((2 * atr_at_prediction) * rr_ratio) if signal == 'BUY' else price_at_prediction - ((2 * atr_at_prediction) * rr_ratio)
+        
+        final_trade_plan = {
+            "entryPrice": round(price_at_prediction, 2),
+            "target": round(target_price, 2),
+            "stopLoss": round(stop_loss_price, 2),
+            "riskRewardRatio": rr_ratio
+        }
+        log.info(f"Final Calculated Trade Plan: {final_trade_plan}")
+    else:
+        log.info("Signal is 'HOLD', no trade plan generated.")
 
-        log.info(f"Expected Target Distance from Entry: ~{expected_reward:.2f}")
-        log.info(f"  Actual Target Distance from Entry: ~{actual_reward:.2f}")
-        
-        # Allow for a small tolerance in the AI's math
-        if abs(expected_reward - actual_reward) < 1.0:
-            log.info("🎉 SUCCESS: The AI correctly calculated the target based on the new prompt.")
-        else:
-            log.warning("⚠️ WARNING: The AI's target calculation still deviates from the prompt's formula.")
+    log.info("--- 🎉 Pre-Flight Check Successful! ---")
+
 
 if __name__ == "__main__":
     run_single_prompt_test()

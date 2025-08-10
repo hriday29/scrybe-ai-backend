@@ -59,96 +59,105 @@ class AIAnalyzer:
         except Exception as e:
             log.error(f"Single news impact analysis call failed. Error: {e}")
             return None
-    
+
     def get_stock_analysis(self, live_financial_data: dict, latest_atr: float, model_name: str, charts: dict, trading_horizon_text: str, technical_indicators: dict, min_rr_ratio: float, market_context: dict, options_data: dict) -> dict:
         """
-        Generates a trade analysis using a bipolar "Scrybe Score" from -100 to +100 and ATR-based risk management.
+        Generates a Michelin-star grade analysis using a bipolar "Scrybe Score".
+        The AI's role is to provide a rich, multi-layered analysis and a signal. The trade plan is ALWAYS calculated by code.
         """
-        log.info(f"Generating Immaculate Scrybe Score for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
+        log.info(f"Generating Michelin-Star Grade Analysis for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
 
+        # THE ULTIMATE PROMPT, BASED ON YOUR ORIGINAL 7-LAYER FRAMEWORK
         definitive_scoring_prompt = f"""
-        You are "Scrybe-Oracle," a world-class quantitative analyst. Your primary task is to produce an objective, data-driven "Scrybe Score" for a stock on a bipolar scale from -100 (a perfect, high-conviction short setup) to +100 (a perfect, high-conviction long setup). Your analysis must be unemotional and strictly follow the protocol.
+        You are "Scrybe-Oracle," a world-class quantitative analyst. Your primary task is to produce a sophisticated, multi-layered analysis, culminating in a "Scrybe Score" from -100 to +100.
 
-        **Primary Output: The "Scrybe Score" (-100 to +100)**
-        This score is your most important output. It must reflect the holistic quality of the trading setup.
-        * **+75 to +100:** Represents a high-conviction BUY signal.
-        * **+50 to +74:** Represents a moderate-conviction BUY signal.
-        * **-49 to +49:** Represents a HOLD signal. The evidence is mixed, weak, risk is unfavorable, or there is no discernible edge.
-        * **-50 to -74:** Represents a moderate-conviction SELL (short) signal.
-        * **-75 to -100:** Represents a high-conviction SELL (short) signal.
+        **CRITICAL CONTEXT: DUAL-MODE ANALYSIS**
+        You MUST adapt your analysis based on the data provided. If 'Financial Data Snapshot' or 'Options Sentiment' data is sparse or empty (for historical runs), you MUST state this limitation and base your score primarily on the technical and market context. **Do not hallucinate missing data.**
 
-        **Your Scoring Protocol (The 7 Layers of Analysis):**
-        You must evaluate all seven layers to generate your final score.
+        **Your Scoring Protocol (The Original 7 Layers, Enhanced):**
+        You must evaluate all layers to generate your final score.
 
-        1.  **Market & Sector Context (Weight: 30%):** A stock fighting a bearish market regime cannot receive a high positive score. A stock in a bullish market gets a significant boost.
-        2.  **Sector Strength (Weight: 10%):** A stock in a weak sector receives a penalty to its score, while a stock in a strong sector gets a small bonus.
-        3.  **Sentiment Analysis (Weight: 10%):** Bearish options data negatively impacts the score. Bullish sentiment has a positive impact.
-        4.  **Fundamental Context (Weight: 15%):** Your goal is to identify if there is a fundamental reason for the stock to move in the short term.
-            * **Catalyst Check:** Review the provided financial data and news. Is there a recent earnings report, a major product launch, or a sector-wide news event that could act as a catalyst for a price move?
-            * **Quality Filter:** A high 'Durability' score provides a strong safety net for BUY signals. A very poor 'Valuation' score can be a major headwind, even for a technically strong setup. Your score must reflect this context.
-        5.  **Technical Deep-Dive (Weight: 25%):** This is your core technical analysis. You must perform two tasks:
-            * **Visual Chart Analysis:** Meticulously analyze the three provided chart images. Identify any significant bullish or bearish chart patterns (e.g., flags, triangles, head and shoulders) and candlestick patterns (e.g., engulfing, doji, hammer). A clear, confirmed visual pattern should significantly influence the score.
-            * **Indicator Confirmation:** Use the provided numerical indicators (ADX, RSI, MACD) to confirm or deny your visual analysis. A setup confirmed by a strong trend (ADX > {config.ADX_THRESHOLD}) AND a significant Volume Surge receives a major bonus to its score. A setup that lacks these confirmations receives a penalty.
+        **1. Market & Sector Context (Weight: 30%):** A stock fighting a bearish market regime cannot receive a high positive score. A stock in a bullish market gets a significant boost.
 
-            Pay close attention to the 1-Day chart for intraday price action and its relationship with the VWAP, which is a key level for the current session.
-        
-        6.  **Risk Assessment & Data-Driven Trade Plan (Weight: 10%):**
-            * **MANDATORY PROTOCOL:** Your primary directive is to act as a disciplined risk manager for a **Very Short-Term (1-5 Day)** swing trade. All of your calculations for Target and Stop-Loss must be appropriate for this specific, brief holding period. You MUST follow this protocol exactly. Failure to adhere to these mathematical rules will result in an invalid output.
-            * **Step A: Determine Entry Price.** The `entryPrice` MUST be the `currentPrice` from the "Financial Data Snapshot".
-            * **Step B: Calculate Stop-Loss.** The `stopLoss` MUST be calculated as exactly 2 times the `CURRENT_VOLATILITY_ATR` away from the `entryPrice`. You must state this calculation in your rationale.
-                * For a BUY: `stopLoss` = `entryPrice` - (2 * `CURRENT_VOLATILITY_ATR`).
-                * For a SELL: `stopLoss` = `entryPrice` + (2 * `CURRENT_VOLATILITY_ATR`).
-            * **Step C: Calculate Initial Target.** Your risk per trade is exactly (2 * `CURRENT_VOLATILITY_ATR`). To achieve the required {min_rr_ratio} Risk/Reward Ratio, your target must be calculated with this simplified, direct formula.
-                * For a BUY: `target` = `entryPrice` + ({min_rr_ratio * 2} * `CURRENT_VOLATILITY_ATR`).
-                * For a SELL: `target` = `entryPrice` - ({min_rr_ratio * 2} * `CURRENT_VOLATILITY_ATR`).
-            * **Step D: Perform Realism Check.** You must now validate your calculated target. A target predicting a move greater than 6 times the `CURRENT_VOLATILITY_ATR` is highly improbable for a short-term trade.
-                * If `abs(target - entryPrice)` > (6 * `CURRENT_VOLATILITY_ATR`), you MUST adjust the target down to the nearest logical resistance/support level visible on the charts that is within this 6*ATR range. If no such level exists, the trade is invalid.
-            * **Step E: Final R/R Validation.** After setting your final target, you MUST re-calculate the final `riskRewardRatio`. If it is below {min_rr_ratio}, the setup is invalid. You MUST then set the `signal` to 'HOLD' and provide this validation failure as the `reasonForHold`.
-        
+        **2. Sector Strength (Weight: 10%):** A stock in a weak sector receives a penalty to its score, while a stock in a strong sector gets a small bonus.
+
+        **3. Sentiment Analysis (Weight: 10%):** Bearish options data negatively impacts the score. Bullish sentiment has a positive impact. (Acknowledge if data is unavailable).
+
+        **4. Fundamental Context (Weight: 15%):** Your goal is to identify if there is a fundamental reason for the stock to move in the short term. (Acknowledge if data is unavailable).
+            * **Catalyst Check:** Review the provided financial data. Is there a recent earnings report, a major product launch, or a sector-wide news event?
+            * **Quality Filter:** A high 'Durability' score provides a strong safety net for BUY signals. A very poor 'Valuation' score can be a major headwind.
+
+        **5. Technical Deep-Dive (Weight: 25%):** This is your core technical analysis. You must perform three tasks:
+            * **Visual Chart Analysis:** Meticulously analyze the provided chart images for significant bullish or bearish chart and candlestick patterns.
+            * **Indicator Confirmation:** Use the provided numerical indicators (ADX, RSI, MACD, Volume Surge) to confirm or deny your visual analysis. A setup confirmed by a strong trend (ADX > {config.ADX_THRESHOLD}) and high volume gets a major score bonus.
+            * **Volatility Character Analysis:** Based on the Bollinger Bands on the charts, describe the nature of the current volatility. Is it in a 'Quiet Consolidation' (ripe for a breakout), a 'Steady Trend', or a 'Volatile Expansion' (high momentum)? This is a crucial part of your technical breakdown.
+
+        **6. Confluence & Contradiction Check:** Before the final score, you MUST explicitly identify the key points of confluence (factors that agree) and contradiction (factors that disagree).
+            * *Example Confluence:* "The bullish flag pattern is strongly supported by a high ADX and a Bullish market regime."
+            * *Example Contradiction:* "The daily chart is technically bullish, but this is contradicted by an extremely weak sector."
+
         **7. Final JSON Output Instructions:**
-        * After calculating the score, you must fill out all other fields.
-        * Your `analystVerdict` must **concisely** justify the final score **in 1-2 sentences**, referencing the most critical layers.
-        * The `signal` (BUY/SELL/HOLD) MUST be derived logically from the `scrybeScore`.
-        * The `confidence` must reflect the magnitude of the `scrybeScore` (e.g., a score of +/- 85 is 'High' confidence).
-        * If the signal is 'HOLD', the `reasonForHold` must explain the primary factor that kept the score in the neutral zone.
-        * The `isOnRadar` boolean should be `true` ONLY for stocks with a 'HOLD' signal that are close to a trigger. Specifically, scores between **40 to 49** and **-40 to -49**. For all other scores, it must be `false`.
-        * You must still populate all detailed breakdown objects (`technicalBreakdown`, `fundamentalBreakdown`, etc.).
-        * Your `technicalBreakdown` and `fundamentalBreakdown` objects must contain your **brief, objective analysis (1 sentence per item)** of the provided data.
-        * **CRITICAL FINAL RULE:** If the `signal` is 'HOLD', all fields within the `tradePlan` object (price, rationale, etc.) MUST be set to "N/A".
+        * Your final `scrybeScore` must be a synthesis of the layers above, respecting their weights.
+        * Your `analystVerdict` must concisely justify the final score, referencing the key confluences or contradictions.
+        * The `signal` (BUY/SELL/HOLD) and `confidence` MUST be derived logically from the `scrybeScore` based on this protocol:
+            * **+75 to +100:** High-conviction BUY
+            * **+50 to +74:** Moderate-conviction BUY
+            * **-49 to +49:** HOLD
+            * **-50 to -74:** Moderate-conviction SELL
+            * **-75 to -100:** High-conviction SELL
+        * The `isOnRadar` boolean is `true` ONLY for scores between **40 to 49** and **-40 to -49**.
+        * **CRITICAL FINAL RULE:** You are **NOT** responsible for the `tradePlan` object. Focus only on providing a world-class analysis.
         """
-        
+
         output_schema = {
             "type": "OBJECT", "properties": {
-                "scrybeScore": {"type": "NUMBER"},
-                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
-                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]},
-                "analystVerdict": {"type": "STRING"},
-                "reasonForHold": {"type": "STRING"},
-                "isOnRadar": {"type": "BOOLEAN"},
-                "keyInsight": {"type": "STRING"},
-                "bullAndBearAnalysis": {"type": "OBJECT", "properties": {"bullCase": {"type": "STRING"}, "bearCase": {"type": "STRING"}}, "required": ["bullCase", "bearCase"]},
-                "technicalBreakdown": { "type": "OBJECT", "properties": { "ADX": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "RSI": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "MACD": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Chart Pattern": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["ADX", "RSI", "MACD", "Chart Pattern"]},
-                "fundamentalBreakdown": { "type": "OBJECT", "properties": { "Valuation": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Profitability": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}, "Ownership": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}}, "required": ["Valuation", "Profitability", "Ownership"]},
-                "tradePlan": {"type": "OBJECT", "properties": {"timeframe": {"type": "STRING"}, "strategy": {"type": "STRING"}, 
-                    "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, 
-                    "target": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, 
-                    "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}, "required": ["price", "rationale"]}, 
-                    "riskRewardRatio": {"type": "NUMBER"}}, 
-                    "required": ["timeframe", "strategy", "entryPrice", "target", "stopLoss", "riskRewardRatio"]},
-            }, 
-            "required": ["scrybeScore", "signal", "confidence", "analystVerdict", "reasonForHold", "isOnRadar", "keyInsight", "bullAndBearAnalysis", "technicalBreakdown", "fundamentalBreakdown", "tradePlan"]
+                "scrybeScore": {"type": "NUMBER"}, "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
+                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]}, "analystVerdict": {"type": "STRING"},
+                "keyObservations": {"type": "OBJECT", "properties": {
+                    "confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}},
+                    "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}},
+                }, "required": ["confluencePoints", "contradictionPoints"]},
+                "reasonForHold": {"type": "STRING"}, "isOnRadar": {"type": "BOOLEAN"},
+                "technicalBreakdown": { "type": "OBJECT", "properties": {
+                    "Chart Pattern": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
+                    "Volatility Analysis": {"type": "OBJECT", "properties": {"character": {"type": "STRING"}, "implication": {"type": "STRING"}}, "required": ["character", "implication"]},
+                    "ADX": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
+                    "RSI": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
+                    "MACD": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
+                }, "required": ["Chart Pattern", "Volatility Analysis", "ADX", "RSI", "MACD"]},
+                "fundamentalBreakdown": { "type": "OBJECT", "properties": {
+                    "Valuation": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
+                    "Profitability": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
+                    "Ownership": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}
+                }, "required": ["Valuation", "Profitability", "Ownership"]},
+                # --- THIS IS THE FIX ---
+                # We are restoring the full definition of the tradePlan object AND ITS NESTED PROPERTIES.
+                "tradePlan": {"type": "OBJECT", "properties": {
+                    "timeframe": {"type": "STRING"},
+                    "strategy": {"type": "STRING"},
+                    "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}},
+                    "target": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}},
+                    "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}},
+                    "riskRewardRatio": {"type": "NUMBER"}
+                }},
+                # --- END OF FIX ---
+            },
+            # The required list remains unchanged. "tradePlan" is NOT required.
+            "required": ["scrybeScore", "signal", "confidence", "analystVerdict", "keyObservations", "technicalBreakdown", "fundamentalBreakdown"]
         }
 
+        # The rest of the function (the Python part) remains the same.
         generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema, max_output_tokens=16384)
         model = genai.GenerativeModel(model_name, system_instruction=definitive_scoring_prompt, generation_config=generation_config)
-        
+        fundamental_data_status = "Available" if live_financial_data.get('curatedData') else "Not Available / Sparse"
         prompt_parts = [
-            "Please generate a 'Scrybe Score' and the complete JSON analysis based on all the provided data and your scoring protocol.",
+            "Please generate your complete, multi-layered analysis based on all the provided data and your Michelin-Star protocol. You do not need to calculate the tradePlan.",
             f"MARKET CONTEXT: {json.dumps(market_context)}",
             f"OPTIONS SENTIMENT: {json.dumps(options_data)}",
             f"CURRENT_VOLATILITY_ATR: {latest_atr:.2f}",
-            f"Financial Data Snapshot: {json.dumps(live_financial_data['curatedData'])}",
+            f"Financial Data Snapshot (Status: {fundamental_data_status}): {json.dumps(live_financial_data['curatedData'])}",
             f"Key Technical Indicators: {json.dumps(technical_indicators)}"
+            
         ]
         if charts:
             for key in sorted(charts.keys()):
@@ -156,20 +165,16 @@ class AIAnalyzer:
                     prompt_parts.append(f"This is the {key} chart:")
                     image_part = {"mime_type": "image/png", "data": base64.b64decode(charts[key])}
                     prompt_parts.append(image_part)
-        
         max_retries = 4
-        delay = 2  # Initial delay of 2 seconds
+        delay = 2
         for attempt in range(max_retries):
             try:
                 response = model.generate_content(prompt_parts, request_options={"timeout": 180})
                 return json.loads(response.text)
             except Exception as e:
-                # Check if the error is a quota error
                 if "429" in str(e) and "quota" in str(e).lower():
                     log.error("Quota exceeded. Raising exception to trigger key rotation.")
-                    # Re-raise the exception so the outer loop can catch it
-                    raise e 
-                
+                    raise e
                 log.warning(f"AI call attempt {attempt + 1} failed for {live_financial_data['rawDataSheet'].get('symbol', '')}. Error: {e}")
                 if attempt < max_retries - 1:
                     log.info(f"Waiting for {delay} seconds before retrying...")

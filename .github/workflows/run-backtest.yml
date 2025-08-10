@@ -53,6 +53,8 @@ jobs:
           # Pass all necessary secrets to the script
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
           GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}

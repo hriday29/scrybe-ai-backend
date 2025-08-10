@@ -154,6 +154,7 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
             'timestamp': datetime.now(timezone.utc), 'ticker': ticker, 'correlations': correlations,
             'price_at_prediction': latest_row['close'], 'prediction_date': datetime.now(timezone.utc),
             'strategy': strategy_config['name'],
+            'atr_at_prediction': latest_row['ATRr_14'],
             'market_regime_at_analysis': market_regime
         })
         
@@ -243,19 +244,35 @@ def run_all_jobs():
                     "scrybeScore": vst_analysis.get('scrybeScore')
                 })
                 try:
+                    log.info(f"Live signal is '{vst_analysis['signal']}'. Calculating trade plan deterministically.")
+                    signal = vst_analysis['signal']
+                    entry_price = vst_analysis['price_at_prediction'] 
+                    atr = vst_analysis.get('atr_at_prediction')
+
+                    if not atr:
+                        log.error(f"Could not find ATR in analysis for {ticker}. Cannot create trade object.")
+                        database_manager.set_active_trade(ticker, None)
+                        continue # Skips to the next ticker in the loop
+
+                    rr_ratio = config.VST_STRATEGY['min_rr_ratio']
+                    stop_loss_price = entry_price - (2 * atr) if signal == 'BUY' else entry_price + (2 * atr)
+                    target_price = entry_price + ((2 * atr) * rr_ratio) if signal == 'BUY' else entry_price - ((2 * atr) * rr_ratio)
+
                     trade_object = {
-                        "signal": vst_analysis.get('signal'), "strategy": vst_analysis.get('strategy'),
-                        "entry_price": vst_analysis.get('price_at_prediction'),
+                        "signal": signal,
+                        "strategy": vst_analysis.get('strategy'),
+                        "entry_price": entry_price,
                         "entry_date": vst_analysis.get('prediction_date'),
-                        "target": float(vst_analysis['tradePlan']['target']['price']),
-                        "stop_loss": float(vst_analysis['tradePlan']['stopLoss']['price']),
-                        "risk_reward_ratio": vst_analysis['tradePlan'].get('riskRewardRatio', 'N/A'),
+                        "target": round(target_price, 2),
+                        "stop_loss": round(stop_loss_price, 2),
+                        "risk_reward_ratio": rr_ratio,
                         "expiry_date": datetime.now(timezone.utc) + timedelta(days=config.TRADE_EXPIRY_DAYS),
                         "confidence": vst_analysis.get('confidence')
                     }
                     database_manager.set_active_trade(ticker, trade_object)
-                except (KeyError, ValueError, TypeError) as e:
-                    log.error(f"Could not create trade object for {ticker}: {e}")
+
+                except Exception as e:
+                    log.error(f"Could not create trade object for {ticker}: {e}", exc_info=True)
                     database_manager.set_active_trade(ticker, None)
             else:
                 log.info(f"Signal for {ticker} is 'HOLD'. No active trade will be set.")
