@@ -108,6 +108,7 @@ class AIAnalyzer:
             * **-49 to +49:** HOLD
             * **-50 to -74:** Moderate-conviction SELL
             * **-75 to -100:** High-conviction SELL
+        * The `isOnRadar` boolean should be `true` ONLY for 'HOLD' signals with scores between **40 to 49** and **-40 to -49**. For all other scores, it must be `false`.
         * **CRITICAL FINAL RULE:** You are **NOT** responsible for the `tradePlan` object. Focus on delivering a world-class analysis and signal.
         """
 
