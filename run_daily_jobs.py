@@ -235,6 +235,21 @@ def run_all_jobs():
 
             database_manager.save_vst_analysis(ticker, vst_analysis)
             database_manager.save_live_prediction(vst_analysis)
+            
+            signal = vst_analysis.get('signal')
+            regime_ok = True # Assume the regime is okay by default
+
+            if signal == 'BUY' and market_regime != 'Bullish':
+                regime_ok = False
+            elif signal == 'SELL' and market_regime != 'Bearish':
+                regime_ok = False
+
+            if not regime_ok:
+                log.warning(f"Signal '{signal}' for {ticker} will be converted to HOLD due to unfavorable market regime '{market_regime}'.")
+                vst_analysis['signal'] = 'HOLD'
+                vst_analysis['reasonForHold'] = f"Original signal '{signal}' invalidated by market regime '{market_regime}'."
+                # We must save this change to the main analysis document
+                database_manager.save_vst_analysis(ticker, vst_analysis)
 
             if vst_analysis.get('signal') in ['BUY', 'SELL']:
                 new_signals.append({

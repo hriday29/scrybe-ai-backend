@@ -130,6 +130,20 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                             )
 
                             if analysis_result:
+                                signal = analysis_result.get('signal')
+                                regime_ok = True # Assume the regime is okay by default
+
+                                if signal == 'BUY' and current_regime != 'Bullish':
+                                    regime_ok = False
+                                elif signal == 'SELL' and current_regime != 'Bearish':
+                                    regime_ok = False
+
+                                if not regime_ok:
+                                    log.info(f"Signal '{signal}' for {ticker} ignored due to unfavorable market regime '{current_regime}'.")
+                                    # We still need to create an empty tradePlan and save the 'HOLD' analysis
+                                    analysis_result['signal'] = 'HOLD' 
+                                    analysis_result['reasonForHold'] = f"Original signal '{signal}' invalidated by market regime '{current_regime}'."
+                                    
                                 if analysis_result.get('signal') in ['BUY', 'SELL']:
                                     log.info(f"AI signal is '{analysis_result['signal']}'. Calculating trade plan deterministically.")
                                     signal = analysis_result['signal']
