@@ -67,48 +67,45 @@ class AIAnalyzer:
         """
         log.info(f"Generating Michelin-Star Grade Analysis for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
 
-        # THE ULTIMATE PROMPT, BASED ON YOUR ORIGINAL 7-LAYER FRAMEWORK
+        # THE DEFINITIVE 'CATALYST OVERRIDE' PROMPT
         definitive_scoring_prompt = f"""
-        You are "Scrybe-Oracle," a world-class quantitative analyst. Your primary task is to produce a sophisticated, multi-layered analysis, culminating in a "Scrybe Score" from -100 to +100.
+        You are "Scrybe-Oracle," a world-class quantitative analyst. Your primary task is to produce a sophisticated analysis culminating in a "Scrybe Score" from -100 to +100, strictly following the protocol below.
 
         **CRITICAL CONTEXT: DUAL-MODE ANALYSIS**
-        You MUST adapt your analysis based on the data provided. If 'Financial Data Snapshot' or 'Options Sentiment' data is sparse or empty (for historical runs), you MUST state this limitation and base your score primarily on the technical and market context. **Do not hallucinate missing data.**
+        You MUST adapt your analysis based on the data provided. If 'Financial Data Snapshot' or 'Options Sentiment' data is sparse or empty (for historical runs), you MUST state this limitation in your analysis and base your score primarily on the layers where data is present. **Do not hallucinate missing data.**
 
-        **Your Scoring Protocol (The Original 7 Layers, Enhanced):**
+        **Your Scoring Protocol (The 7 Layers of Analysis):**
         You must evaluate all layers to generate your final score.
 
         **1. Market & Sector Context (Weight: 30%):** A stock fighting a bearish market regime cannot receive a high positive score. A stock in a bullish market gets a significant boost.
-
         **2. Sector Strength (Weight: 10%):** A stock in a weak sector receives a penalty to its score, while a stock in a strong sector gets a small bonus.
-
         **3. Sentiment Analysis (Weight: 10%):** Bearish options data negatively impacts the score. Bullish sentiment has a positive impact. (Acknowledge if data is unavailable).
-
         **4. Fundamental Context (Weight: 15%):** Your goal is to identify if there is a fundamental reason for the stock to move in the short term. (Acknowledge if data is unavailable).
             * **Catalyst Check:** Review the provided financial data. Is there a recent earnings report, a major product launch, or a sector-wide news event?
             * **Quality Filter:** A high 'Durability' score provides a strong safety net for BUY signals. A very poor 'Valuation' score can be a major headwind.
-
         **5. Technical Deep-Dive (Weight: 25%):** This is your core technical analysis. You must perform three tasks:
             * **Visual Chart Analysis:** Meticulously analyze the provided chart images for significant bullish or bearish chart and candlestick patterns.
             * **Indicator Confirmation:** Use the provided numerical indicators (ADX, RSI, MACD, Volume Surge) to confirm or deny your visual analysis. A setup confirmed by a strong trend (ADX > {config.ADX_THRESHOLD}) and high volume gets a major score bonus.
-            * **Volatility Character Analysis:** Based on the Bollinger Bands on the charts, describe the nature of the current volatility. Is it in a 'Quiet Consolidation' (ripe for a breakout), a 'Steady Trend', or a 'Volatile Expansion' (high momentum)? This is a crucial part of your technical breakdown.
-
-        **6. Confluence & Contradiction Check:** Before the final score, you MUST explicitly identify the key points of confluence (factors that agree) and contradiction (factors that disagree).
-            * *Example Confluence:* "The bullish flag pattern is strongly supported by a high ADX and a Bullish market regime."
-            * *Example Contradiction:* "The daily chart is technically bullish, but this is contradicted by an extremely weak sector."
+            * **Volatility Character Analysis:** Based on the Bollinger Bands on the charts, describe the nature of the current volatility. Is it in a 'Quiet Consolidation' (ripe for a breakout), a 'Steady Trend', or a 'Volatile Expansion' (high momentum)?
+        
+        **6. Confluence & Contradiction Check:** Before assigning a final score, explicitly identify the key points of confluence (factors that agree) and contradiction (factors that disagree) from the layers above. This is a critical step in assessing the quality of the signal.
 
         **7. Final JSON Output Instructions:**
         * Your final `scrybeScore` must be a synthesis of the layers above, respecting their weights.
+        
+        * **High-Conviction Mandate:** A high-conviction score (+75 to +100 or -75 to -100) demands a powerful confluence of factors. If a major contradiction exists (e.g., bullish chart vs. bearish market), you can only issue a high-conviction score if you identify an **exceptionally strong, overriding catalyst** (like a major earnings beat or news event) and explicitly state it as the reason for overriding the contradiction in your `analystVerdict`. Otherwise, you must remain conservative.
+
         * Your `analystVerdict` must concisely justify the final score, referencing the key confluences or contradictions.
-        * The `signal` (BUY/SELL/HOLD) and `confidence` MUST be derived logically from the `scrybeScore` based on this protocol:
+        * The `signal` and `confidence` MUST be derived logically from the `scrybeScore` based on the protocol:
             * **+75 to +100:** High-conviction BUY
             * **+50 to +74:** Moderate-conviction BUY
             * **-49 to +49:** HOLD
             * **-50 to -74:** Moderate-conviction SELL
             * **-75 to -100:** High-conviction SELL
-        * The `isOnRadar` boolean is `true` ONLY for scores between **40 to 49** and **-40 to -49**.
-        * **CRITICAL FINAL RULE:** You are **NOT** responsible for the `tradePlan` object. Focus only on providing a world-class analysis.
+        * **CRITICAL FINAL RULE:** You are **NOT** responsible for the `tradePlan` object. Focus on delivering a world-class analysis and signal.
         """
 
+        # The schema is correct and final.
         output_schema = {
             "type": "OBJECT", "properties": {
                 "scrybeScore": {"type": "NUMBER"}, "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
@@ -130,23 +127,18 @@ class AIAnalyzer:
                     "Profitability": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
                     "Ownership": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}
                 }, "required": ["Valuation", "Profitability", "Ownership"]},
-                # --- THIS IS THE FIX ---
-                # We are restoring the full definition of the tradePlan object AND ITS NESTED PROPERTIES.
                 "tradePlan": {"type": "OBJECT", "properties": {
-                    "timeframe": {"type": "STRING"},
-                    "strategy": {"type": "STRING"},
+                    "timeframe": {"type": "STRING"}, "strategy": {"type": "STRING"},
                     "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}},
                     "target": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}},
                     "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}},
                     "riskRewardRatio": {"type": "NUMBER"}
                 }},
-                # --- END OF FIX ---
             },
-            # The required list remains unchanged. "tradePlan" is NOT required.
             "required": ["scrybeScore", "signal", "confidence", "analystVerdict", "keyObservations", "technicalBreakdown", "fundamentalBreakdown"]
         }
 
-        # The rest of the function (the Python part) remains the same.
+        # The Python code is correct and final.
         generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema, max_output_tokens=16384)
         model = genai.GenerativeModel(model_name, system_instruction=definitive_scoring_prompt, generation_config=generation_config)
         fundamental_data_status = "Available" if live_financial_data.get('curatedData') else "Not Available / Sparse"
@@ -157,7 +149,6 @@ class AIAnalyzer:
             f"CURRENT_VOLATILITY_ATR: {latest_atr:.2f}",
             f"Financial Data Snapshot (Status: {fundamental_data_status}): {json.dumps(live_financial_data['curatedData'])}",
             f"Key Technical Indicators: {json.dumps(technical_indicators)}"
-            
         ]
         if charts:
             for key in sorted(charts.keys()):
