@@ -38,7 +38,7 @@ VST_STRATEGY = {
     'name': 'VST',
     'horizon_text': 'Very Short-Term (1-5 Days)',
     'holding_period': 5,
-    'min_rr_ratio': 1.5
+    'min_rr_ratio': 2.0
 }
 
 # --- Market Index Analysis Config ---
@@ -81,7 +81,7 @@ INDEX_LIST = {
     "BSE FMCG": "^BSEFMC",
 }
 
-VOLUME_SURGE_THRESHOLD = 1.2 # Represents a 20% surge
+VOLUME_SURGE_THRESHOLD = 1.6 #represents a 60% surge
 ADX_THRESHOLD = 25
 TRADE_EXPIRY_DAYS = 7
 
