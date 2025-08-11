@@ -60,7 +60,7 @@ class AIAnalyzer:
             log.error(f"Single news impact analysis call failed. Error: {e}")
             return None
 
-    def get_stock_analysis(self, live_financial_data: dict, latest_atr: float, model_name: str, charts: dict, trading_horizon_text: str, technical_indicators: dict, min_rr_ratio: float, market_context: dict, options_data: dict) -> dict:
+    def get_stock_analysis(self, live_financial_data: dict, latest_atr: float, model_name: str, charts: dict, trading_horizon_text: str, technical_indicators: dict, min_rr_ratio: float, market_context: dict, options_data: dict, macro_data: dict) -> dict:
         """
         Generates a Michelin-star grade analysis using a bipolar "Scrybe Score".
         The AI's role is to provide a rich, multi-layered analysis and a signal. The trade plan is ALWAYS calculated by code.
@@ -73,6 +73,12 @@ class AIAnalyzer:
 
         **CRITICAL CONTEXT: DUAL-MODE ANALYSIS**
         You MUST adapt your analysis based on the data provided. If 'Financial Data Snapshot' or 'Options Sentiment' data is sparse or empty (for historical runs), you MUST state this limitation in your analysis and base your score primarily on the layers where data is present. **Do not hallucinate missing data.**
+
+        **Preamble: Foundational Macro & Inter-market Context**
+        Before you begin the 7-layer scoring, you MUST first form a view on the macro environment based on the `MACRO CONTEXT DATA` provided. This view must inform your entire analysis.
+            * How is the broader market (Nifty50) trending?
+            * Are commodity prices (Oil, Gold) or currency (USD/INR) movements likely to act as a tailwind or headwind for this specific stock's sector?
+        Your final `analystVerdict` must begin with a brief statement on this macro context. A stock does not exist in a vacuum.
 
         **Your Scoring Protocol (The 7 Layers of Analysis):**
         You must evaluate all layers to generate your final score.
@@ -148,6 +154,7 @@ class AIAnalyzer:
             f"OPTIONS SENTIMENT: {json.dumps(options_data)}",
             f"CURRENT_VOLATILITY_ATR: {latest_atr:.2f}",
             f"Financial Data Snapshot (Status: {fundamental_data_status}): {json.dumps(live_financial_data['curatedData'])}",
+            f"MACRO CONTEXT DATA: {json.dumps(macro_data)}",
             f"Key Technical Indicators: {json.dumps(technical_indicators)}"
         ]
         if charts:

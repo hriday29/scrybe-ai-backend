@@ -90,7 +90,18 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                 log.info(f"Regime for {day_str} calculated as: {current_regime}")
                 
                 market_context_for_day = {"CURRENT_MARKET_REGIME": current_regime, "sector_performance_today": {}}
-
+                macro_data = {}
+                if benchmarks_data_cache is not None and not benchmarks_data_cache.empty:
+                    benchmarks_slice = benchmarks_data_cache.loc[:day_str].tail(6) # Get last 6 days for 5-day change
+                    if len(benchmarks_slice) > 1:
+                        # Calculate 5-day percentage change
+                        changes = ((benchmarks_slice.iloc[-1] - benchmarks_slice.iloc[0]) / benchmarks_slice.iloc[0]) * 100
+                        macro_data = {
+                            "Nifty50_5D_Change": f"{changes.get('Nifty50', 0):.2f}%",
+                            "CrudeOil_5D_Change": f"{changes.get('Crude Oil', 0):.2f}%",
+                            "Gold_5D_Change": f"{changes.get('Gold', 0):.2f}%",
+                            "USDINR_5D_Change": f"{changes.get('USD-INR', 0):.2f}%",
+                        }
                 for ticker in stocks_to_test:
                     if ticker not in full_historical_data_cache: continue
                     data_slice = full_historical_data_cache[ticker].loc[:day_str].copy()
@@ -126,23 +137,33 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                                 live_financial_data=live_financial_data, latest_atr=latest_row['ATRr_14'], model_name=config.PRO_MODEL,
                                 charts=charts_for_ai, trading_horizon_text=config.VST_STRATEGY['horizon_text'],
                                 technical_indicators=latest_indicators, min_rr_ratio=config.VST_STRATEGY['min_rr_ratio'],
-                                market_context=market_context_for_day, options_data={}
+                                market_context=market_context_for_day, options_data={},
+                                macro_data=macro_data
                             )
 
                             if analysis_result:
-                                signal = analysis_result.get('signal')
-                                regime_ok = True # Assume the regime is okay by default
+                                original_signal = analysis_result.get('signal')
+                                scrybe_score = analysis_result.get('scrybeScore', 0)
 
-                                if signal == 'BUY' and current_regime != 'Bullish':
-                                    regime_ok = False
-                                elif signal == 'SELL' and current_regime != 'Bearish':
-                                    regime_ok = False
+                                # Rule 1: The Regime Filter
+                                is_regime_ok = True
+                                if (original_signal == 'BUY' and current_regime != 'Bullish'):
+                                    is_regime_ok = False
+                                    analysis_result['reasonForHold'] = f"Signal '{original_signal}' invalidated by regime '{current_regime}'."
+                                    log.info(f"FILTERED (REGIME): {analysis_result['reasonForHold']}")
 
-                                if not regime_ok:
-                                    log.info(f"Signal '{signal}' for {ticker} ignored due to unfavorable market regime '{current_regime}'.")
-                                    # We still need to create an empty tradePlan and save the 'HOLD' analysis
-                                    analysis_result['signal'] = 'HOLD' 
-                                    analysis_result['reasonForHold'] = f"Original signal '{signal}' invalidated by market regime '{current_regime}'."
+                                # Rule 2: The Conviction Filter
+                                is_conviction_ok = True
+                                if abs(scrybe_score) < 75:
+                                    is_conviction_ok = False
+                                    # Only update the reason if a regime filter hasn't already done so
+                                    if is_regime_ok:
+                                        analysis_result['reasonForHold'] = f"Signal '{original_signal}' with score {scrybe_score} is below the high-conviction threshold of +/-75."
+                                    log.info(f"FILTERED (CONVICTION): Score {scrybe_score} for {ticker} is not high-conviction.")
+
+                                # Final Decision: If either filter failed, convert the signal to HOLD
+                                if not is_regime_ok or not is_conviction_ok:
+                                    analysis_result['signal'] = 'HOLD'
                                     
                                 if analysis_result.get('signal') in ['BUY', 'SELL']:
                                     log.info(f"AI signal is '{analysis_result['signal']}'. Calculating trade plan deterministically.")

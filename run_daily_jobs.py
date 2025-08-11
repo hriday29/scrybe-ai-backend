@@ -94,7 +94,7 @@ def _validate_trade_plan(analysis: dict) -> bool:
     except (KeyError, ValueError, TypeError): return False
     return True
 
-def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: dict, market_regime: str):
+def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: dict, market_regime: str, macro_data: dict):
     """A streamlined pipeline that only runs the VST analysis."""
     try:
         log.info(f"\n--- STARTING VST ANALYSIS FOR: {ticker} (Market Regime: {market_regime}) ---")
@@ -141,7 +141,8 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
             live_financial_data=live_financial_data, latest_atr=latest_row['ATRr_14'], model_name=config.PRO_MODEL,
             charts=charts, trading_horizon_text=strategy_config['horizon_text'],
             technical_indicators=latest_indicators, min_rr_ratio=strategy_config.get('min_rr_ratio', 2.0),
-            market_context=market_context, options_data=options_data
+            market_context=market_context, options_data=options_data,
+            macro_data=macro_data
         )
         if not analysis_result: raise ValueError("The main AI stock analysis failed.")
 
@@ -198,6 +199,20 @@ def run_all_jobs():
             return
 
         market_regime = data_retriever.get_market_regime()
+        log.info("Fetching live benchmark data for macro context...")
+        benchmarks_data = data_retriever.get_benchmarks_data(period="10d") # Fetch recent data
+        macro_data = {}
+        if benchmarks_data is not None and not benchmarks_data.empty:
+            if len(benchmarks_data) > 5:
+                # Calculate 5-day percentage change
+                changes = ((benchmarks_data.iloc[-1] - benchmarks_data.iloc[-6]) / benchmarks_data.iloc[-6]) * 100
+                macro_data = {
+                    "Nifty50_5D_Change": f"{changes.get('Nifty50', 0):.2f}%",
+                    "CrudeOil_5D_Change": f"{changes.get('Crude Oil', 0):.2f}%",
+                    "Gold_5D_Change": f"{changes.get('Gold', 0):.2f}%",
+                    "USDINR_5D_Change": f"{changes.get('USD-INR', 0):.2f}%",
+                }
+        log.info(f"Macro Context for today: {macro_data}")
         new_signals = [] 
         nifty50_tickers = config.NIFTY_50_TICKERS
 
@@ -209,7 +224,7 @@ def run_all_jobs():
             for attempt in range(max_retries):
                 try:
                     # The analysis pipeline is called within the try block
-                    vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime)
+                    vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime, macro_data=macro_data)
                     # If the call succeeds, we break out of the retry loop
                     break 
                 
@@ -236,22 +251,34 @@ def run_all_jobs():
             database_manager.save_vst_analysis(ticker, vst_analysis)
             database_manager.save_live_prediction(vst_analysis)
             
-            signal = vst_analysis.get('signal')
-            regime_ok = True # Assume the regime is okay by default
+            original_signal = vst_analysis.get('signal')
+            scrybe_score = vst_analysis.get('scrybeScore', 0)
 
-            if signal == 'BUY' and market_regime != 'Bullish':
-                regime_ok = False
-            elif signal == 'SELL' and market_regime != 'Bearish':
-                regime_ok = False
+            # Rule 1: The Regime Filter
+            is_regime_ok = True
+            if (original_signal == 'BUY' and market_regime != 'Bullish'):
+                is_regime_ok = False
+                vst_analysis['reasonForHold'] = f"Signal '{original_signal}' invalidated by regime '{market_regime}'."
+                log.warning(f"FILTERED (REGIME): {vst_analysis['reasonForHold']}")
 
-            if not regime_ok:
-                log.warning(f"Signal '{signal}' for {ticker} will be converted to HOLD due to unfavorable market regime '{market_regime}'.")
+            # Rule 2: The Conviction Filter
+            is_conviction_ok = True
+            if abs(scrybe_score) < 75:
+                is_conviction_ok = False
+                if is_regime_ok: # Avoid overwriting the more important regime reason
+                    vst_analysis['reasonForHold'] = f"Signal '{original_signal}' with score {scrybe_score} is below the high-conviction threshold of +/-75."
+                log.warning(f"FILTERED (CONVICTION): Score {scrybe_score} for {ticker} is not high-conviction.")
+
+            # Final Decision: If either filter failed, convert the signal to HOLD
+            if not is_regime_ok or not is_conviction_ok:
                 vst_analysis['signal'] = 'HOLD'
-                vst_analysis['reasonForHold'] = f"Original signal '{signal}' invalidated by market regime '{market_regime}'."
-                # We must save this change to the main analysis document
+                # Save the updated 'HOLD' signal back to the main analysis document
                 database_manager.save_vst_analysis(ticker, vst_analysis)
+            # --- END OF OVERLAY ---
 
+            # The existing trade creation logic now runs on the final, filtered signal
             if vst_analysis.get('signal') in ['BUY', 'SELL']:
+                log.info(f"PASSED FILTERS: Creating live trade for '{vst_analysis['signal']}' signal on {ticker}.")
                 new_signals.append({
                     "ticker": ticker,
                     "signal": vst_analysis.get('signal'),
@@ -259,9 +286,9 @@ def run_all_jobs():
                     "scrybeScore": vst_analysis.get('scrybeScore')
                 })
                 try:
-                    log.info(f"Live signal is '{vst_analysis['signal']}'. Calculating trade plan deterministically.")
+                    # Deterministic trade plan calculation
                     signal = vst_analysis['signal']
-                    entry_price = vst_analysis['price_at_prediction'] 
+                    entry_price = vst_analysis['price_at_prediction']
                     atr = vst_analysis.get('atr_at_prediction')
 
                     if not atr:
@@ -290,7 +317,7 @@ def run_all_jobs():
                     log.error(f"Could not create trade object for {ticker}: {e}", exc_info=True)
                     database_manager.set_active_trade(ticker, None)
             else:
-                log.info(f"Signal for {ticker} is 'HOLD'. No active trade will be set.")
+                log.info(f"Signal for {ticker} is 'HOLD' after filtering. No active trade will be set.")
                 database_manager.set_active_trade(ticker, None)
             
             time.sleep(10)
