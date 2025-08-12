@@ -144,35 +144,35 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                             if analysis_result:
                                 original_signal = analysis_result.get('signal')
                                 scrybe_score = analysis_result.get('scrybeScore', 0)
-                                dvm_scores = analysis_result.get('dvmScores', {})
+                                log.info(f"Generating DVM scores for {ticker}...")
+                                dvm_scores = analyzer.get_dvm_scores(live_financial_data, latest_indicators)
+                                analysis_result['dvmScores'] = dvm_scores
+
+                                final_signal = original_signal
+                                filter_reason = None
 
                                 # Rule 1: The Regime Filter
-                                is_regime_ok = True
-                                if (original_signal == 'BUY' and current_regime != 'Bullish'):
-                                    is_regime_ok = False
-                                    analysis_result['reasonForHold'] = f"Signal '{original_signal}' invalidated by regime '{current_regime}'."
-                                    log.info(f"FILTERED (REGIME): {analysis_result['reasonForHold']}")
+                                if not ((original_signal == 'BUY' and current_regime == 'Bullish') or \
+                                        (original_signal == 'SELL' and current_regime == 'Bearish') or \
+                                        (original_signal == 'HOLD')):
+                                    final_signal = 'HOLD'
+                                    filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to an unfavorable market regime ('{current_regime}')."
 
                                 # Rule 2: The Conviction Filter
-                                is_conviction_ok = True
-                                if abs(scrybe_score) < 60:
-                                    is_conviction_ok = False
-                                    # Only update the reason if a regime filter hasn't already done so
-                                    if is_regime_ok:
-                                        analysis_result['reasonForHold'] = f"Signal '{original_signal}' with score {scrybe_score} is below the high-conviction threshold of +/-75."
-                                    log.info(f"FILTERED (CONVICTION): Score {scrybe_score} for {ticker} is not high-conviction.")
+                                elif abs(scrybe_score) < 60 and original_signal != 'HOLD':
+                                    final_signal = 'HOLD'
+                                    filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed by the Risk Manager because it did not meet the high-conviction threshold (>60)."
 
                                 # Rule 3: The Quality Filter
-                                is_quality_ok = True
-                                if dvm_scores: # Check if DVM scores exist
-                                    durability_score = dvm_scores.get('durability', {}).get('score', 0)
-                                    if durability_score < 40: # Filter out companies with 'Poor' durability
-                                        is_quality_ok = False
-                                        log.info(f"FILTERED (QUALITY): Signal '{original_signal}' for {ticker} ignored due to poor Durability score of {durability_score}.")
+                                elif dvm_scores and dvm_scores.get('durability', {}).get('score', 100) < 40:
+                                    final_signal = 'HOLD'
+                                    filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to a poor fundamental Quality (Durability) score."
 
-                                # Final Decision: If either filter failed, convert the signal to HOLD
-                                if not is_regime_ok or not is_conviction_ok or not is_quality_ok:
-                                    analysis_result['signal'] = 'HOLD'
+                                analysis_result['signal'] = final_signal
+                                if filter_reason:
+                                    log.info(filter_reason)
+                                    analysis_result['analystVerdict'] = filter_reason
+                                    analysis_result['tradePlan'] = {"status": "Filtered by Risk Manager", "reason": filter_reason}
                                     
                                 if analysis_result.get('signal') in ['BUY', 'SELL']:
                                     log.info(f"AI signal is '{analysis_result['signal']}'. Calculating trade plan deterministically.")
@@ -191,10 +191,8 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                                         "riskRewardRatio": rr_ratio
                                     }
                                 else:
-                                    analysis_result['tradePlan'] = {}
-
-                                log.info(f"Generating DVM scores for {ticker}...")
-                                dvm_scores = analyzer.get_dvm_scores(live_financial_data, latest_indicators)
+                                    if 'tradePlan' not in analysis_result:
+                                        analysis_result['tradePlan'] = {}
 
                                 benchmarks_slice = benchmarks_data_cache.loc[:day_str] if benchmarks_data_cache is not None else None
                                 correlations = performance_analyzer.calculate_correlations(data_slice, benchmarks_slice)

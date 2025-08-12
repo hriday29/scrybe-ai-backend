@@ -99,9 +99,10 @@ class AIAnalyzer:
             * **Volatility Character Analysis:** Based on the Bollinger Bands on the charts, describe the nature of the current volatility. Is it in a 'Quiet Consolidation' (ripe for a breakout), a 'Steady Trend', or a 'Volatile Expansion' (high momentum)?
         
         **6. Confluence & Contradiction Check:** Before assigning a final score, explicitly identify the key points of confluence (factors that agree) and contradiction (factors that disagree) from the layers above. This is a critical step in assessing the quality of the signal.
-
+        
         **7. Final JSON Output Instructions:**
         * Your final `scrybeScore` must be a synthesis of the layers above, respecting their weights.
+        * Your `keyInsight` must be the single most important, actionable takeaway from your entire analysis, distilled into one sentence.
         
         * **High-Conviction Mandate:** A high-conviction score (+75 to +100 or -75 to -100) demands a powerful confluence of factors. If a major contradiction exists (e.g., bullish chart vs. bearish market), you can only issue a high-conviction score if you identify an **exceptionally strong, overriding catalyst** (like a major earnings beat or news event) and explicitly state it as the reason for overriding the contradiction in your `analystVerdict`. Otherwise, you must remain conservative.
 
@@ -120,7 +121,7 @@ class AIAnalyzer:
         output_schema = {
             "type": "OBJECT", "properties": {
                 "scrybeScore": {"type": "NUMBER"}, "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
-                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]}, "analystVerdict": {"type": "STRING"},
+                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]}, "keyInsight": {"type": "STRING"},"analystVerdict": {"type": "STRING"},
                 "keyObservations": {"type": "OBJECT", "properties": {
                     "confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}},
                     "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}},
@@ -146,7 +147,7 @@ class AIAnalyzer:
                     "riskRewardRatio": {"type": "NUMBER"}
                 }},
             },
-            "required": ["scrybeScore", "signal", "confidence", "analystVerdict", "keyObservations", "technicalBreakdown", "fundamentalBreakdown"]
+            "required": ["scrybeScore", "signal", "confidence", "keyInsight", "analystVerdict", "keyObservations", "technicalBreakdown", "fundamentalBreakdown"]
         }
 
         generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema, max_output_tokens=16384)

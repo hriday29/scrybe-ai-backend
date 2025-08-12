@@ -255,35 +255,32 @@ def run_all_jobs():
             scrybe_score = vst_analysis.get('scrybeScore', 0)
             dvm_scores = vst_analysis.get('dvmScores', {})
 
+            final_signal = original_signal
+            filter_reason = None
+
             # Rule 1: The Regime Filter
-            is_regime_ok = True
-            if (original_signal == 'BUY' and market_regime != 'Bullish'):
-                is_regime_ok = False
-                vst_analysis['reasonForHold'] = f"Signal '{original_signal}' invalidated by regime '{market_regime}'."
-                log.warning(f"FILTERED (REGIME): {vst_analysis['reasonForHold']}")
+            if not ((original_signal == 'BUY' and market_regime == 'Bullish') or \
+                (original_signal == 'SELL' and market_regime == 'Bearish') or \
+                (original_signal == 'HOLD')):
+                final_signal = 'HOLD'
+                filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to an unfavorable market regime ('{market_regime}')."
 
             # Rule 2: The Conviction Filter
-            is_conviction_ok = True
-            if abs(scrybe_score) < 60:
-                is_conviction_ok = False
-                if is_regime_ok: # Avoid overwriting the more important regime reason
-                    vst_analysis['reasonForHold'] = f"Signal '{original_signal}' with score {scrybe_score} is below the high-conviction threshold of +/-75."
-                log.warning(f"FILTERED (CONVICTION): Score {scrybe_score} for {ticker} is not high-conviction.")
+            elif abs(scrybe_score) < 60 and original_signal != 'HOLD':
+                final_signal = 'HOLD'
+                filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed by the Risk Manager because it did not meet the high-conviction threshold (>60)."
 
             # Rule 3: The Quality Filter
-            is_quality_ok = True
-            if dvm_scores: # Check if DVM scores exist
-                durability_score = dvm_scores.get('durability', {}).get('score', 0)
-                if durability_score < 40: # Filter out companies with 'Poor' durability
-                    is_quality_ok = False
-                    log.warning(f"FILTERED (QUALITY): Signal '{original_signal}' for {ticker} ignored due to poor Durability score of {durability_score}.")
+            elif dvm_scores and dvm_scores.get('durability', {}).get('score', 100) < 40:
+                final_signal = 'HOLD'
+                filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to a poor fundamental Quality (Durability) score."
 
-            # Final Decision: If either filter failed, convert the signal to HOLD
-            if not is_regime_ok or not is_conviction_ok or not is_quality_ok:
-                vst_analysis['signal'] = 'HOLD'
-                # Save the updated 'HOLD' signal back to the main analysis document
+            vst_analysis['signal'] = final_signal
+            if filter_reason:
+                log.warning(filter_reason)
+                vst_analysis['analystVerdict'] = filter_reason
+                vst_analysis['tradePlan'] = {"status": "Filtered by Risk Manager", "reason": filter_reason}
                 database_manager.save_vst_analysis(ticker, vst_analysis)
-            # --- END OF OVERLAY ---
 
             # The existing trade creation logic now runs on the final, filtered signal
             if vst_analysis.get('signal') in ['BUY', 'SELL']:
