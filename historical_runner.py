@@ -155,7 +155,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
 
                                 # Rule 2: The Conviction Filter
                                 is_conviction_ok = True
-                                if abs(scrybe_score) < 75:
+                                if abs(scrybe_score) < 60:
                                     is_conviction_ok = False
                                     # Only update the reason if a regime filter hasn't already done so
                                     if is_regime_ok:

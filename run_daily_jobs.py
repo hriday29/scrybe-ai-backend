@@ -253,6 +253,7 @@ def run_all_jobs():
             
             original_signal = vst_analysis.get('signal')
             scrybe_score = vst_analysis.get('scrybeScore', 0)
+            dvm_scores = vst_analysis.get('dvmScores', {})
 
             # Rule 1: The Regime Filter
             is_regime_ok = True
@@ -263,14 +264,22 @@ def run_all_jobs():
 
             # Rule 2: The Conviction Filter
             is_conviction_ok = True
-            if abs(scrybe_score) < 75:
+            if abs(scrybe_score) < 60:
                 is_conviction_ok = False
                 if is_regime_ok: # Avoid overwriting the more important regime reason
                     vst_analysis['reasonForHold'] = f"Signal '{original_signal}' with score {scrybe_score} is below the high-conviction threshold of +/-75."
                 log.warning(f"FILTERED (CONVICTION): Score {scrybe_score} for {ticker} is not high-conviction.")
 
+            # Rule 3: The Quality Filter
+            is_quality_ok = True
+            if dvm_scores: # Check if DVM scores exist
+                durability_score = dvm_scores.get('durability', {}).get('score', 0)
+                if durability_score < 40: # Filter out companies with 'Poor' durability
+                    is_quality_ok = False
+                    log.warning(f"FILTERED (QUALITY): Signal '{original_signal}' for {ticker} ignored due to poor Durability score of {durability_score}.")
+
             # Final Decision: If either filter failed, convert the signal to HOLD
-            if not is_regime_ok or not is_conviction_ok:
+            if not is_regime_ok or not is_conviction_ok or not is_quality_ok:
                 vst_analysis['signal'] = 'HOLD'
                 # Save the updated 'HOLD' signal back to the main analysis document
                 database_manager.save_vst_analysis(ticker, vst_analysis)
