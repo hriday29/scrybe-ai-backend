@@ -41,9 +41,11 @@ FLASH_MODEL = 'gemini-2.5-flash'
 
 VST_STRATEGY = {
     'name': 'VST',
-    'horizon_text': 'Quick Flip (1-3 Days)',
-    'holding_period': 3,
-    'min_rr_ratio': 2.0
+    'horizon_text': 'Weekly Swing (1-5 Days)',
+    'holding_period': 5,
+    'min_rr_ratio': 2.0,
+    'use_trailing_stop': True,
+    'trailing_stop_pct': 1.5
 }
 
 # --- Market Index Analysis Config ---

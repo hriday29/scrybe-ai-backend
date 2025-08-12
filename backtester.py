@@ -96,7 +96,13 @@ def process_single_trade(trade: dict, historical_data: pd.DataFrame):
         log.error(f"Invalid trade plan for {trade['ticker']}: {e}. This may be a 'HOLD' signal or have non-numeric prices. Closing trade.")
         log_and_close_trade(trade, 0, "Trade Closed - Invalid Plan", price_at_prediction, trade['prediction_date'])
         return
+    
+    use_trailing_stop = config.VST_STRATEGY.get('use_trailing_stop', False)
+    trailing_stop_atr_multiplier = config.VST_STRATEGY.get('trailing_stop_pct', 1.5)
 
+    # Initialize the current stop-loss price
+    current_stop_loss = stop_loss_price
+    
     prediction_date = trade['prediction_date'].replace(tzinfo=None)
     trading_days_since = historical_data[historical_data.index > prediction_date]
 
@@ -107,27 +113,52 @@ def process_single_trade(trade: dict, historical_data: pd.DataFrame):
     for i, day_data in enumerate(trading_days_since.itertuples()):
         day_number = i + 1
         current_day_date = day_data.Index.to_pydatetime().replace(tzinfo=timezone.utc)
-        
+
         if signal == 'BUY':
-            if day_data.low <= stop_loss_price:
-                log_and_close_trade(trade, day_number, "Trade Closed - Stop-Loss Hit", stop_loss_price, current_day_date)
+            # Check if the price hit our current stop-loss
+            if day_data.low <= current_stop_loss:
+                reason = "Trade Closed - Trailing Stop Hit" if use_trailing_stop and current_stop_loss > stop_loss_price else "Trade Closed - Stop-Loss Hit"
+                log_and_close_trade(trade, day_number, reason, current_stop_loss, current_day_date)
                 return
+            # Check for target hit
             if day_data.high >= target_price:
                 log_and_close_trade(trade, day_number, "Trade Closed - Target Hit", target_price, current_day_date)
                 return
-        
+
+            # Trailing Stop Logic for BUY trades
+            if use_trailing_stop:
+                # Calculate a potential new stop-loss based on today's high
+                new_potential_stop = day_data.high - (atr_at_prediction * trailing_stop_atr_multiplier)
+                # If this new stop is higher than our current one, "trail" it up
+                if new_potential_stop > current_stop_loss:
+                    current_stop_loss = new_potential_stop
+                    log.info(f"Trailing stop for {trade['ticker']} moved up to {current_stop_loss:.2f}")
+
         elif signal == 'SELL':
-            if day_data.high >= stop_loss_price:
-                log_and_close_trade(trade, day_number, "Trade Closed - Stop-Loss Hit", stop_loss_price, current_day_date)
+            # Check if the price hit our current stop-loss
+            if day_data.high >= current_stop_loss:
+                reason = "Trade Closed - Trailing Stop Hit" if use_trailing_stop and current_stop_loss < stop_loss_price else "Trade Closed - Stop-Loss Hit"
+                log_and_close_trade(trade, day_number, reason, current_stop_loss, current_day_date)
                 return
+            # Check for target hit
             if day_data.low <= target_price:
                 log_and_close_trade(trade, day_number, "Trade Closed - Target Hit", target_price, current_day_date)
                 return
 
+            # Trailing Stop Logic for SELL trades
+            if use_trailing_stop:
+                # Calculate a potential new stop-loss based on today's low
+                new_potential_stop = day_data.low + (atr_at_prediction * trailing_stop_atr_multiplier)
+                # If this new stop is lower than our current one, "trail" it down
+                if new_potential_stop < current_stop_loss:
+                    current_stop_loss = new_potential_stop
+                    log.info(f"Trailing stop for {trade['ticker']} moved down to {current_stop_loss:.2f}")
+
+        # Time-based exit remains the final check
         if day_number >= holding_period:
             log_and_close_trade(trade, day_number, f"Trade Closed - {holding_period}-Day Time Exit", day_data.close, current_day_date)
             return
-            
+
     log.info(f"--> Trade for {trade['ticker']} still open after {len(trading_days_since)} days.")
 
 def log_and_close_trade(trade: dict, evaluation_day: int, event: str, event_price: float, close_date: datetime):
