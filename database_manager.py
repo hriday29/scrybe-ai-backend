@@ -64,6 +64,7 @@ def save_vst_analysis(ticker: str, analysis_doc: dict):
     try:
         # The new structure is simpler: the analysis doc becomes the root
         payload = analysis_doc.copy()
+        payload.pop('_id', None)
         payload['last_updated'] = datetime.now(timezone.utc)
         
         # We perform an update, but preserve the existing active_trade fields
