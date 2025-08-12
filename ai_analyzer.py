@@ -7,6 +7,7 @@ import base64
 import pandas as pd
 import data_retriever
 from logger_config import log
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import pandas_ta as ta
 
 class AIAnalyzer:
@@ -145,9 +146,21 @@ class AIAnalyzer:
             "required": ["scrybeScore", "signal", "confidence", "analystVerdict", "keyObservations", "technicalBreakdown", "fundamentalBreakdown"]
         }
 
-        # The Python code is correct and final.
         generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema, max_output_tokens=16384)
-        model = genai.GenerativeModel(model_name, system_instruction=definitive_scoring_prompt, generation_config=generation_config)
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+
+        # Create the model with the new safety settings included
+        model = genai.GenerativeModel(
+            model_name,
+            safety_settings=safety_settings,
+            system_instruction=definitive_scoring_prompt,
+            generation_config=generation_config
+        )
         fundamental_data_status = "Available" if live_financial_data.get('curatedData') else "Not Available / Sparse"
         prompt_parts = [
             "Please generate your complete, multi-layered analysis based on all the provided data and your Michelin-Star protocol. You do not need to calculate the tradePlan.",
