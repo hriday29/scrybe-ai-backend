@@ -82,6 +82,9 @@ class AIAnalyzer:
         Your final `analystVerdict` must begin with a brief statement on this macro context. A stock does not exist in a vacuum.
 
         **Your Scoring Protocol (The 7 Layers of Analysis):**
+
+        **Note on Weights:** The following layers include suggested weights. These are critical guidelines to inform the relative importance of each factor. You must use them to structure your analysis. However, your final score must be a holistic synthesis that gives primary authority to the logical mandates in Layer 7.
+        
         You must evaluate all layers to generate your final score.
 
         **1. Market & Sector Context (Weight: 30%):** A stock fighting a bearish market regime cannot receive a high positive score. A stock in a bullish market gets a significant boost.
