@@ -37,7 +37,7 @@ def calculate_correlations(stock_historical_data: pd.DataFrame, benchmarks_data:
     try:
         # Using pct_change() for returns is the more robust method
         stock_returns = stock_historical_data['close'].pct_change().rename('Stock')
-        benchmark_returns = benchmarks_data.pct_change()
+        benchmark_returns = benchmarks_data.pct_change(fill_method=None)
         
         combined_returns = pd.concat([stock_returns, benchmark_returns], axis=1).dropna()
         
