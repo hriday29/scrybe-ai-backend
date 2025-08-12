@@ -144,6 +144,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                             if analysis_result:
                                 original_signal = analysis_result.get('signal')
                                 scrybe_score = analysis_result.get('scrybeScore', 0)
+                                dvm_scores = analysis_result.get('dvmScores', {})
 
                                 # Rule 1: The Regime Filter
                                 is_regime_ok = True
@@ -161,8 +162,16 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                                         analysis_result['reasonForHold'] = f"Signal '{original_signal}' with score {scrybe_score} is below the high-conviction threshold of +/-75."
                                     log.info(f"FILTERED (CONVICTION): Score {scrybe_score} for {ticker} is not high-conviction.")
 
+                                # Rule 3: The Quality Filter
+                                is_quality_ok = True
+                                if dvm_scores: # Check if DVM scores exist
+                                    durability_score = dvm_scores.get('durability', {}).get('score', 0)
+                                    if durability_score < 40: # Filter out companies with 'Poor' durability
+                                        is_quality_ok = False
+                                        log.info(f"FILTERED (QUALITY): Signal '{original_signal}' for {ticker} ignored due to poor Durability score of {durability_score}.")
+
                                 # Final Decision: If either filter failed, convert the signal to HOLD
-                                if not is_regime_ok or not is_conviction_ok:
+                                if not is_regime_ok or not is_conviction_ok or not is_quality_ok:
                                     analysis_result['signal'] = 'HOLD'
                                     
                                 if analysis_result.get('signal') in ['BUY', 'SELL']:
