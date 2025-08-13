@@ -282,10 +282,12 @@ def run_all_jobs():
             is_conviction_ok = abs(scrybe_score) >= 60 or original_signal == 'HOLD'
 
             is_quality_ok = True
-            if dvm_scores:
-                durability_score = dvm_scores.get('durability', {}).get('score', 100)
-                if durability_score < 40:
-                    is_quality_ok = False
+            # The Quality check ONLY applies to BUY signals.
+            if original_signal == 'BUY':
+                if dvm_scores:
+                    durability_score = dvm_scores.get('durability', {}).get('score', 100)
+                    if durability_score < 40:
+                        is_quality_ok = False
             
             if not is_regime_ok:
                 final_signal = 'HOLD'

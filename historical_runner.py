@@ -123,6 +123,8 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     is_volume_high = latest_row['volume'] > volume_ma_20 * config.VOLUME_SURGE_THRESHOLD
                     latest_indicators = { "ADX": f"{latest_row['ADX_14']:.2f}", "RSI": f"{latest_row['RSI_14']:.2f}", "MACD": f"{latest_row['MACD_12_26_9']:.2f}", "Bollinger Band Width Percent": f"{(latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0'] * 100:.2f}", "Volume Surge": "Yes" if is_volume_high else "No" }
                     charts_for_ai = {}
+                    stock_5d_change = ((latest_row['close'] - data_slice_copy['close'].iloc[-6]) / data_slice_copy['close'].iloc[-6]) * 100 if len(data_slice_copy) > 5 else 0
+                    market_context_for_day['Stock_5D_Change'] = f"{stock_5d_change:.2f}%"
                     if generate_charts:
                         charts_for_ai = technical_analyzer.generate_focused_charts(data_slice, ticker)
 
@@ -193,10 +195,12 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                                        (original_signal == 'HOLD')
                         is_conviction_ok = abs(scrybe_score) >= 60 or original_signal == 'HOLD'
                         is_quality_ok = True
-                        if dvm_scores:
-                            durability_score = dvm_scores.get('durability', {}).get('score', 100)
-                            if durability_score < 40:
-                                is_quality_ok = False
+                        # The Quality check ONLY applies to BUY signals.
+                        if original_signal == 'BUY':
+                            if dvm_scores:
+                                durability_score = dvm_scores.get('durability', {}).get('score', 100)
+                                if durability_score < 40:
+                                    is_quality_ok = False
                         
                         final_signal = original_signal
                         filter_reason = None
