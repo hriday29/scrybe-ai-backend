@@ -62,27 +62,36 @@ def run_backtest(batch_id: str, full_historical_data_cache: dict):
 
     log.info(f"--- ✅ Consolidated Backtesting Job Finished for Batch: {batch_id} ---")
 
+# New function for backtester.py
 def process_single_trade(trade: dict, historical_data: pd.DataFrame):
-    """Evaluates a single BUY or SELL trade against its plan with robust validation."""
+    """Evaluates a single BUY or SELL trade against its plan with robust validation and adaptive strategy awareness."""
     log.info(f"Processing trade for {trade['ticker']} predicted on {trade['prediction_date'].strftime('%Y-%m-%d')}...")
     signal = trade.get('signal')
     price_at_prediction = trade['price_at_prediction']
 
+    # --- START: Adaptive Strategy Loading ---
+    strategy_name = trade.get('strategy') # e.g., 'BlueChip' or 'DefaultSwing'
+    if strategy_name == 'BlueChip':
+        active_strategy = config.BLUE_CHIP_STRATEGY
+    elif strategy_name == 'DefaultSwing':
+        active_strategy = config.DEFAULT_SWING_STRATEGY
+    else:
+        log.error(f"Unknown strategy '{strategy_name}' for trade {trade['_id']}. Defaulting.")
+        active_strategy = config.DEFAULT_SWING_STRATEGY # Fallback to default
+    # --- END: Adaptive Strategy Loading ---
+
     try:
         trade_plan = trade.get('tradePlan', {})
-        
-        # Directly attempt to convert price strings to floats.
-        # The except block will catch any non-numeric values like "N/A".
         target_price = float(trade_plan.get('target', {}).get('price'))
         stop_loss_price = float(trade_plan.get('stopLoss', {}).get('price'))
-        
         atr_at_prediction = float(trade.get('atr_at_prediction', 0))
-        holding_period = config.VST_STRATEGY['holding_period']
+
+        # Use parameters from the loaded active_strategy
+        holding_period = active_strategy['holding_period']
 
         if not all([target_price, stop_loss_price, atr_at_prediction]):
              raise ValueError("Essential trade plan values (target, stop-loss, ATR) are zero after conversion.")
 
-        # Using the same dynamic validation
         ATR_REALISM_MULTIPLIER = 6.0
         target_distance = abs(target_price - price_at_prediction)
         max_realistic_move = ATR_REALISM_MULTIPLIER * atr_at_prediction
@@ -97,8 +106,9 @@ def process_single_trade(trade: dict, historical_data: pd.DataFrame):
         log_and_close_trade(trade, 0, "Trade Closed - Invalid Plan", price_at_prediction, trade['prediction_date'])
         return
     
-    use_trailing_stop = config.VST_STRATEGY.get('use_trailing_stop', False)
-    trailing_stop_atr_multiplier = config.VST_STRATEGY.get('trailing_stop_pct', 1.5)
+    # Use parameters from the loaded active_strategy
+    use_trailing_stop = active_strategy.get('use_trailing_stop', False)
+    trailing_stop_atr_multiplier = active_strategy.get('trailing_stop_pct', 1.5)
 
     # Initialize the current stop-loss price
     current_stop_loss = stop_loss_price

@@ -402,7 +402,7 @@ def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
     log.info(f"[FETCH] Running news fetch for {ticker_symbol} using NewsAPI...")
 
     try:
-        if not NEWSAPI_API_KEY:
+        if not config.NEWSAPI_API_KEY:
             raise ValueError("NewsAPI key not configured.")
 
         # Use plain ticker name for best results
@@ -410,7 +410,7 @@ def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
 
         url = (
             "https://newsapi.org/v2/top-headlines"
-            f"?q={query}&language=en&country=in&category=business&apiKey={NEWSAPI_API_KEY}"
+            f"?q={query}&language=en&country=in&category=business&apiKey={config.NEWSAPI_API_KEY}"
         )
 
         response = requests.get(url, timeout=10)

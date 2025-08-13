@@ -35,7 +35,7 @@ def load_state():
 
 def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to_test: list, is_fresh_run: bool = False, generate_charts: bool = False):
     """
-    Generates historical AI predictions for a given date range and stock list.
+    Generates historical AI predictions for a given date range and stock list using the final multi-strategy architecture.
     """
     log.info(f"### STARTING HISTORICAL PREDICTION GENERATION FOR BATCH: {batch_id} ###")
     log.info(f"Period: {start_date} to {end_date}")
@@ -84,17 +84,16 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
             log.info(f"\n--- Simulating Day {i+1}/{len(simulation_days)}: {day_str} ---")
 
             try:
-                # Calculate the true market regime for the current simulated day
                 nifty_slice = nifty_data_cache.loc[:day_str] if nifty_data_cache is not None else None
                 current_regime = data_retriever.calculate_regime_from_data(nifty_slice)
                 log.info(f"Regime for {day_str} calculated as: {current_regime}")
                 
                 market_context_for_day = {"CURRENT_MARKET_REGIME": current_regime, "sector_performance_today": {}}
+                
                 macro_data = {}
                 if benchmarks_data_cache is not None and not benchmarks_data_cache.empty:
-                    benchmarks_slice = benchmarks_data_cache.loc[:day_str].tail(6) # Get last 6 days for 5-day change
+                    benchmarks_slice = benchmarks_data_cache.loc[:day_str].tail(6)
                     if len(benchmarks_slice) > 1:
-                        # Calculate 5-day percentage change
                         changes = ((benchmarks_slice.iloc[-1] - benchmarks_slice.iloc[0]) / benchmarks_slice.iloc[0]) * 100
                         macro_data = {
                             "Nifty50_5D_Change": f"{changes.get('Nifty50', 0):.2f}%",
@@ -102,128 +101,150 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                             "Gold_5D_Change": f"{changes.get('Gold', 0):.2f}%",
                             "USDINR_5D_Change": f"{changes.get('USD-INR', 0):.2f}%",
                         }
+
                 for ticker in stocks_to_test:
                     if ticker not in full_historical_data_cache: continue
                     data_slice = full_historical_data_cache[ticker].loc[:day_str].copy()
-                    
                     if len(data_slice) < 100: continue
 
                     log.info(f"--- Analyzing Ticker: {ticker} for {day_str} ---")
                     
-                    max_retries = len(key_manager.api_keys)
-                    for attempt in range(max_retries):
-                        try:
-                            live_financial_data = {"curatedData": {}, "rawDataSheet": {"symbol": ticker, "longName": ticker}}
-                            
-                            data_slice_copy = data_slice.copy()
-                            data_slice_copy.ta.bbands(length=20, append=True); data_slice_copy.ta.rsi(length=14, append=True)
-                            data_slice_copy.ta.macd(fast=12, slow=26, signal=9, append=True); data_slice_copy.ta.adx(length=14, append=True)
-                            data_slice_copy.ta.atr(length=14, append=True); data_slice_copy.dropna(inplace=True)
-                            
-                            if data_slice_copy.empty: continue
-
-                            latest_row = data_slice_copy.iloc[-1]
-                            volume_ma_20 = data_slice_copy['volume'].rolling(window=20).mean().iloc[-1]
-                            is_volume_high = latest_row['volume'] > volume_ma_20 * config.VOLUME_SURGE_THRESHOLD
-                            
-                            latest_indicators = { "ADX": f"{latest_row['ADX_14']:.2f}", "RSI": f"{latest_row['RSI_14']:.2f}", "MACD": f"{latest_row['MACD_12_26_9']:.2f}", "Bollinger Band Width Percent": f"{(latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0'] * 100:.2f}", "Volume Surge": "Yes" if is_volume_high else "No" }
-
-                            charts_for_ai = {}
-                            if generate_charts:
-                                log.info(f"Generating charts for {ticker} (High-Fidelity Run)...")
-                                charts_for_ai = technical_analyzer.generate_focused_charts(data_slice, ticker)
-
-                            analysis_result = analyzer.get_stock_analysis(
-                                live_financial_data=live_financial_data, latest_atr=latest_row['ATRr_14'], model_name=config.PRO_MODEL,
-                                charts=charts_for_ai, trading_horizon_text=config.VST_STRATEGY['horizon_text'],
-                                technical_indicators=latest_indicators, min_rr_ratio=config.VST_STRATEGY['min_rr_ratio'],
-                                market_context=market_context_for_day, options_data={},
-                                macro_data=macro_data
-                            )
-
-                            if analysis_result:
-                                original_signal = analysis_result.get('signal')
-                                scrybe_score = analysis_result.get('scrybeScore', 0)
-                                log.info(f"Generating DVM scores for {ticker}...")
-                                dvm_scores = analyzer.get_dvm_scores(live_financial_data, latest_indicators)
-                                analysis_result['dvmScores'] = dvm_scores
-
-                                final_signal = original_signal
-                                filter_reason = None
-
-                                # Rule 1: The Regime Filter
-                                if not ((original_signal == 'BUY' and current_regime == 'Bullish') or \
-                                        (original_signal == 'SELL' and current_regime == 'Bearish') or \
-                                        (original_signal == 'HOLD')):
-                                    final_signal = 'HOLD'
-                                    filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to an unfavorable market regime ('{current_regime}')."
-
-                                # Rule 2: The Conviction Filter
-                                elif abs(scrybe_score) < 60 and original_signal != 'HOLD':
-                                    final_signal = 'HOLD'
-                                    filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed by the Risk Manager because it did not meet the high-conviction threshold (>60)."
-
-                                # Rule 3: The Quality Filter
-                                elif dvm_scores and dvm_scores.get('durability', {}).get('score', 100) < 40:
-                                    final_signal = 'HOLD'
-                                    filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to a poor fundamental Quality (Durability) score."
-
-                                analysis_result['signal'] = final_signal
-                                if filter_reason:
-                                    log.info(filter_reason)
-                                    analysis_result['analystVerdict'] = filter_reason
-                                    analysis_result['tradePlan'] = {"status": "Filtered by Risk Manager", "reason": filter_reason}
-                                    
-                                if analysis_result.get('signal') in ['BUY', 'SELL']:
-                                    log.info(f"AI signal is '{analysis_result['signal']}'. Calculating trade plan deterministically.")
-                                    signal = analysis_result['signal']
-                                    entry_price = latest_row['close']
-                                    atr = latest_row['ATRr_14']
-                                    rr_ratio = config.VST_STRATEGY['min_rr_ratio']
-                                    stop_loss_price = entry_price - (2 * atr) if signal == 'BUY' else entry_price + (2 * atr)
-                                    target_price = entry_price + ((2 * atr) * rr_ratio) if signal == 'BUY' else entry_price - ((2 * atr) * rr_ratio)
-                                    analysis_result['tradePlan'] = {
-                                        "timeframe": config.VST_STRATEGY['horizon_text'],
-                                        "strategy": "ATR-based R/R",
-                                        "entryPrice": {"price": round(entry_price, 2), "rationale": "Closing price on prediction day."},
-                                        "target": {"price": round(target_price, 2), "rationale": f"Calculated using {rr_ratio} R/R based on {atr:.2f} ATR."},
-                                        "stopLoss": {"price": round(stop_loss_price, 2), "rationale": f"Calculated using 2*ATR ({atr:.2f} ATR)."},
-                                        "riskRewardRatio": rr_ratio
-                                    }
-                                else:
-                                    if 'tradePlan' not in analysis_result:
-                                        analysis_result['tradePlan'] = {}
-
-                                benchmarks_slice = benchmarks_data_cache.loc[:day_str] if benchmarks_data_cache is not None else None
-                                correlations = performance_analyzer.calculate_correlations(data_slice, benchmarks_slice)
-
-                                prediction_doc = analysis_result.copy()
-                                prediction_doc.update({
-                                    'analysis_id': str(uuid.uuid4()),
-                                    'ticker': ticker,
-                                    'prediction_date': current_day.to_pydatetime(),
-                                    'price_at_prediction': latest_row['close'],
-                                    'status': 'open',
-                                    'strategy': config.VST_STRATEGY['name'],
-                                    'dvmScores': dvm_scores,
-                                    'correlations': correlations,
-                                    'atr_at_prediction': latest_row['ATRr_14']
-                                })
-                                database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
-                            
-                            break
-
-                        except Exception as e:
-                            log.warning(f"AI analysis failed for {ticker} on attempt {attempt + 1}. Error: {e}")
-                            if attempt < max_retries - 1:
-                                new_key = key_manager.rotate_key()
-                                analyzer = AIAnalyzer(api_key=new_key)
-                                log.info("Retrying AI call with the new key...")
-                                time.sleep(5)
-                            else:
-                                log.error(f"All API keys failed for {ticker}. Skipping for this day.")
+                    live_financial_data = {"curatedData": {}, "rawDataSheet": {"symbol": ticker, "longName": ticker}}
                     
-                    time.sleep(5)
+                    data_slice_copy = data_slice.copy()
+                    data_slice_copy.ta.bbands(length=20, append=True); data_slice_copy.ta.rsi(length=14, append=True)
+                    data_slice_copy.ta.macd(fast=12, slow=26, signal=9, append=True); data_slice_copy.ta.adx(length=14, append=True)
+                    data_slice_copy.ta.atr(length=14, append=True); data_slice_copy.dropna(inplace=True)
+                    if data_slice_copy.empty: continue
+
+                    latest_row = data_slice_copy.iloc[-1]
+                    volume_ma_20 = data_slice_copy['volume'].rolling(window=20).mean().iloc[-1]
+                    is_volume_high = latest_row['volume'] > volume_ma_20 * config.VOLUME_SURGE_THRESHOLD
+                    latest_indicators = { "ADX": f"{latest_row['ADX_14']:.2f}", "RSI": f"{latest_row['RSI_14']:.2f}", "MACD": f"{latest_row['MACD_12_26_9']:.2f}", "Bollinger Band Width Percent": f"{(latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0'] * 100:.2f}", "Volume Surge": "Yes" if is_volume_high else "No" }
+                    charts_for_ai = {}
+                    if generate_charts:
+                        charts_for_ai = technical_analyzer.generate_focused_charts(data_slice, ticker)
+
+                    # --- Adaptive Strategy Selection (Moved Up) ---
+                    if ticker in config.BLUE_CHIP_TICKERS:
+                        active_strategy = config.BLUE_CHIP_STRATEGY
+                        log.info(f"Applying Blue-Chip Strategy Profile for {ticker}")
+                    else:
+                        active_strategy = config.DEFAULT_SWING_STRATEGY
+
+                    # --- START: "CIO" LOGIC ---
+                    log.info(f"Querying Momentum Specialist for {ticker}...")
+                    momentum_analysis = analyzer.get_momentum_analysis(
+                        live_financial_data=live_financial_data, latest_atr=latest_row['ATRr_14'], model_name=config.PRO_MODEL,
+                        charts=charts_for_ai, trading_horizon_text=active_strategy['horizon_text'], # Using active strategy
+                        technical_indicators=latest_indicators, min_rr_ratio=active_strategy['min_rr_ratio'], # Using active strategy
+                        market_context=market_context_for_day, options_data={}, macro_data=macro_data
+                    )
+
+                    log.info(f"Querying Mean-Reversion Specialist for {ticker}...")
+                    mean_reversion_analysis = analyzer.get_mean_reversion_analysis(
+                        live_financial_data=live_financial_data, model_name=config.FLASH_MODEL,
+                        technical_indicators=latest_indicators, market_context=market_context_for_day
+                    )
+
+                    final_analysis = None
+                    momentum_score = momentum_analysis.get('scrybeScore', 0) if momentum_analysis else 0
+                    reversion_score = mean_reversion_analysis.get('scrybeScore', 0) if mean_reversion_analysis else 0
+
+                    if abs(momentum_score) >= abs(reversion_score):
+                        final_analysis = momentum_analysis
+                        log.info(f"CIO Decision for {ticker}: Momentum strategy selected (Score: {momentum_score}).")
+                    else:
+                        final_analysis = mean_reversion_analysis
+                        log.info(f"CIO Decision for {ticker}: Mean-Reversion strategy selected (Score: {reversion_score}).")
+
+                    if final_analysis:
+                        original_signal = final_analysis.get('signal')
+                        scrybe_score = final_analysis.get('scrybeScore', 0)
+                        
+                        log.info(f"Generating DVM scores for {ticker}...")
+                        dvm_scores = analyzer.get_dvm_scores(live_financial_data, latest_indicators)
+                        final_analysis['dvmScores'] = dvm_scores
+
+                        is_regime_ok = (original_signal == 'BUY' and current_regime == 'Bullish') or \
+                                       (original_signal == 'SELL' and current_regime == 'Bearish') or \
+                                       (original_signal == 'HOLD')
+                        is_conviction_ok = abs(scrybe_score) >= 60 or original_signal == 'HOLD'
+                        is_quality_ok = True
+                        if dvm_scores:
+                            durability_score = dvm_scores.get('durability', {}).get('score', 100)
+                            if durability_score < 40:
+                                is_quality_ok = False
+                        
+                        final_signal = original_signal
+                        filter_reason = None
+                        if not is_regime_ok:
+                            final_signal = 'HOLD'
+                            filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to an unfavorable market regime ('{current_regime}')."
+                        elif not is_conviction_ok:
+                            final_signal = 'HOLD'
+                            filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed because it did not meet the conviction threshold (>60)."
+                        elif not is_quality_ok:
+                            final_signal = 'HOLD'
+                            filter_reason = f"Signal '{original_signal}' was vetoed due to a poor fundamental Quality (Durability) score."
+                        
+                        final_analysis['signal'] = final_signal
+                        if filter_reason:
+                            log.info(filter_reason)
+                            final_analysis['analystVerdict'] = filter_reason
+                            final_analysis['tradePlan'] = {"status": "Filtered by Risk Manager", "reason": filter_reason}
+
+                        # --- Adaptive Strategy Selection ---
+                        if ticker in config.BLUE_CHIP_TICKERS:
+                            active_strategy = config.BLUE_CHIP_STRATEGY
+                            log.info(f"Applying Blue-Chip Strategy Profile for {ticker}")
+                        else:
+                            active_strategy = config.DEFAULT_SWING_STRATEGY
+
+                        # --- Dynamic Trade Plan Calculation ---
+                        if final_analysis.get('signal') in ['BUY', 'SELL']:
+                            signal = final_analysis['signal']
+                            entry_price = latest_row['close']
+                            atr = latest_row['ATRr_14']
+
+                            # Use parameters from the selected strategy profile
+                            rr_ratio = active_strategy['min_rr_ratio']
+                            stop_multiplier = active_strategy['stop_loss_atr_multiplier']
+                            
+                            stop_loss_price = entry_price - (stop_multiplier * atr) if signal == 'BUY' else entry_price + (stop_multiplier * atr)
+                            target_price = entry_price + ((stop_multiplier * atr) * rr_ratio) if signal == 'BUY' else entry_price - ((stop_multiplier * atr) * rr_ratio)
+                            
+                            final_analysis['tradePlan'] = {
+                                "timeframe": active_strategy['horizon_text'],
+                                "strategy": f"{active_strategy['name']} (ATR-based R/R)",
+                                "entryPrice": {"price": round(entry_price, 2), "rationale": "Closing price on prediction day."},
+                                "target": {"price": round(target_price, 2), "rationale": f"Calculated using {rr_ratio} R/R based on {atr:.2f} ATR."},
+                                "stopLoss": {"price": round(stop_loss_price, 2), "rationale": f"Calculated using {stop_multiplier}*ATR ({atr:.2f} ATR)."},
+                                "riskRewardRatio": rr_ratio
+                            }
+                        else:
+                            if 'tradePlan' not in final_analysis:
+                                final_analysis['tradePlan'] = {}
+
+                        # --- Prediction Document Assembly ---
+                        correlations = performance_analyzer.calculate_correlations(data_slice, benchmarks_data_cache.loc[:day_str] if benchmarks_data_cache is not None else None)
+                        prediction_doc = final_analysis.copy()
+                        prediction_doc.update({
+                            'analysis_id': str(uuid.uuid4()),
+                            'ticker': ticker,
+                            'prediction_date': current_day.to_pydatetime(),
+                            'price_at_prediction': latest_row['close'],
+                            'status': 'open',
+                            'strategy': active_strategy['name'], # Use the name of the active strategy
+                            'dvmScores': dvm_scores,
+                            'correlations': correlations,
+                            'atr_at_prediction': latest_row['ATRr_14']
+                        })
+
+                        database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
+                    # --- END OF "CIO" BLOCK ---
+                    
+                    time.sleep(5) # Delay between tickers
 
                 if i + 1 < len(simulation_days):
                     save_state(simulation_days[i+1])

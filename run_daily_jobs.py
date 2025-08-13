@@ -94,8 +94,11 @@ def _validate_trade_plan(analysis: dict) -> bool:
     except (KeyError, ValueError, TypeError): return False
     return True
 
-def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: dict, market_regime: str, macro_data: dict):
-    """A streamlined pipeline that only runs the VST analysis."""
+def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: dict, market_regime: str, macro_data: dict, active_strategy: dict):
+    """
+    A streamlined pipeline that runs the multi-strategy AI analysis.
+    NOTE: This pipeline now returns a TUPLE of (final_analysis, dvm_scores)
+    """
     try:
         log.info(f"\n--- STARTING VST ANALYSIS FOR: {ticker} (Market Regime: {market_regime}) ---")
         
@@ -103,7 +106,7 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
         existing_trade_doc = database_manager.analysis_results_collection.find_one({"ticker": ticker})
         if existing_trade_doc and existing_trade_doc.get('active_trade'):
             log.warning(f"Skipping new analysis for {ticker} as it already has an active trade.")
-            return None
+            return None, None
 
         historical_data = data_retriever.get_historical_stock_data(ticker)
         if historical_data is None or len(historical_data) < 50: raise ValueError("Not enough historical data.")
@@ -112,7 +115,6 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
         if not live_financial_data: raise ValueError("Could not get live financial data.")
         
         options_data = data_retriever.get_options_data(ticker)
-        correlations = performance_analyzer.calculate_correlations(historical_data, data_retriever.get_benchmarks_data())
         
         historical_data.ta.bbands(length=20, append=True); historical_data.ta.rsi(length=14, append=True)
         historical_data.ta.macd(fast=12, slow=26, signal=9, append=True); historical_data.ta.adx(length=14, append=True)
@@ -136,50 +138,64 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
             "CURRENT_MARKET_REGIME": market_regime
         }
         
-        strategy_config = config.VST_STRATEGY
-        analysis_result = analyzer.get_stock_analysis(
+        # --- "CIO" LOGIC FOR LIVE RUNNER ---
+        log.info(f"Querying Momentum Specialist for {ticker}...")
+        momentum_analysis = analyzer.get_momentum_analysis(
             live_financial_data=live_financial_data, latest_atr=latest_row['ATRr_14'], model_name=config.PRO_MODEL,
-            charts=charts, trading_horizon_text=strategy_config['horizon_text'],
-            technical_indicators=latest_indicators, min_rr_ratio=strategy_config.get('min_rr_ratio', 2.0),
-            market_context=market_context, options_data=options_data,
-            macro_data=macro_data
+            charts=charts, trading_horizon_text=active_strategy['horizon_text'],
+            technical_indicators=latest_indicators, min_rr_ratio=active_strategy['min_rr_ratio'],
+            market_context=market_context, options_data=options_data, macro_data=macro_data
         )
-        if not analysis_result: raise ValueError("The main AI stock analysis failed.")
 
-        analysis_result.update({
-            'analysis_id': str(uuid.uuid4()),
-            'charts': charts, 'signalQualifier': analyzer.get_volatility_qualifier(latest_indicators),
-            'dvmScores': analyzer.get_dvm_scores(live_financial_data, latest_indicators),
+        log.info(f"Querying Mean-Reversion Specialist for {ticker}...")
+        mean_reversion_analysis = analyzer.get_mean_reversion_analysis(
+            live_financial_data=live_financial_data, model_name=config.FLASH_MODEL,
+            technical_indicators=latest_indicators, market_context=market_context
+        )
+
+        final_analysis = None
+        momentum_score = momentum_analysis.get('scrybeScore', 0) if momentum_analysis else 0
+        reversion_score = mean_reversion_analysis.get('scrybeScore', 0) if mean_reversion_analysis else 0
+
+        if abs(momentum_score) >= abs(reversion_score):
+            final_analysis = momentum_analysis
+            log.info(f"CIO Decision for {ticker}: Momentum strategy selected (Score: {momentum_score}).")
+        else:
+            final_analysis = mean_reversion_analysis
+            log.info(f"CIO Decision for {ticker}: Mean-Reversion strategy selected (Score: {reversion_score}).")
+
+        if not final_analysis: raise ValueError("Both AI specialists failed to return an analysis.")
+        
+        # Generate DVM scores and add them to the final analysis object
+        dvm_scores = analyzer.get_dvm_scores(live_financial_data, latest_indicators)
+        final_analysis['dvmScores'] = dvm_scores
+        
+        # Add all other necessary metadata
+        final_analysis.update({
+            'analysis_id': str(uuid.uuid4()), 'charts': charts,
             'companyName': live_financial_data.get('rawDataSheet', {}).get('longName', ticker),
-            'performanceSnapshot': performance_analyzer.calculate_historical_performance(historical_data),
-            'timestamp': datetime.now(timezone.utc), 'ticker': ticker, 'correlations': correlations,
+            'timestamp': datetime.now(timezone.utc), 'ticker': ticker,
             'price_at_prediction': latest_row['close'], 'prediction_date': datetime.now(timezone.utc),
-            'strategy': strategy_config['name'],
-            'atr_at_prediction': latest_row['ATRr_14'],
+            'strategy': active_strategy['name'], 'atr_at_prediction': latest_row['ATRr_14'],
             'market_regime_at_analysis': market_regime
         })
         
         log.info(f"--- ✅ SUCCESS: VST analysis complete for {ticker} ---")
-        return analysis_result
+        return final_analysis
+
     except Exception as e:
-            # If the error is a quota error, we MUST re-raise it
-            # so the outer rotation loop in run_all_jobs() can catch it and rotate the key.
-            if "429" in str(e) and "quota" in str(e).lower():
-                raise e
-            
-            # For all other types of errors, we log them and continue to the next stock.
-            log.error(f"--- ❌ FAILURE: VST analysis for {ticker} failed. Error: {e} ---", exc_info=True)
-            return None
+        if "429" in str(e) and "quota" in str(e).lower():
+            raise e
+        log.error(f"--- ❌ FAILURE: VST analysis for {ticker} failed. Error: {e} ---", exc_info=True)
+        return None
 
 def run_all_jobs():
     """
-    Runs the VST-only analysis pipeline with Market Regime and Email Notifications.
-    This version includes resilient API key rotation.
+    Runs the final, multi-strategy "AI Hedge Fund" analysis pipeline for all tickers.
     """
-    log.info("--- 🚀 Kicking off ALL DAILY JOBS (VST-Only Mode) ---")
+    log.info("--- 🚀 Kicking off ALL DAILY JOBS (Hedge Fund-Grade Architecture) ---")
     
     try:
-        # --- MODIFICATION: Initialize DB and AI Manager once at the start ---
         database_manager.init_db(purpose='analysis')
         
         try:
@@ -199,12 +215,13 @@ def run_all_jobs():
             return
 
         market_regime = data_retriever.get_market_regime()
+        
+        # Prepare Live Macro Context Data for the AI
         log.info("Fetching live benchmark data for macro context...")
-        benchmarks_data = data_retriever.get_benchmarks_data(period="10d") # Fetch recent data
+        benchmarks_data = data_retriever.get_benchmarks_data(period="10d")
         macro_data = {}
         if benchmarks_data is not None and not benchmarks_data.empty:
             if len(benchmarks_data) > 5:
-                # Calculate 5-day percentage change
                 changes = ((benchmarks_data.iloc[-1] - benchmarks_data.iloc[-6]) / benchmarks_data.iloc[-6]) * 100
                 macro_data = {
                     "Nifty50_5D_Change": f"{changes.get('Nifty50', 0):.2f}%",
@@ -213,36 +230,35 @@ def run_all_jobs():
                     "USDINR_5D_Change": f"{changes.get('USD-INR', 0):.2f}%",
                 }
         log.info(f"Macro Context for today: {macro_data}")
+        
         new_signals = [] 
         nifty50_tickers = config.NIFTY_50_TICKERS
 
         log.info(f"--- Starting analysis for {len(nifty50_tickers)} tickers ---")
         for ticker in nifty50_tickers:
-            # --- MODIFICATION: Resilient analysis loop with key rotation ---
-            max_retries = len(key_manager.api_keys)
             vst_analysis = None
-            for attempt in range(max_retries):
-                try:
-                    # The analysis pipeline is called within the try block
-                    vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime, macro_data=macro_data)
-                    # If the call succeeds, we break out of the retry loop
-                    break 
-                
-                except Exception as e:
-                    log.warning(f"Analysis pipeline failed for {ticker} on attempt {attempt + 1}. Error: {e}")
-                    # If it's a quota error and we haven't run out of keys, we rotate and retry
-                    if "429" in str(e) and "quota" in str(e).lower() and attempt < max_retries - 1:
+            if ticker in config.BLUE_CHIP_TICKERS:
+                active_strategy = config.BLUE_CHIP_STRATEGY
+                log.info(f"Applying Blue-Chip Strategy Profile for {ticker}")
+            else:
+                active_strategy = config.DEFAULT_SWING_STRATEGY
+            try:
+                vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime, macro_data=macro_data, active_strategy=active_strategy)
+            except Exception as e:
+                log.warning(f"Analysis pipeline failed for {ticker}. Error: {e}")
+                if "429" in str(e) and "quota" in str(e).lower():
+                    log.warning("Attempting API key rotation...")
+                    try:
                         new_key = key_manager.rotate_key()
-                        analyzer = AIAnalyzer(api_key=new_key) # Re-initialize analyzer with new key
+                        analyzer = AIAnalyzer(api_key=new_key)
                         log.info("Retrying analysis with the new key...")
-                        time.sleep(2)
-                    # If it's another type of error, or we've run out of keys, we stop trying for this stock
-                    else:
-                        log.error(f"Could not recover from error for {ticker}. Analysis for this stock failed.")
-                        break # Exit the retry loop
-            # --- End of resilient loop ---
-            
-            if not vst_analysis or not _validate_analysis_output(vst_analysis, ticker) or not _validate_trade_plan(vst_analysis):
+                        vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime, macro_data=macro_data)
+                    except Exception as retry_e:
+                         log.error(f"Retry failed for {ticker} after key rotation. Error: {retry_e}")
+                else:
+                    log.error(f"Could not recover from a non-quota error for {ticker}.")
+
+            if not vst_analysis or not _validate_analysis_output(vst_analysis, ticker):
                 log.warning(f"No valid VST analysis was generated for {ticker}.")
                 if vst_analysis:
                     database_manager.save_vst_analysis(ticker, vst_analysis)
@@ -251,6 +267,7 @@ def run_all_jobs():
             database_manager.save_vst_analysis(ticker, vst_analysis)
             database_manager.save_live_prediction(vst_analysis)
             
+            # --- START: FINAL RISK MANAGEMENT OVERLAY ---
             original_signal = vst_analysis.get('signal')
             scrybe_score = vst_analysis.get('scrybeScore', 0)
             dvm_scores = vst_analysis.get('dvmScores', {})
@@ -258,67 +275,65 @@ def run_all_jobs():
             final_signal = original_signal
             filter_reason = None
 
-            # Rule 1: The Regime Filter
-            if not ((original_signal == 'BUY' and market_regime == 'Bullish') or \
-                (original_signal == 'SELL' and market_regime == 'Bearish') or \
-                (original_signal == 'HOLD')):
+            is_regime_ok = (original_signal == 'BUY' and market_regime == 'Bullish') or \
+                           (original_signal == 'SELL' and market_regime == 'Bearish') or \
+                           (original_signal == 'HOLD')
+            
+            is_conviction_ok = abs(scrybe_score) >= 60 or original_signal == 'HOLD'
+
+            is_quality_ok = True
+            if dvm_scores:
+                durability_score = dvm_scores.get('durability', {}).get('score', 100)
+                if durability_score < 40:
+                    is_quality_ok = False
+            
+            if not is_regime_ok:
                 final_signal = 'HOLD'
                 filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to an unfavorable market regime ('{market_regime}')."
-
-            # Rule 2: The Conviction Filter
-            elif abs(scrybe_score) < 60 and original_signal != 'HOLD':
+            elif not is_conviction_ok:
                 final_signal = 'HOLD'
-                filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed by the Risk Manager because it did not meet the high-conviction threshold (>60)."
-
-            # Rule 3: The Quality Filter
-            elif dvm_scores and dvm_scores.get('durability', {}).get('score', 100) < 40:
+                filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed because it did not meet the conviction threshold (>60)."
+            elif not is_quality_ok:
                 final_signal = 'HOLD'
-                filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to a poor fundamental Quality (Durability) score."
-
+                filter_reason = f"Signal '{original_signal}' was vetoed due to a poor fundamental Quality (Durability) score."
+            
             vst_analysis['signal'] = final_signal
             if filter_reason:
                 log.warning(filter_reason)
                 vst_analysis['analystVerdict'] = filter_reason
                 vst_analysis['tradePlan'] = {"status": "Filtered by Risk Manager", "reason": filter_reason}
                 database_manager.save_vst_analysis(ticker, vst_analysis)
-
-            # The existing trade creation logic now runs on the final, filtered signal
+            
             if vst_analysis.get('signal') in ['BUY', 'SELL']:
                 log.info(f"PASSED FILTERS: Creating live trade for '{vst_analysis['signal']}' signal on {ticker}.")
                 new_signals.append({
-                    "ticker": ticker,
-                    "signal": vst_analysis.get('signal'),
-                    "confidence": vst_analysis.get('confidence'),
-                    "scrybeScore": vst_analysis.get('scrybeScore')
+                    "ticker": ticker, "signal": vst_analysis.get('signal'),
+                    "confidence": vst_analysis.get('confidence'), "scrybeScore": vst_analysis.get('scrybeScore')
                 })
                 try:
-                    # Deterministic trade plan calculation
                     signal = vst_analysis['signal']
                     entry_price = vst_analysis['price_at_prediction']
                     atr = vst_analysis.get('atr_at_prediction')
 
                     if not atr:
-                        log.error(f"Could not find ATR in analysis for {ticker}. Cannot create trade object.")
-                        database_manager.set_active_trade(ticker, None)
-                        continue # Skips to the next ticker in the loop
+                        raise ValueError("ATR not found in analysis document.")
 
-                    rr_ratio = config.VST_STRATEGY['min_rr_ratio']
-                    stop_loss_price = entry_price - (2 * atr) if signal == 'BUY' else entry_price + (2 * atr)
-                    target_price = entry_price + ((2 * atr) * rr_ratio) if signal == 'BUY' else entry_price - ((2 * atr) * rr_ratio)
+                    # Use parameters from the selected active_strategy
+                    rr_ratio = active_strategy['min_rr_ratio']
+                    stop_multiplier = active_strategy['stop_loss_atr_multiplier']
+                    
+                    stop_loss_price = entry_price - (stop_multiplier * atr) if signal == 'BUY' else entry_price + (stop_multiplier * atr)
+                    target_price = entry_price + ((stop_multiplier * atr) * rr_ratio) if signal == 'BUY' else entry_price - ((stop_multiplier * atr) * rr_ratio)
 
                     trade_object = {
-                        "signal": signal,
-                        "strategy": vst_analysis.get('strategy'),
-                        "entry_price": entry_price,
-                        "entry_date": vst_analysis.get('prediction_date'),
-                        "target": round(target_price, 2),
-                        "stop_loss": round(stop_loss_price, 2),
+                        "signal": signal, "strategy": active_strategy['name'],
+                        "entry_price": entry_price, "entry_date": vst_analysis.get('prediction_date'),
+                        "target": round(target_price, 2), "stop_loss": round(stop_loss_price, 2),
                         "risk_reward_ratio": rr_ratio,
-                        "expiry_date": datetime.now(timezone.utc) + timedelta(days=config.TRADE_EXPIRY_DAYS),
+                        "expiry_date": datetime.now(timezone.utc) + timedelta(days=active_strategy['holding_period']),
                         "confidence": vst_analysis.get('confidence')
                     }
                     database_manager.set_active_trade(ticker, trade_object)
-
                 except Exception as e:
                     log.error(f"Could not create trade object for {ticker}: {e}", exc_info=True)
                     database_manager.set_active_trade(ticker, None)

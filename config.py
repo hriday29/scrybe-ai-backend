@@ -39,13 +39,34 @@ else:
 PRO_MODEL = 'gemini-2.5-pro'
 FLASH_MODEL = 'gemini-2.5-flash'
 
-VST_STRATEGY = {
-    'name': 'VST',
-    'horizon_text': 'Weekly Swing (1-5 Days)',
-    'holding_period': 5,
+# --- Strategy Profiles ---
+
+# A dictionary to map our blue-chip stocks for easy lookup
+BLUE_CHIP_TICKERS = {
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS",
+    "INFY.NS", "HINDUNILVR.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS"
+}
+
+# Default strategy for most Nifty 50 stocks (momentum-focused)
+DEFAULT_SWING_STRATEGY = {
+    'name': 'DefaultSwing',
+    'horizon_text': 'Short-term Swing (3-7 Days)',
+    'holding_period': 7,
     'min_rr_ratio': 2.0,
+    'stop_loss_atr_multiplier': 2.0, # Using 2x ATR for the stop-loss
     'use_trailing_stop': True,
     'trailing_stop_pct': 1.5
+}
+
+# A more patient strategy tailored for large, stable blue-chip companies
+BLUE_CHIP_STRATEGY = {
+    'name': 'BlueChip',
+    'horizon_text': 'Positional Swing (10-20 Days)',
+    'holding_period': 15, # Longer holding period
+    'min_rr_ratio': 1.5,  # More realistic R/R target for slower movers
+    'stop_loss_atr_multiplier': 2.5, # Wider stop to accommodate normal volatility
+    'use_trailing_stop': True,
+    'trailing_stop_pct': 2.0 # Wider trailing stop
 }
 
 # --- Market Index Analysis Config ---

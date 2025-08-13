@@ -61,16 +61,13 @@ class AIAnalyzer:
             log.error(f"Single news impact analysis call failed. Error: {e}")
             return None
 
-    def get_stock_analysis(self, live_financial_data: dict, latest_atr: float, model_name: str, charts: dict, trading_horizon_text: str, technical_indicators: dict, min_rr_ratio: float, market_context: dict, options_data: dict, macro_data: dict) -> dict:
-        """
-        Generates a Michelin-star grade analysis using a bipolar "Scrybe Score".
-        The AI's role is to provide a rich, multi-layered analysis and a signal. The trade plan is ALWAYS calculated by code.
-        """
-        log.info(f"Generating Michelin-Star Grade Analysis for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
+    def get_momentum_analysis(self, live_financial_data: dict, latest_atr: float, model_name: str, charts: dict, trading_horizon_text: str, technical_indicators: dict, min_rr_ratio: float, market_context: dict, options_data: dict, macro_data: dict) -> dict:
+        """Analyzes a stock for a trend-following momentum opportunity."""
+        log.info(f"Generating Top Grade Analysis for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
 
         # THE DEFINITIVE 'CATALYST OVERRIDE' PROMPT
         definitive_scoring_prompt = f"""
-        You are "Scrybe-Oracle," a world-class quantitative analyst. Your primary task is to produce a sophisticated analysis culminating in a "Scrybe Score" from -100 to +100, strictly following the protocol below.
+        You are "Scrybe-Oracle," a world-class quantitative analyst specializing in **MOMENTUM** strategies. Your primary task is to produce a sophisticated analysis culminating in a "Scrybe Score" from -100 to +100, strictly following the protocol below.
 
         **CRITICAL CONTEXT: DUAL-MODE ANALYSIS**
         You MUST adapt your analysis based on the data provided. If 'Financial Data Snapshot' or 'Options Sentiment' data is sparse or empty (for historical runs), you MUST state this limitation in your analysis and base your score primarily on the layers where data is present. **Do not hallucinate missing data.**
@@ -199,7 +196,79 @@ class AIAnalyzer:
                 else:
                     log.error(f"AI Scrybe Score generation failed after {max_retries} attempts.")
                     return None
-    
+                
+    def get_mean_reversion_analysis(self, live_financial_data: dict, model_name: str, technical_indicators: dict, market_context: dict) -> dict:
+        """
+        Analyzes a stock for a mean-reversion opportunity.
+        """
+        log.info(f"Generating Mean-Reversion Analysis for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
+
+        mean_reversion_prompt = f"""
+        You are "Scrybe-Oracle," a quantitative analyst specializing in **MEAN-REVERSION**. Your task is to identify stocks that are over-extended and poised for a profitable snap-back to their recent average.
+
+        **Analysis Protocol:**
+        1. **Context:** A mean-reversion trade is higher probability in a 'Neutral' or choppy market regime. You must consider the provided `CURRENT_MARKET_REGIME`.
+        2. **The Setup:** Your primary goal is to find "stretched" stocks. Analyze the `technical_indicators` and charts for these key signals:
+            * **RSI Extreme:** Is the RSI in a classic overbought (>70) for a SELL signal, or oversold (<30) for a BUY signal? This is your strongest signal.
+            * **Bollinger Band Touch:** Is the price currently touching or exceeding the upper or lower Bollinger Band? This confirms the price is at a statistical extreme.
+            * **Volume Spike:** Is there a high `Volume Surge`? A spike can signal "exhaustion" of the current trend, which is a perfect entry for a mean-reversion trade.
+
+        **Final Scoring & JSON Output:**
+        Synthesize your analysis into a `scrybeScore` from -100 to +100. The score must reflect your confidence in a profitable "snap-back."
+        * A high positive score means strong conviction that an oversold stock will **rise (BUY)**.
+        * A high negative score means strong conviction that an overbought stock will **fall (SELL)**.
+        * **High-Conviction Mandate:** A high-conviction score (absolute value >= 75) is only justified if you see a clear RSI Extreme that is confirmed by either a Bollinger Band touch or a Volume Spike.
+        * Your `analystVerdict` must clearly explain why the stock is a good mean-reversion candidate.
+        """
+
+        # This schema is simpler as it doesn't need the full 7-layer breakdown
+        output_schema = {
+            "type": "OBJECT", "properties": {
+                "scrybeScore": {"type": "NUMBER"},
+                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
+                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]},
+                "analystVerdict": {"type": "STRING"},
+            }, "required": ["scrybeScore", "signal", "confidence", "analystVerdict"]
+        }
+
+        # Use the same robust safety settings
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        model = genai.GenerativeModel(
+            model_name,
+            safety_settings=safety_settings,
+            system_instruction=mean_reversion_prompt,
+            generation_config=generation_config
+        )
+
+        prompt_parts = [
+            "Please generate your mean-reversion analysis based on the provided data.",
+            f"MARKET CONTEXT: {json.dumps(market_context)}",
+            f"Key Technical Indicators: {json.dumps(technical_indicators)}"
+        ]
+
+        # This function uses a standard retry loop
+        max_retries = 2 # Fewer retries for this simpler, secondary analysis
+        delay = 2
+        for attempt in range(max_retries):
+            try:
+                response = model.generate_content(prompt_parts, request_options={"timeout": 120})
+                return json.loads(response.text)
+            except Exception as e:
+                log.warning(f"Mean-Reversion AI call attempt {attempt + 1} failed. Error: {e}")
+                if attempt < max_retries - 1:
+                    time.sleep(delay)
+                else:
+                    log.error("Mean-Reversion analysis failed after all retries.")
+                    # Return a default neutral score on failure
+                    return {"scrybeScore": 0, "signal": "HOLD", "confidence": "Low", "analystVerdict": "AI analysis failed."}
+            
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """
         Analyzes holistic data to find high-probability intraday short candidates

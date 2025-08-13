@@ -52,19 +52,19 @@ def run_single_prompt_test():
         return
 
     # --- 3. EXECUTION: Make one single API call ---
-    log.info("Making a single API call with the refined prompt...")
-    analysis_result = analyzer.get_stock_analysis(
+    log.info("Making a single API call to the Momentum Specialist prompt...")
+    analysis_result = analyzer.get_momentum_analysis(
         live_financial_data=live_financial_data,
         latest_atr=atr_at_prediction,
         model_name=config.PRO_MODEL,
-        charts={},
+        charts={}, # Empty charts for a faster, chartless test run
         trading_horizon_text=config.VST_STRATEGY['horizon_text'],
         technical_indicators=latest_indicators,
         min_rr_ratio=config.VST_STRATEGY['min_rr_ratio'],
         market_context=market_context,
-        options_data={}
+        options_data={},
+        macro_data={} # Add empty macro_data as it's a required argument
     )
-
     # --- 4. VERIFICATION & SIMULATION ---
     # NEW, CORRECT VALIDATION CHECK
     if not analysis_result or 'signal' not in analysis_result:
