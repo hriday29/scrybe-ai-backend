@@ -3,8 +3,8 @@ name: Daily Stock Analysis
 on:
   # This schedule runs the job automatically every day
   schedule:
-    # Runs at 14:00 UTC, which is 7:30 PM IST
-    - cron: '00 14 * * 1-5'
+    # Runs at 18:00 UTC, which is 11:30 PM IST
+    - cron: '00 18 * * 1-5'
   
   # This line adds a manual "Run workflow" button on GitHub
   workflow_dispatch:
