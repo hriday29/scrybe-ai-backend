@@ -165,15 +165,29 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                                 technical_indicators=latest_indicators, market_context=market_context_for_day
                             )
 
+                            # --- START: Resilient CIO Decision with Specialist Fallback ---
                             momentum_score = momentum_analysis.get('scrybeScore', 0) if momentum_analysis else 0
                             reversion_score = mean_reversion_analysis.get('scrybeScore', 0) if mean_reversion_analysis else 0
 
-                            if abs(momentum_score) >= abs(reversion_score):
-                                final_analysis = momentum_analysis
-                                log.info(f"CIO Decision for {ticker}: Momentum strategy selected (Score: {momentum_score}).")
-                            else:
+                            # Standard Case: The primary (Momentum) analysis was successful.
+                            if momentum_analysis:
+                                if abs(momentum_score) >= abs(reversion_score):
+                                    final_analysis = momentum_analysis
+                                    log.info(f"CIO Decision for {ticker}: Primary (Momentum) strategy selected (Score: {momentum_score}).")
+                                else:
+                                    final_analysis = mean_reversion_analysis
+                                    log.info(f"CIO Decision for {ticker}: Secondary (Mean-Reversion) selected due to higher score (Score: {reversion_score}).")
+                            
+                            # Fallback Case: The primary analysis failed, but the secondary (Mean-Reversion) succeeded.
+                            elif mean_reversion_analysis:
                                 final_analysis = mean_reversion_analysis
-                                log.info(f"CIO Decision for {ticker}: Mean-Reversion strategy selected (Score: {reversion_score}).")
+                                log.warning(f"Primary (Momentum) analysis failed. FALLING BACK to Mean-Reversion analysis for {ticker} (Score: {reversion_score}).")
+                            
+                            # Total Failure Case: Both specialists failed.
+                            else:
+                                final_analysis = None
+                                log.error(f"Both Momentum and Mean-Reversion analysis failed for {ticker}.")
+                            # --- END: Resilient CIO Decision ---
                             
                             break # If successful, exit the retry loop
 
