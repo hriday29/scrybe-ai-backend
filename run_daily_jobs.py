@@ -285,10 +285,6 @@ def run_all_jobs():
 
             final_signal = original_signal
             filter_reason = None
-
-            is_regime_ok = (original_signal == 'BUY' and market_regime == 'Bullish') or \
-                           (original_signal == 'SELL' and market_regime == 'Bearish') or \
-                           (original_signal == 'HOLD')
             
             is_conviction_ok = abs(scrybe_score) >= 60 or original_signal == 'HOLD'
 
@@ -300,10 +296,10 @@ def run_all_jobs():
                     if durability_score < 40:
                         is_quality_ok = False
             
-            if not is_regime_ok:
+            if not is_conviction_ok:
                 final_signal = 'HOLD'
-                filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to an unfavorable market regime ('{market_regime}')."
-            elif not is_conviction_ok:
+                filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed because it did not meet the conviction threshold (>60)."
+            elif not is_quality_ok:
                 final_signal = 'HOLD'
                 filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed because it did not meet the conviction threshold (>60)."
             elif not is_quality_ok:

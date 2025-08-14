@@ -213,11 +213,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                         scrybe_score = final_analysis.get('scrybeScore', 0)
                         dvm_scores = analyzer.get_dvm_scores(live_financial_data, latest_indicators)
                         final_analysis['dvmScores'] = dvm_scores
-                        
-                        # ... (All the existing risk filter logic from is_regime_ok to the if filter_reason: block)
-                        is_regime_ok = (original_signal == 'BUY' and current_regime == 'Bullish') or \
-                                       (original_signal == 'SELL' and current_regime == 'Bearish') or \
-                                       (original_signal == 'HOLD')
+
                         is_conviction_ok = abs(scrybe_score) >= 60 or original_signal == 'HOLD'
                         is_quality_ok = True
                         # The Quality check ONLY applies to BUY signals.
@@ -229,10 +225,10 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                         
                         final_signal = original_signal
                         filter_reason = None
-                        if not is_regime_ok:
+                        if not is_conviction_ok:
                             final_signal = 'HOLD'
-                            filter_reason = f"Signal '{original_signal}' was vetoed by the Risk Manager due to an unfavorable market regime ('{current_regime}')."
-                        elif not is_conviction_ok:
+                            filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed because it did not meet the conviction threshold (>60)."
+                        elif not is_quality_ok:
                             final_signal = 'HOLD'
                             filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed because it did not meet the conviction threshold (>60)."
                         elif not is_quality_ok:
