@@ -62,7 +62,6 @@ def run_backtest(batch_id: str, full_historical_data_cache: dict):
 
     log.info(f"--- ✅ Consolidated Backtesting Job Finished for Batch: {batch_id} ---")
 
-# New function for backtester.py
 def process_single_trade(trade: dict, historical_data: pd.DataFrame):
     """Evaluates a single BUY or SELL trade against its plan with robust validation and adaptive strategy awareness."""
     log.info(f"Processing trade for {trade['ticker']} predicted on {trade['prediction_date'].strftime('%Y-%m-%d')}...")

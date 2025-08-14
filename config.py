@@ -53,7 +53,7 @@ DEFAULT_SWING_STRATEGY = {
     'horizon_text': 'Short-term Swing (3-7 Days)',
     'holding_period': 7,
     'min_rr_ratio': 2.0,
-    'stop_loss_atr_multiplier': 2.0, # Using 2x ATR for the stop-loss
+    'stop_loss_atr_multiplier': 2.0,
     'use_trailing_stop': True,
     'trailing_stop_pct': 1.5
 }
@@ -66,7 +66,7 @@ BLUE_CHIP_STRATEGY = {
     'min_rr_ratio': 1.5,  # More realistic R/R target for slower movers
     'stop_loss_atr_multiplier': 2.5, # Wider stop to accommodate normal volatility
     'use_trailing_stop': True,
-    'trailing_stop_pct': 2.0
+    'trailing_stop_pct': 2.0,
 }
 
 # --- Market Index Analysis Config ---
