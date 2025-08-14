@@ -138,6 +138,8 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
         
         # Position of close within the candle's full range (0=low, 1=high)
         position_in_range = (candle_close - candle_low) / candle_range if candle_range > 0 else 0.5
+        atr_percent = (latest_row['ATRr_14'] / latest_row['close']) * 100
+        latest_indicators['ATR_Percent'] = f"{atr_percent:.2f}%"
         
         latest_indicators['Confirmation_Candle'] = {
             "position_in_range": round(position_in_range, 2)
@@ -164,18 +166,31 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
             technical_indicators=latest_indicators, market_context=market_context
         )
 
-        final_analysis = None
-        momentum_score = momentum_analysis.get('scrybeScore', 0) if momentum_analysis else 0
-        reversion_score = mean_reversion_analysis.get('scrybeScore', 0) if mean_reversion_analysis else 0
+        # --- START: 3-Specialist CIO Decision Logic ---
+        log.info(f"Querying Breakout Specialist for {ticker}...")
+        breakout_analysis = analyzer.get_breakout_analysis(
+            live_financial_data=live_financial_data, model_name=config.FLASH_MODEL,
+            technical_indicators=latest_indicators, market_context=market_context
+        )
 
-        if abs(momentum_score) >= abs(reversion_score):
-            final_analysis = momentum_analysis
-            log.info(f"CIO Decision for {ticker}: Momentum strategy selected (Score: {momentum_score}).")
+        # Create a list of all successful analyses
+        analyses = []
+        if momentum_analysis:
+            analyses.append({'name': 'Momentum', 'score': momentum_analysis.get('scrybeScore', 0), 'analysis': momentum_analysis})
+        if mean_reversion_analysis:
+            analyses.append({'name': 'Mean-Reversion', 'score': mean_reversion_analysis.get('scrybeScore', 0), 'analysis': mean_reversion_analysis})
+        if breakout_analysis:
+            analyses.append({'name': 'Breakout', 'score': breakout_analysis.get('scrybeScore', 0), 'analysis': breakout_analysis})
+
+        # Determine the winning analysis based on the highest absolute score
+        if analyses:
+            best_analysis_info = max(analyses, key=lambda x: abs(x['score']))
+            final_analysis = best_analysis_info['analysis']
+            log.info(f"CIO Decision for {ticker}: {best_analysis_info['name']} strategy selected (Score: {best_analysis_info['score']}).")
         else:
-            final_analysis = mean_reversion_analysis
-            log.info(f"CIO Decision for {ticker}: Mean-Reversion strategy selected (Score: {reversion_score}).")
-
-        if not final_analysis: raise ValueError("Both AI specialists failed to return an analysis.")
+            final_analysis = None
+            log.error(f"All three specialists failed to provide an analysis for {ticker}.")
+        # --- END: 3-Specialist CIO Decision Logic ---
         
         # Generate DVM scores and add them to the final analysis object
         dvm_scores = analyzer.get_dvm_scores(live_financial_data, latest_indicators)

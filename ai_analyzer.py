@@ -256,7 +256,79 @@ class AIAnalyzer:
                     log.error("Mean-Reversion analysis failed after all retries.")
                     # Return a default neutral score on failure
                     return {"scrybeScore": 0, "signal": "HOLD", "confidence": "Low", "analystVerdict": "AI analysis failed."}
-            
+
+    def get_breakout_analysis(self, live_financial_data: dict, model_name: str, technical_indicators: dict, market_context: dict) -> dict:
+        """
+        Analyzes a stock for a volatility breakout opportunity.
+        """
+        log.info(f"Generating Breakout Analysis for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
+
+        breakout_prompt = f"""
+        You are "Scrybe-Vulcan," a quantitative analyst specializing in **VOLATILITY BREAKOUT** strategies. Your sole purpose is to identify stocks that have been in a period of low volatility ("coiling") and are now breaking out with force.
+
+        **PRIME BREAKOUT CHECKLIST:**
+        You must evaluate the stock against the following four criteria. A high-conviction signal requires at least THREE of these to be met.
+
+        1.  **Volatility Contraction (The Squeeze):** Is the stock in a state of "Quiet Consolidation"?
+            * Analyze the `Bollinger Band Width Percent` and `ATR_Percent` from the technical indicators.
+            * A true squeeze is indicated by exceptionally low values for both, suggesting energy is building up.
+
+        2.  **The Breakout Candle (The Confirmation):** Did the most recent candle show a decisive move?
+            * Analyze the `Confirmation_Candle` data.
+            * A `position_in_range` close to 1.0 indicates a strong bullish breakout candle.
+            * A `position_in_range` close to 0.0 indicates a strong bearish breakout candle.
+            * A value near 0.5 is indecisive and fails this check.
+
+        3.  **Volume Confirmation (The Fuel):** Was the breakout accompanied by a significant increase in volume?
+            * Check the `Volume Surge` indicator. A "Yes" value strongly confirms the validity of the breakout.
+
+        4.  **Trend Ignition (The Follow-Through):** Is a new trend potentially starting?
+            * Analyze the `ADX` indicator. An ADX value rising above 20 suggests the breakout has enough strength to start a new trend. An ADX below 20 suggests the breakout might be a false move.
+
+        **Final Scoring & JSON Output:**
+        * Synthesize your checklist findings into a `scrybeScore` from -100 to +100.
+        * A high positive score means strong conviction in a **bullish breakout (BUY)**.
+        * A high negative score means strong conviction in a **bearish breakout (SELL)**.
+        * Your `analystVerdict` MUST summarize which of the four checklist criteria were met to justify the score.
+        """
+
+        output_schema = {
+            "type": "OBJECT", "properties": {
+                "scrybeScore": {"type": "NUMBER"},
+                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
+                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]},
+                "analystVerdict": {"type": "STRING"},
+            }, "required": ["scrybeScore", "signal", "confidence", "analystVerdict"]
+        }
+
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        model = genai.GenerativeModel(
+            model_name,
+            safety_settings=safety_settings,
+            system_instruction=breakout_prompt,
+            generation_config=generation_config
+        )
+
+        prompt_parts = [
+            "Please generate your volatility breakout analysis based on the provided data.",
+            f"MARKET CONTEXT: {json.dumps(market_context)}",
+            f"Key Technical Indicators: {json.dumps(technical_indicators)}"
+        ]
+        
+        try:
+            response = model.generate_content(prompt_parts, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Breakout AI call failed. Error: {e}")
+            return {"scrybeScore": 0, "signal": "HOLD", "confidence": "Low", "analystVerdict": "AI analysis failed."}
+        
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """
         Analyzes holistic data to find high-probability intraday short candidates
