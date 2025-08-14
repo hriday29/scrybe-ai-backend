@@ -131,6 +131,17 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
             "Bollinger Band Width Percent": f"{(latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0'] * 100:.2f}",
             "Volume Surge": "Yes" if is_volume_high else "No"
         }
+        candle_high = latest_row['high']
+        candle_low = latest_row['low']
+        candle_close = latest_row['close']
+        candle_range = candle_high - candle_low if candle_high > candle_low else 0.01
+        
+        # Position of close within the candle's full range (0=low, 1=high)
+        position_in_range = (candle_close - candle_low) / candle_range if candle_range > 0 else 0.5
+        
+        latest_indicators['Confirmation_Candle'] = {
+            "position_in_range": round(position_in_range, 2)
+        }
         
         market_context = {
             "stock_sector": market_data.get("stock_performance", {}).get(ticker, {}).get('sector', 'Unknown'), 

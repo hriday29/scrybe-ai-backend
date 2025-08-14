@@ -66,7 +66,7 @@ BLUE_CHIP_STRATEGY = {
     'min_rr_ratio': 1.5,  # More realistic R/R target for slower movers
     'stop_loss_atr_multiplier': 2.5, # Wider stop to accommodate normal volatility
     'use_trailing_stop': True,
-    'trailing_stop_pct': 2.0 # Wider trailing stop
+    'trailing_stop_pct': 2.0
 }
 
 # --- Market Index Analysis Config ---

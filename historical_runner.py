@@ -122,6 +122,17 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     volume_ma_20 = data_slice_copy['volume'].rolling(window=20).mean().iloc[-1]
                     is_volume_high = latest_row['volume'] > volume_ma_20 * config.VOLUME_SURGE_THRESHOLD
                     latest_indicators = { "ADX": f"{latest_row['ADX_14']:.2f}", "RSI": f"{latest_row['RSI_14']:.2f}", "MACD": f"{latest_row['MACD_12_26_9']:.2f}", "Bollinger Band Width Percent": f"{(latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0'] * 100:.2f}", "Volume Surge": "Yes" if is_volume_high else "No" }
+                    candle_high = latest_row['high']
+                    candle_low = latest_row['low']
+                    candle_close = latest_row['close']
+                    candle_range = candle_high - candle_low if candle_high > candle_low else 0.01
+                    
+                    # Position of close within the candle's full range (0=low, 1=high)
+                    position_in_range = (candle_close - candle_low) / candle_range if candle_range > 0 else 0.5
+                    
+                    latest_indicators['Confirmation_Candle'] = {
+                        "position_in_range": round(position_in_range, 2)
+                    }
                     charts_for_ai = {}
                     stock_5d_change = ((latest_row['close'] - data_slice_copy['close'].iloc[-6]) / data_slice_copy['close'].iloc[-6]) * 100 if len(data_slice_copy) > 5 else 0
                     market_context_for_day['Stock_5D_Change'] = f"{stock_5d_change:.2f}%"
