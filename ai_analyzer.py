@@ -249,13 +249,15 @@ class AIAnalyzer:
                 response = model.generate_content(prompt_parts, request_options={"timeout": 120})
                 return json.loads(response.text)
             except Exception as e:
+                if "429" in str(e) and "quota" in str(e).lower():
+                    log.error("Quota exceeded for Mean-Reversion. Raising exception to trigger key rotation.")
+                    raise e # CRITICAL: Alert the main runner
                 log.warning(f"Mean-Reversion AI call attempt {attempt + 1} failed. Error: {e}")
                 if attempt < max_retries - 1:
                     time.sleep(delay)
                 else:
                     log.error("Mean-Reversion analysis failed after all retries.")
-                    # Return a default neutral score on failure
-                    return {"scrybeScore": 0, "signal": "HOLD", "confidence": "Low", "analystVerdict": "AI analysis failed."}
+                    return None # Return None on final failure
 
     def get_breakout_analysis(self, live_financial_data: dict, model_name: str, technical_indicators: dict, market_context: dict) -> dict:
         """
@@ -326,8 +328,11 @@ class AIAnalyzer:
             response = model.generate_content(prompt_parts, request_options={"timeout": 120})
             return json.loads(response.text)
         except Exception as e:
+            if "429" in str(e) and "quota" in str(e).lower():
+                log.error("Quota exceeded for Breakout. Raising exception to trigger key rotation.")
+                raise e # CRITICAL: Alert the main runner
             log.error(f"Breakout AI call failed. Error: {e}")
-            return {"scrybeScore": 0, "signal": "HOLD", "confidence": "Low", "analystVerdict": "AI analysis failed."}
+            return None # Return None on failure
         
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """
@@ -527,14 +532,17 @@ class AIAnalyzer:
                 response = model.generate_content(prompt_parts)
                 return json.loads(response.text) # Success: return and exit loop
             except Exception as e:
+                if "429" in str(e) and "quota" in str(e).lower():
+                    log.error("Quota exceeded for DVM Scoring. Raising exception to trigger key rotation.")
+                    raise e # CRITICAL: Alert the main runner
                 log.warning(f"[DVM Scoring] Attempt {attempt + 1} failed. Error: {e}")
                 if attempt < max_retries - 1:
                     log.info(f"Waiting for {delay} seconds before retrying...")
                     time.sleep(delay)
-                    delay *= 2 # Double the delay for the next attempt
+                    delay *= 2
                 else:
                     log.error(f"[DVM Scoring] Failed after {max_retries} attempts.")
-                    return None # All retries failed
+                    return None
     
     def get_conversational_answer(self, question: str, analysis_context: dict) -> dict:
         """
