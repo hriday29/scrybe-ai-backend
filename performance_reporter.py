@@ -144,9 +144,9 @@ def generate_performance_report(batch_id: str):
         
         initial_signals = all_predictions_df[all_predictions_df['original_signal'].isin(['BUY', 'SELL'])]
         
-        vetoed_regime = all_predictions_df[all_predictions_df['analystVerdict'].str.contains("market regime", na=False)]
-        vetoed_conviction = all_predictions_df[all_predictions_df['analystVerdict'].str.contains("conviction threshold", na=False)]
-        vetoed_quality = all_predictions_df[all_predictions_df['analystVerdict'].str.contains("Quality \(Durability\)", na=False)]
+        vetoed_regime = all_predictions_df[all_predictions_df['reason_code'] == "REGIME_VETO"]
+        vetoed_conviction = all_predictions_df[all_predictions_df['reason_code'] == "LOW_CONVICTION"]
+        vetoed_quality = all_predictions_df[all_predictions_df['reason_code'] == "QUALITY_VETO"]
 
         final_approved_signals = all_predictions_df[all_predictions_df['signal'].isin(['BUY', 'SELL'])]
 

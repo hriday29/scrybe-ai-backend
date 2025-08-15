@@ -39,34 +39,15 @@ else:
 PRO_MODEL = 'gemini-2.5-pro'
 FLASH_MODEL = 'gemini-2.5-flash'
 
-# --- Strategy & Stock Personality Profiles ---
+# --- Strategy Profiles ---
 
-# This is our final, categorized map of the official Nifty 50 list.
-# The system will use this to dynamically apply the best-fit strategy to each stock.
+# A dictionary to map our blue-chip stocks for easy lookup
+BLUE_CHIP_TICKERS = {
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS",
+    "INFY.NS", "HINDUNILVR.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS"
+}
 
-HIGH_BETA_CYCLICAL_TICKERS = {
-    "ADANIENT.NS", "ADANIPORTS.NS", "AXISBANK.NS", "BAJAJFINSV.NS", "BAJFINANCE.NS",
-    "BPCL.NS", "EICHERMOT.NS", "GRASIM.NS", "HINDALCO.NS", "INDUSINDBK.NS",
-    "JSWSTEEL.NS", "M&M.NS", "SBIN.NS", "SHRIRAMFIN.NS", "TATAMOTORS.NS",
-    "TATASTEEL.NS"
-} # Total: 16 Stocks
-
-STABLE_BLUE_CHIP_TICKERS = {
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", "BHARTIARTL.NS",
-    "KOTAKBANK.NS", "LT.NS", "WIPRO.NS", "HCLTECH.NS", "TECHM.NS", "BAJAJ-AUTO.NS",
-    "MARUTI.NS", "POWERGRID.NS", "NTPC.NS", "ONGC.NS", "COALINDIA.NS", "JIOFIN.NS",
-    "ULTRACEMCO.NS", "TITAN.NS", "BEL.NS", "HEROMOTOCO.NS", "HDFCLIFE.NS", "SBILIFE.NS"
-} # Total: 24 Stocks
-
-LOW_VOLATILITY_COMPOUNDER_TICKERS = {
-    "ASIANPAINT.NS", "HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "BRITANNIA.NS",
-    "CIPLA.NS", "SUNPHARMA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "DIVISLAB.NS",
-    "TATACONSUM.NS"
-} # Total: 11 Stocks
-
-# --- Strategy Parameter Dictionaries ---
-
-# Default strategy for High-Beta & Cyclical stocks
+# Default strategy for most Nifty 50 stocks (momentum-focused)
 DEFAULT_SWING_STRATEGY = {
     'name': 'DefaultSwing',
     'horizon_text': 'Short-term Swing (3-7 Days)',
@@ -77,7 +58,7 @@ DEFAULT_SWING_STRATEGY = {
     'trailing_stop_pct': 1.5
 }
 
-# A more patient strategy for large, stable blue-chip companies
+# A more patient strategy tailored for large, stable blue-chip companies
 BLUE_CHIP_STRATEGY = {
     'name': 'BlueChip',
     'horizon_text': 'Positional Swing (10-20 Days)',
@@ -86,27 +67,6 @@ BLUE_CHIP_STRATEGY = {
     'stop_loss_atr_multiplier': 2.5,
     'use_trailing_stop': True,
     'trailing_stop_pct': 2.0
-}
-
-# A fast, aggressive strategy for capturing breakout momentum
-BREAKOUT_STRATEGY = {
-    'name': 'Breakout',
-    'horizon_text': 'Rapid Breakout (2-5 Days)',
-    'holding_period': 5,
-    'min_rr_ratio': 2.5,
-    'stop_loss_atr_multiplier': 1.5,
-    'use_trailing_stop': True,
-    'trailing_stop_pct': 1.5
-}
-
-# A highly defensive, mean-reversion-focused strategy for low-volatility stocks
-LOW_VOLATILITY_STRATEGY = {
-    'name': 'LowVolatility',
-    'horizon_text': 'Range-bound Swing (15-30 Days)',
-    'holding_period': 20,
-    'min_rr_ratio': 1.25,
-    'stop_loss_atr_multiplier': 3.0,
-    'use_trailing_stop': False
 }
 
 # --- Market Index Analysis Config ---
@@ -151,7 +111,6 @@ INDEX_LIST = {
 
 VOLUME_SURGE_THRESHOLD = 1.6 #represents a 60% surge
 ADX_THRESHOLD = 25
-TRADE_EXPIRY_DAYS = 7
 
 BACKTEST_CONFIG = {
     # Brokerage: e.g., 0.05% per side (buy and sell)

@@ -69,40 +69,38 @@ class AIAnalyzer:
         definitive_scoring_prompt = f"""
         You are "Scrybe-Oracle," a world-class quantitative analyst specializing in MOMENTUM strategies. Your primary task is to produce a sophisticated analysis culminating in a "Scrybe Score" from -100 to +100, strictly following the protocol below.
 
-        **Your Scoring Protocol (The 9 Layers of Analysis):**
-
-        **1. Market Regime Context (Weight: 30%):** The `CURRENT_MARKET_REGIME` is your most important piece of context. You must heavily weigh this in your final score. A signal that contradicts the market regime (e.g., a BUY in a Bearish market) must be penalized significantly. Only an overwhelming confluence of other bullish factors (especially from Layers 2 and 7) can justify a contrarian signal.
-
-        **2. Relative Strength Analysis (Weight: 20%):** Compare the `Stock_5D_Change` to the `Nifty50_5D_Change`. Exceptional relative strength in a bearish market is a powerful bullish signal, and vice-versa.
+        **CRITICAL CONTEXT: DUAL-MODE ANALYSIS**
+        You MUST adapt your analysis based on the data provided. If 'Financial Data Snapshot' or 'Options Sentiment' data is sparse or empty (for historical runs), you MUST state this limitation and base your score primarily on the layers where data is present. **Do not hallucinate missing data.**
         
-        **3. Sector Strength (Weight: 5%):** A stock in a strong sector gets a bonus. A stock in a weak sector gets a penalty.
+        **Preamble: Foundational Macro & Inter-market Context**
+        First, form a view on the macro environment based on the `MACRO CONTEXT DATA` provided. This must inform your entire analysis. A stock does not exist in a vacuum.
 
-        **4. Sentiment Analysis (Weight: 5%):** Bearish options data negatively impacts the score. Bullish sentiment has a positive impact. (Acknowledge if data is unavailable).
+        **Your Scoring Protocol (The 8 Layers of Analysis):**
 
-        **5. Fundamental Context (Weight: 10%):** A high 'Durability' score provides a strong safety net and a bonus for BUY signals.
+        **1. Market Regime Context (Weight: 30%):** The `CURRENT_MARKET_REGIME` is your most important piece of context. A stock fighting a bearish market regime cannot receive a high positive score unless a Strategic Override is triggered (see Layer 8).
 
-        **6. Technical Deep-Dive (Weight: 15%):** Your core analysis of patterns and indicators (ADX, RSI, MACD, Volume Surge). A setup confirmed by a strong trend (ADX > {config.ADX_THRESHOLD}) gets a major score bonus.
-
-        **7. Price Action Confirmation (Weight: 15%):** Analyze the `Confirmation_Candle` data. A strong technical setup (Layer 6) that is ALSO supported by strong confirmation from the last candle receives a significant score bonus. A setup with a weak or contradictory final candle must have its score penalized.
+        **2. Relative Strength Analysis (Weight: 20%):** Compare the `Stock_5D_Change` to the `Nifty50_5D_Change` from the provided context.
+            * **Strong Relative Strength:** Stock is positive while the market is negative/flat. This is a very bullish sign.
+            * **Strong Relative Weakness:** Stock is negative while the market is positive/flat. This is a very bearish sign.
         
-        **8. Confluence & Contradiction Check:** Explicitly identify the key points of confluence (factors that agree) and contradiction (factors that disagree) from the layers above.
+        **3. Sector Strength (Weight: 10%):** A stock in a weak sector receives a penalty to its score, while a stock in a strong sector gets a small bonus.
 
-        **9. Final Judgment & Justification:** Your final `scrybeScore` and `signal` must synthesize all layers.
-            * Your `analystVerdict` must begin with your interpretation of the market regime, followed by the relative strength and price action confirmation.
-            * Your `keyInsight` must be the single most important, actionable takeaway from your entire analysis, distilled into one powerful sentence.
-            * **CONTRARIAN SIGNAL MANDATE:** If you issue a contrarian signal (a BUY in a Bearish market or SELL in a Bullish one), you MUST explicitly state the overwhelming factors from the other layers that justify this high-risk decision.
-            * **CONFIRMATION MANDATE:** A high-conviction score (absolute value > 75) is ONLY PERMISSIBLE if there is strong price action confirmation from Layer 7. A perfect setup without a confirming final candle MUST be downgraded to a moderate-conviction signal.
-            * **The `signal` and `confidence` MUST be derived logically from the `scrybeScore` based on the established protocol below:**
-                * **+75 to +100:** High-conviction BUY
-                * **+50 to +74:** Moderate-conviction BUY
-                * **-49 to +49:** HOLD
-                * **-50 to -74:** Moderate-conviction SELL
-                * **-75 to -100:** High-conviction SELL
-            * **The `isOnRadar` boolean MUST be `true` ONLY for 'HOLD' signals with scores between 40 to 49 and -40 to -49. For all other scores, it must be `false`.**
+        **4. Sentiment Analysis (Weight: 10%):** Bearish options data negatively impacts the score. Bullish sentiment has a positive impact. (Acknowledge if data is unavailable).
+
+        **5. Fundamental Context (Weight: 10%):** A high 'Durability' score provides a strong safety net for BUY signals. A very poor 'Valuation' score can be a headwind. (Acknowledge if data is unavailable).
+
+        **6. Technical Deep-Dive (Weight: 20%):** Your core technical analysis of patterns, indicators (ADX, RSI, MACD, Volume Surge), and volatility character.
+        
+        **7. Confluence & Contradiction Check:** Explicitly identify the key points of confluence (factors that agree) and contradiction (factors that disagree).
+
+        **8. Final Judgment & Strategic Overrides:** Your final `scrybeScore` and `signal` must synthesize all layers.
+            * Your `analystVerdict` must begin with a brief statement on the macro context and relative strength.
+            * Your `keyInsight` must be the single most important, actionable takeaway.
+            * **STRATEGIC OVERRIDE - BUYING IN A BEAR MARKET:** You can issue a `BUY` signal in a `Bearish` market regime ONLY IF you identify exceptional **Relative Strength** (Layer 2) AND this is supported by a very high fundamental `Durability` score.
+            * The `signal`, `confidence`, and `isOnRadar` fields MUST be derived logically from the `scrybeScore` as per the established protocol.
             * **CRITICAL FINAL RULE:** You are **NOT** responsible for the `tradePlan` object.
         """
 
-        # The schema is correct and final.
         output_schema = {
             "type": "OBJECT", "properties": {
                 "scrybeScore": {"type": "NUMBER"}, "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
@@ -124,13 +122,6 @@ class AIAnalyzer:
                     "Profitability": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
                     "Ownership": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}
                 }, "required": ["Valuation", "Profitability", "Ownership"]},
-                "tradePlan": {"type": "OBJECT", "properties": {
-                    "timeframe": {"type": "STRING"}, "strategy": {"type": "STRING"},
-                    "entryPrice": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}},
-                    "target": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}},
-                    "stopLoss": {"type": "OBJECT", "properties": {"price": {"type": "NUMBER"}, "rationale": {"type": "STRING"}}},
-                    "riskRewardRatio": {"type": "NUMBER"}
-                }},
             },
             "required": ["scrybeScore", "signal", "confidence", "keyInsight", "analystVerdict", "keyObservations", "technicalBreakdown", "fundamentalBreakdown"]
         }
@@ -258,81 +249,6 @@ class AIAnalyzer:
                 else:
                     log.error("Mean-Reversion analysis failed after all retries.")
                     return None # Return None on final failure
-
-    def get_breakout_analysis(self, live_financial_data: dict, model_name: str, technical_indicators: dict, market_context: dict) -> dict:
-        """
-        Analyzes a stock for a volatility breakout opportunity.
-        """
-        log.info(f"Generating Breakout Analysis for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
-
-        breakout_prompt = f"""
-        You are "Scrybe-Vulcan," a quantitative analyst specializing in **VOLATILITY BREAKOUT** strategies. Your sole purpose is to identify stocks that have been in a period of low volatility ("coiling") and are now breaking out with force.
-
-        **PRIME BREAKOUT CHECKLIST:**
-        You must evaluate the stock against the following four criteria. A high-conviction signal requires at least THREE of these to be met.
-
-        1.  **Volatility Contraction (The Squeeze):** Is the stock in a state of "Quiet Consolidation"?
-            * Analyze the `Bollinger Band Width Percent` and `ATR_Percent` from the technical indicators.
-            * A true squeeze is indicated by exceptionally low values for both, suggesting energy is building up.
-
-        2.  **The Breakout Candle (The Confirmation):** Did the most recent candle show a decisive move?
-            * Analyze the `Confirmation_Candle` data.
-            * A `position_in_range` close to 1.0 indicates a strong bullish breakout candle.
-            * A `position_in_range` close to 0.0 indicates a strong bearish breakout candle.
-            * A value near 0.5 is indecisive and fails this check.
-
-        3.  **Volume Confirmation (The Fuel):** Was the breakout accompanied by a significant increase in volume?
-            * Check the `Volume Surge` indicator. A "Yes" value strongly confirms the validity of the breakout.
-
-        4.  **Trend Ignition (The Follow-Through):** Is a new trend potentially starting?
-            * Analyze the `ADX` indicator. An ADX value rising above 20 suggests the breakout has enough strength to start a new trend. An ADX below 20 suggests the breakout might be a false move.
-
-        **Final Scoring & JSON Output:**
-        * Synthesize your checklist findings into a `scrybeScore` from -100 to +100.
-        * A high positive score means strong conviction in a **bullish breakout (BUY)**.
-        * A high negative score means strong conviction in a **bearish breakout (SELL)**.
-        * Your `analystVerdict` MUST summarize which of the four checklist criteria were met to justify the score.
-        """
-
-        output_schema = {
-            "type": "OBJECT", "properties": {
-                "scrybeScore": {"type": "NUMBER"},
-                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
-                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]},
-                "analystVerdict": {"type": "STRING"},
-            }, "required": ["scrybeScore", "signal", "confidence", "analystVerdict"]
-        }
-
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-
-        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
-        model = genai.GenerativeModel(
-            model_name,
-            safety_settings=safety_settings,
-            system_instruction=breakout_prompt,
-            generation_config=generation_config
-        )
-
-        prompt_parts = [
-            "Please generate your volatility breakout analysis based on the provided data.",
-            f"MARKET CONTEXT: {json.dumps(market_context)}",
-            f"Key Technical Indicators: {json.dumps(technical_indicators)}"
-        ]
-        
-        try:
-            response = model.generate_content(prompt_parts, request_options={"timeout": 120})
-            return json.loads(response.text)
-        except Exception as e:
-            if "429" in str(e) and "quota" in str(e).lower():
-                log.error("Quota exceeded for Breakout. Raising exception to trigger key rotation.")
-                raise e # CRITICAL: Alert the main runner
-            log.error(f"Breakout AI call failed. Error: {e}")
-            return None # Return None on failure
         
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """

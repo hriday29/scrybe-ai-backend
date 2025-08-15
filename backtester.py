@@ -63,54 +63,35 @@ def run_backtest(batch_id: str, full_historical_data_cache: dict):
     log.info(f"--- ✅ Consolidated Backtesting Job Finished for Batch: {batch_id} ---")
 
 def process_single_trade(trade: dict, historical_data: pd.DataFrame):
-    """Evaluates a single BUY or SELL trade against its plan with robust validation and adaptive strategy awareness."""
+    """
+    The SPRINT2_V2_FIX version of the trade processor.
+    """
     log.info(f"Processing trade for {trade['ticker']} predicted on {trade['prediction_date'].strftime('%Y-%m-%d')}...")
     signal = trade.get('signal')
     price_at_prediction = trade['price_at_prediction']
 
-    # --- START: Adaptive Strategy Loading ---
     strategy_name = trade.get('strategy')
     if strategy_name == 'BlueChip':
         active_strategy = config.BLUE_CHIP_STRATEGY
-    elif strategy_name == 'Breakout':
-        active_strategy = config.BREAKOUT_STRATEGY
-    elif strategy_name == 'LowVolatility':
-        active_strategy = config.LOW_VOLATILITY_STRATEGY
-    else: # DefaultSwing is the final fallback
+    else: # Default to DefaultSwing
         active_strategy = config.DEFAULT_SWING_STRATEGY
-    # --- END: Adaptive Strategy Loading ---
 
     try:
         trade_plan = trade.get('tradePlan', {})
         target_price = float(trade_plan.get('target', {}).get('price'))
         stop_loss_price = float(trade_plan.get('stopLoss', {}).get('price'))
         atr_at_prediction = float(trade.get('atr_at_prediction', 0))
-
-        # Use parameters from the loaded active_strategy
         holding_period = active_strategy['holding_period']
-
         if not all([target_price, stop_loss_price, atr_at_prediction]):
-             raise ValueError("Essential trade plan values (target, stop-loss, ATR) are zero after conversion.")
-
-        ATR_REALISM_MULTIPLIER = 6.0
-        target_distance = abs(target_price - price_at_prediction)
-        max_realistic_move = ATR_REALISM_MULTIPLIER * atr_at_prediction
-        
-        if target_distance > max_realistic_move:
-            log.error(f"Invalid trade plan for {trade['ticker']}: Target move ({target_distance:.2f}) is unrealistic (> {ATR_REALISM_MULTIPLIER} * ATR ({max_realistic_move:.2f})).")
-            log_and_close_trade(trade, 0, "Trade Closed - Unrealistic Plan", price_at_prediction, trade['prediction_date'])
-            return
-
+             raise ValueError("Essential trade plan values are missing or zero.")
     except (ValueError, KeyError, TypeError) as e:
-        log.error(f"Invalid trade plan for {trade['ticker']}: {e}. This may be a 'HOLD' signal or have non-numeric prices. Closing trade.")
+        log.error(f"Invalid trade plan for {trade['ticker']}: {e}. Closing trade.")
         log_and_close_trade(trade, 0, "Trade Closed - Invalid Plan", price_at_prediction, trade['prediction_date'])
         return
     
-    # Use parameters from the loaded active_strategy
     use_trailing_stop = active_strategy.get('use_trailing_stop', False)
     trailing_stop_atr_multiplier = active_strategy.get('trailing_stop_pct', 1.5)
-
-    # Initialize the current stop-loss price
+    
     current_stop_loss = stop_loss_price
     
     prediction_date = trade['prediction_date'].replace(tzinfo=None)
@@ -125,46 +106,33 @@ def process_single_trade(trade: dict, historical_data: pd.DataFrame):
         current_day_date = day_data.Index.to_pydatetime().replace(tzinfo=timezone.utc)
 
         if signal == 'BUY':
-            # Check if the price hit our current stop-loss
             if day_data.low <= current_stop_loss:
                 reason = "Trade Closed - Trailing Stop Hit" if use_trailing_stop and current_stop_loss > stop_loss_price else "Trade Closed - Stop-Loss Hit"
                 log_and_close_trade(trade, day_number, reason, current_stop_loss, current_day_date)
                 return
-            # Check for target hit
             if day_data.high >= target_price:
                 log_and_close_trade(trade, day_number, "Trade Closed - Target Hit", target_price, current_day_date)
                 return
-
-            # Trailing Stop Logic for BUY trades
             if use_trailing_stop:
-                # Calculate a potential new stop-loss based on today's high
                 new_potential_stop = day_data.high - (atr_at_prediction * trailing_stop_atr_multiplier)
-                # If this new stop is higher than our current one, "trail" it up
                 if new_potential_stop > current_stop_loss:
                     current_stop_loss = new_potential_stop
                     log.info(f"Trailing stop for {trade['ticker']} moved up to {current_stop_loss:.2f}")
 
         elif signal == 'SELL':
-            # Check if the price hit our current stop-loss
             if day_data.high >= current_stop_loss:
                 reason = "Trade Closed - Trailing Stop Hit" if use_trailing_stop and current_stop_loss < stop_loss_price else "Trade Closed - Stop-Loss Hit"
                 log_and_close_trade(trade, day_number, reason, current_stop_loss, current_day_date)
                 return
-            # Check for target hit
             if day_data.low <= target_price:
                 log_and_close_trade(trade, day_number, "Trade Closed - Target Hit", target_price, current_day_date)
                 return
-
-            # Trailing Stop Logic for SELL trades
             if use_trailing_stop:
-                # Calculate a potential new stop-loss based on today's low
                 new_potential_stop = day_data.low + (atr_at_prediction * trailing_stop_atr_multiplier)
-                # If this new stop is lower than our current one, "trail" it down
                 if new_potential_stop < current_stop_loss:
                     current_stop_loss = new_potential_stop
                     log.info(f"Trailing stop for {trade['ticker']} moved down to {current_stop_loss:.2f}")
 
-        # Time-based exit remains the final check
         if day_number >= holding_period:
             log_and_close_trade(trade, day_number, f"Trade Closed - {holding_period}-Day Time Exit", day_data.close, current_day_date)
             return
