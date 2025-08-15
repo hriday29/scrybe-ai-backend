@@ -78,9 +78,8 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
         
         # Load Nifty data
         nifty_data_cache_raw = data_retriever.get_historical_stock_data("^NSEI", end_date=end_date)
-        # **THIS IS THE FIX**: Manually ensure Nifty data columns are lowercase, just in case.
         nifty_data_cache = nifty_data_cache_raw.rename(columns={
-            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
+            'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'
         })
         # --- END: DEFINITIVE FIX ---
         
