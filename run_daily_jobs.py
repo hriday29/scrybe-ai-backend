@@ -145,10 +145,13 @@ def run_vst_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_data: di
             "position_in_range": round(position_in_range, 2)
         }
         
+        stock_5d_change = ((latest_row['close'] - historical_data['close'].iloc[-6]) / historical_data['close'].iloc[-6]) * 100 if len(historical_data) > 5 else 0
+
         market_context = {
             "stock_sector": market_data.get("stock_performance", {}).get(ticker, {}).get('sector', 'Unknown'), 
             "sector_performance_today": market_data.get("sector_performance", {}),
-            "CURRENT_MARKET_REGIME": market_regime
+            "CURRENT_MARKET_REGIME": market_regime,
+            "Stock_5D_Change": f"{stock_5d_change:.2f}%"
         }
         
         # --- "CIO" LOGIC FOR LIVE RUNNER ---
