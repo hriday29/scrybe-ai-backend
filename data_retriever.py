@@ -79,7 +79,7 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
         # --- THIS IS THE EDIT ---
         # Standardize columns to lowercase for system-wide consistency
         df.rename(columns={
-            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
+            'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'
         }, inplace=True)
         # ----------------------
 
@@ -321,7 +321,9 @@ def get_intraday_data(ticker_symbol: str):
             
         # --- THIS IS THE FIX ---
         # Normalize column names to lowercase for consistency
-        df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
+        df.rename(columns={
+            'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'
+        }, inplace=True)
         # ----------------------
 
         return df
