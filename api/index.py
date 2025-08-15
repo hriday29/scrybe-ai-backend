@@ -205,7 +205,12 @@ def get_index_analysis_data(index_ticker):
         return jsonify({"error": "Invalid index ticker provided."}), 404
 
     try:
-        analysis_data = ai_analyzer_instance.get_index_analysis(index_name, index_ticker)
+        current_macro_context = {
+            "India GDP Growth (YoY)": "7.8% (Q1'25)", 
+            "RBI Policy Stance": "Neutral with a focus on inflation"
+        }
+        
+        analysis_data = ai_analyzer_instance.get_index_analysis(index_name, index_ticker, current_macro_context)
         
         if analysis_data is None or "error" in analysis_data:
             return jsonify({"error": analysis_data.get("error", "Failed to generate index analysis.")}), 500

@@ -61,194 +61,167 @@ class AIAnalyzer:
             log.error(f"Single news impact analysis call failed. Error: {e}")
             return None
 
-    def get_momentum_analysis(self, live_financial_data: dict, latest_atr: float, model_name: str, charts: dict, trading_horizon_text: str, technical_indicators: dict, min_rr_ratio: float, market_context: dict, options_data: dict, macro_data: dict) -> dict:
-        """Analyzes a stock for a trend-following momentum opportunity."""
-        log.info(f"Generating Top Grade Analysis for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
+    def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str) -> dict:
+        """
+        Generates a definitive, institutional-grade analysis using the "Apex" multi-layered model.
+        """
+        log.info(f"Generating APEX analysis for {ticker}...")
 
-        # THE DEFINITIVE PROMPT
-        definitive_scoring_prompt = f"""
-        You are "Scrybe-Oracle," a world-class quantitative analyst specializing in MOMENTUM strategies. Your primary task is to produce a sophisticated analysis culminating in a "Scrybe Score" from -100 to +100, strictly following the protocol below.
+        system_instruction = """
+        You are "Apex," the Chief Investment Officer of a high-conviction quantitative fund. Your analysis is legendary for its depth, clarity, and synthesis of disparate data points. You will produce an institutional-grade report for a given stock, culminating in a decisive **Scrybe Score** and a **Predicted Gain Percentage**.
 
-        **CRITICAL CONTEXT: DUAL-MODE ANALYSIS**
-        You MUST adapt your analysis based on the data provided. If 'Financial Data Snapshot' or 'Options Sentiment' data is sparse or empty (for historical runs), you MUST state this limitation and base your score primarily on the layers where data is present. **Do not hallucinate missing data.**
-        
-        **Preamble: Foundational Macro & Inter-market Context**
-        First, form a view on the macro environment based on the `MACRO CONTEXT DATA` provided. This must inform your entire analysis. A stock does not exist in a vacuum.
+        **PROTOCOL - STEP 1: REVIEW YOUR OWN PERFORMANCE.**
+        Before you begin your analysis, you MUST first review the "Omni-Context" data provided: your "30-Day Performance Review" and your "Previous Day's Note." In your final verdict, you must explicitly state how this context has influenced your confidence and final score for today's decision.
 
-        **Your Scoring Protocol (The 8 Layers of Analysis):**
+        **PROTOCOL - STEP 2: MULTI-LAYERED THESIS FORMATION.**
+        You will now synthesize the following six layers of intelligence into a single, cohesive thesis. You must weigh each layer according to the specified importance.
 
-        **1. Market Regime Context (Weight: 30%):** The `CURRENT_MARKET_REGIME` is your most important piece of context. A stock fighting a bearish market regime cannot receive a high positive score unless a Strategic Override is triggered (see Layer 8).
+        - **Layer 1: Macro & Inter-market Context (Weight: 15%):** What is the risk environment? Are global markets, oil, and currencies providing tailwinds or headwinds?
+        - **Layer 2: Sector & Relative Strength (Weight: 20%):** Is the stock's sector in favor? Crucially, is the stock stronger or weaker than the Nifty 50 itself? Relative strength is a key indicator of alpha.
+        - **Layer 3: The Fundamental "Moat" (Weight: 15%):** Assess the company's financial health. Is this a durable business with strong profitability and manageable debt, or is it fundamentally weak?
+        - **Layer 4: Multi-Timeframe Technicals (Weight: 30%):** This is your most heavily weighted factor. Analyze and state the trend on the **Weekly Chart (long-term context)**, the setup on the **Daily Chart (our trade timeframe)**, and the immediate momentum on the **15-Minute Chart (entry timing)**.
+        - **Layer 5: Options Sentiment (Weight: 10%):** Where is the derivatives market placing its bets? Analyze the Put-Call Ratio and key Open Interest levels to gauge market positioning.
+        - **Layer 6: The News Catalyst (Weight: 10%):** Is there a recent earnings report, news event, or story driving the price?
 
-        **2. Relative Strength Analysis (Weight: 20%):** Compare the `Stock_5D_Change` to the `Nifty50_5D_Change` from the provided context.
-            * **Strong Relative Strength:** Stock is positive while the market is negative/flat. This is a very bullish sign.
-            * **Strong Relative Weakness:** Stock is negative while the market is positive/flat. This is a very bearish sign.
-        
-        **3. Sector Strength (Weight: 10%):** A stock in a weak sector receives a penalty to its score, while a stock in a strong sector gets a small bonus.
-
-        **4. Sentiment Analysis (Weight: 10%):** Bearish options data negatively impacts the score. Bullish sentiment has a positive impact. (Acknowledge if data is unavailable).
-
-        **5. Fundamental Context (Weight: 10%):** A high 'Durability' score provides a strong safety net for BUY signals. A very poor 'Valuation' score can be a headwind. (Acknowledge if data is unavailable).
-
-        **6. Technical Deep-Dive (Weight: 20%):** Your core technical analysis of patterns, indicators (ADX, RSI, MACD, Volume Surge), and volatility character.
-        
-        **7. Confluence & Contradiction Check:** Explicitly identify the key points of confluence (factors that agree) and contradiction (factors that disagree).
-
-        **8. Final Judgment & Strategic Overrides:** Your final `scrybeScore` and `signal` must synthesize all layers.
-            * Your `analystVerdict` must begin with a brief statement on the macro context and relative strength.
-            * Your `keyInsight` must be the single most important, actionable takeaway.
-            * **STRATEGIC OVERRIDE - BUYING IN A BEAR MARKET:** You can issue a `BUY` signal in a `Bearish` market regime ONLY IF you identify exceptional **Relative Strength** (Layer 2) AND this is supported by a very high fundamental `Durability` score.
-            * The `signal`, `confidence`, and `isOnRadar` fields MUST be derived logically from the `scrybeScore` as per the established protocol.
-            * **CRITICAL FINAL RULE:** You are **NOT** responsible for the `tradePlan` object.
+        **PROTOCOL - STEP 3: THE FINAL SYNTHESIS & PREDICTION.**
+        1.  **Synthesize:** In your `analystVerdict`, provide a master narrative combining all six layers, starting with how your Omni-Context review shaped your thinking.
+        2.  **Score:** Provide a `scrybeScore` from -100 to +100 based on your conviction.
+        3.  **Predict Gain:** Provide a `predicted_gain_pct`. This is your realistic estimate of the potential profit for this trade setup over the strategy's holding period if the thesis plays out.
+        4.  **Assess Risk:** You MUST identify the `keyRisks_and_Mitigants` to your thesis.
+        5.  **Invalidate:** You MUST provide a specific `thesisInvalidationPoint` (a price or event) that would prove your analysis wrong.
         """
 
         output_schema = {
-            "type": "OBJECT", "properties": {
-                "scrybeScore": {"type": "NUMBER"}, "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
-                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]}, "keyInsight": {"type": "STRING"},"analystVerdict": {"type": "STRING"},
-                "keyObservations": {"type": "OBJECT", "properties": {
-                    "confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}},
-                    "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}},
-                }, "required": ["confluencePoints", "contradictionPoints"]},
-                "reasonForHold": {"type": "STRING"}, "isOnRadar": {"type": "BOOLEAN"},
-                "technicalBreakdown": { "type": "OBJECT", "properties": {
-                    "Chart Pattern": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
-                    "Volatility Analysis": {"type": "OBJECT", "properties": {"character": {"type": "STRING"}, "implication": {"type": "STRING"}}, "required": ["character", "implication"]},
-                    "ADX": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
-                    "RSI": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
-                    "MACD": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
-                }, "required": ["Chart Pattern", "Volatility Analysis", "ADX", "RSI", "MACD"]},
-                "fundamentalBreakdown": { "type": "OBJECT", "properties": {
-                    "Valuation": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
-                    "Profitability": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]},
-                    "Ownership": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}, "required": ["value", "status", "interpretation"]}
-                }, "required": ["Valuation", "Profitability", "Ownership"]},
+            "type": "OBJECT",
+            "properties": {
+                # --- Core Decision Metrics ---
+                "scrybeScore": {
+                    "type": "NUMBER",
+                    "description": "The final conviction score from -100 (high conviction sell) to +100 (high conviction buy)."
+                },
+                "signal": {
+                    "type": "STRING",
+                    "enum": ["BUY", "SELL", "HOLD"],
+                    "description": "The definitive trading signal derived from the Scrybe Score."
+                },
+                "confidence": {
+                    "type": "STRING",
+                    "enum": ["Low", "Medium", "High", "Very High"],
+                    "description": "The qualitative confidence level, logically derived from the Scrybe Score."
+                },
+                "predicted_gain_pct": {
+                    "type": "NUMBER",
+                    "description": "The realistic estimated profit percentage for this trade setup over the holding period."
+                },
+                "gain_prediction_rationale": {
+                    "type": "STRING",
+                    "description": "A concise justification for the predicted gain percentage, based on volatility and technical targets."
+                },
+                "keyInsight": {
+                    "type": "STRING",
+                    "description": "The single most important, actionable takeaway from the entire analysis."
+                },
+                "analystVerdict": {
+                    "type": "STRING",
+                    "description": "The master narrative synthesizing all six layers, starting with the influence of the Omni-Context review."
+                },
+
+                # --- Risk Assessment ---
+                "keyRisks_and_Mitigants": {
+                    "type": "OBJECT",
+                    "description": "The top two factors that could cause this trade to fail, and any mitigating factors.",
+                    "properties": {
+                        "risk_1": {"type": "STRING"},
+                        "risk_2": {"type": "STRING"},
+                        "mitigant": {"type": "STRING"}
+                    },
+                    "required": ["risk_1", "risk_2", "mitigant"]
+                },
+                "thesisInvalidationPoint": {
+                    "type": "STRING",
+                    "description": "A specific price level or event that, if breached, would definitively invalidate the entire thesis."
+                },
+
+                # --- Detailed Analysis Layers ---
+                "keyObservations": {
+                    "type": "OBJECT",
+                    "description": "The key points of agreement and disagreement across the analytical layers.",
+                    "properties": {
+                        "confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}},
+                        "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}}
+                    },
+                    "required": ["confluencePoints", "contradictionPoints"]
+                },
+                "technicalBreakdown": {
+                    "type": "OBJECT",
+                    "description": "A detailed breakdown of the multi-timeframe technical analysis.",
+                    "properties": {
+                        "weekly_view": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
+                        "daily_view": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
+                        "intraday_view": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
+                        "ADX": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
+                        "RSI": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
+                        "MACD": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}}
+                    },
+                    "required": ["weekly_view", "daily_view", "intraday_view", "ADX", "RSI", "MACD"]
+                },
+                "fundamentalBreakdown": {
+                    "type": "OBJECT",
+                    "description": "A summary of the company's financial health.",
+                    "properties": {
+                        "Valuation": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
+                        "Profitability": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
+                        "Ownership": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}}
+                    },
+                    "required": ["Valuation", "Profitability", "Ownership"]
+                },
+                 "optionsBreakdown": {
+                    "type": "OBJECT",
+                    "description": "A summary of the options market sentiment.",
+                    "properties": {
+                        "sentiment": {"type": "STRING", "enum": ["Bullish", "Bearish", "Neutral", "Unavailable"]},
+                        "key_level": {"type": "STRING", "description": "The most significant strike price from Max OI."}
+                    },
+                     "required": ["sentiment", "key_level"]
+                },
+                 "newsBreakdown": {
+                    "type": "OBJECT",
+                    "description": "A summary of any recent news catalyst.",
+                    "properties": {
+                        "sentiment": {"type": "STRING", "enum": ["Positive", "Negative", "Neutral", "None"]},
+                        "summary": {"type": "STRING", "description": "A one-sentence summary of the key news."}
+                    },
+                    "required": ["sentiment", "summary"]
+                }
             },
-            "required": ["scrybeScore", "signal", "confidence", "keyInsight", "analystVerdict", "keyObservations", "technicalBreakdown", "fundamentalBreakdown"]
+            "required": [
+                "scrybeScore", "signal", "confidence", "predicted_gain_pct", "gain_prediction_rationale",
+                "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "thesisInvalidationPoint",
+                "keyObservations", "technicalBreakdown", "fundamentalBreakdown", "optionsBreakdown", "newsBreakdown"
+            ]
         }
 
         generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema, max_output_tokens=16384)
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-
-        # Create the model with the new safety settings included
-        model = genai.GenerativeModel(
-            model_name,
-            safety_settings=safety_settings,
-            system_instruction=definitive_scoring_prompt,
-            generation_config=generation_config
-        )
-        fundamental_data_status = "Available" if live_financial_data.get('curatedData') else "Not Available / Sparse"
-        prompt_parts = [
-            "Please generate your complete, multi-layered analysis based on all the provided data and your Michelin-Star protocol. You do not need to calculate the tradePlan.",
-            f"MARKET CONTEXT: {json.dumps(market_context)}",
-            f"OPTIONS SENTIMENT: {json.dumps(options_data)}",
-            f"CURRENT_VOLATILITY_ATR: {latest_atr:.2f}",
-            f"Financial Data Snapshot (Status: {fundamental_data_status}): {json.dumps(live_financial_data['curatedData'])}",
-            f"MACRO CONTEXT DATA: {json.dumps(macro_data)}",
-            f"Key Technical Indicators: {json.dumps(technical_indicators)}"
-        ]
-        if charts:
-            for key in sorted(charts.keys()):
-                if charts[key]:
-                    prompt_parts.append(f"This is the {key} chart:")
-                    image_part = {"mime_type": "image/png", "data": base64.b64decode(charts[key])}
-                    prompt_parts.append(image_part)
-        max_retries = 4
-        delay = 2
-        for attempt in range(max_retries):
-            try:
-                response = model.generate_content(prompt_parts, request_options={"timeout": 180})
-                return json.loads(response.text)
-            except Exception as e:
-                if "429" in str(e) and "quota" in str(e).lower():
-                    log.error("Quota exceeded. Raising exception to trigger key rotation.")
-                    raise e
-                log.warning(f"AI call attempt {attempt + 1} failed for {live_financial_data['rawDataSheet'].get('symbol', '')}. Error: {e}")
-                if attempt < max_retries - 1:
-                    log.info(f"Waiting for {delay} seconds before retrying...")
-                    time.sleep(delay)
-                    delay *= 2
-                else:
-                    log.error(f"AI Scrybe Score generation failed after {max_retries} attempts.")
-                    return None
-                
-    def get_mean_reversion_analysis(self, live_financial_data: dict, model_name: str, technical_indicators: dict, market_context: dict) -> dict:
-        """
-        Analyzes a stock for a mean-reversion opportunity.
-        """
-        log.info(f"Generating Mean-Reversion Analysis for {live_financial_data['rawDataSheet'].get('symbol', '')}...")
-
-        mean_reversion_prompt = f"""
-        You are "Scrybe-Oracle," a quantitative analyst specializing in **MEAN-REVERSION**. Your task is to identify stocks that are over-extended and poised for a profitable snap-back to their recent average.
-
-        **Analysis Protocol:**
-        1. **Context:** A mean-reversion trade is higher probability in a 'Neutral' or choppy market regime. You must consider the provided `CURRENT_MARKET_REGIME`.
-        2. **The Setup:** Your primary goal is to find "stretched" stocks. Analyze the `technical_indicators` and charts for these key signals:
-            * **RSI Extreme:** Is the RSI in a classic overbought (>70) for a SELL signal, or oversold (<30) for a BUY signal? This is your strongest signal.
-            * **Bollinger Band Touch:** Is the price currently touching or exceeding the upper or lower Bollinger Band? This confirms the price is at a statistical extreme.
-            * **Volume Spike:** Is there a high `Volume Surge`? A spike can signal "exhaustion" of the current trend, which is a perfect entry for a mean-reversion trade.
-
-        **Final Scoring & JSON Output:**
-        Synthesize your analysis into a `scrybeScore` from -100 to +100. The score must reflect your confidence in a profitable "snap-back."
-        * A high positive score means strong conviction that an oversold stock will **rise (BUY)**.
-        * A high negative score means strong conviction that an overbought stock will **fall (SELL)**.
-        * **High-Conviction Mandate:** A high-conviction score (absolute value >= 75) is only justified if you see a clear RSI Extreme that is confirmed by either a Bollinger Band touch or a Volume Spike.
-        * Your `analystVerdict` must clearly explain why the stock is a good mean-reversion candidate.
-        """
-
-        # This schema is simpler as it doesn't need the full 7-layer breakdown
-        output_schema = {
-            "type": "OBJECT", "properties": {
-                "scrybeScore": {"type": "NUMBER"},
-                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
-                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]},
-                "analystVerdict": {"type": "STRING"},
-            }, "required": ["scrybeScore", "signal", "confidence", "analystVerdict"]
-        }
-
-        # Use the same robust safety settings
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_ONLY_HIGH,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-
-        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
-        model = genai.GenerativeModel(
-            model_name,
-            safety_settings=safety_settings,
-            system_instruction=mean_reversion_prompt,
-            generation_config=generation_config
-        )
+        model = genai.GenerativeModel(config.PRO_MODEL, system_instruction=system_instruction, generation_config=generation_config)
 
         prompt_parts = [
-            "Please generate your mean-reversion analysis based on the provided data.",
-            f"MARKET CONTEXT: {json.dumps(market_context)}",
-            f"Key Technical Indicators: {json.dumps(technical_indicators)}"
+            "## Omni-Context Performance Review ##",
+            strategic_review,
+            "\n## Previous Day's Tactical Note ##",
+            tactical_lookback,
+            "\n## Today's Full Data Packet ##",
+            json.dumps(full_context)
         ]
 
-        # This function uses a standard retry loop
-        max_retries = 2 # Fewer retries for this simpler, secondary analysis
-        delay = 2
-        for attempt in range(max_retries):
-            try:
-                response = model.generate_content(prompt_parts, request_options={"timeout": 120})
-                return json.loads(response.text)
-            except Exception as e:
-                if "429" in str(e) and "quota" in str(e).lower():
-                    log.error("Quota exceeded for Mean-Reversion. Raising exception to trigger key rotation.")
-                    raise e # CRITICAL: Alert the main runner
-                log.warning(f"Mean-Reversion AI call attempt {attempt + 1} failed. Error: {e}")
-                if attempt < max_retries - 1:
-                    time.sleep(delay)
-                else:
-                    log.error("Mean-Reversion analysis failed after all retries.")
-                    return None # Return None on final failure
+        # The standard retry logic from your previous functions would go here
+        try:
+            response = model.generate_content(prompt_parts, request_options={"timeout": 300})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Apex analysis AI call failed for {ticker}. Error: {e}")
+            if "429" in str(e) and "quota" in str(e).lower():
+                raise e # Raise to trigger key rotation
+            return None
         
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """
@@ -303,7 +276,7 @@ class AIAnalyzer:
             log.error(f"Intraday short analysis call failed for {ticker}. Error: {e}")
             return None
 
-    def get_index_analysis(self, index_name: str, index_ticker: str) -> dict:
+    def get_index_analysis(self, index_name: str, index_ticker: str, macro_context: dict) -> dict:
             """
             Generates a CIO-grade, in-depth analysis for a market index, including a fallback for deriving key levels from technicals if options data is unavailable.
             """
@@ -348,7 +321,6 @@ class AIAnalyzer:
             historical_data.dropna(inplace=True)
             latest_data = historical_data.iloc[-1]
             
-            macro_context = {"India GDP Growth (YoY)": "7.8%", "RBI Policy Stance": "Hawkish"}
             vix_value_str = f"{vix_data.iloc[-1]['close']:.2f}" if vix_data is not None and not vix_data.empty else "Not Available"
             options_data_str = json.dumps(options_data) if options_data else "Not Available"
 

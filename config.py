@@ -41,32 +41,13 @@ FLASH_MODEL = 'gemini-2.5-flash'
 
 # --- Strategy Profiles ---
 
-# A dictionary to map our blue-chip stocks for easy lookup
-BLUE_CHIP_TICKERS = {
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS",
-    "INFY.NS", "HINDUNILVR.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS"
-}
-
-# Default strategy for most Nifty 50 stocks (momentum-focused)
-DEFAULT_SWING_STRATEGY = {
-    'name': 'DefaultSwing',
-    'horizon_text': 'Short-term Swing (3-7 Days)',
-    'holding_period': 7,
-    'min_rr_ratio': 2.0,
-    'stop_loss_atr_multiplier': 2.0,
-    'use_trailing_stop': True,
-    'trailing_stop_pct': 1.5
-}
-
-# A more patient strategy tailored for large, stable blue-chip companies
-BLUE_CHIP_STRATEGY = {
-    'name': 'BlueChip',
-    'horizon_text': 'Positional Swing (10-20 Days)',
-    'holding_period': 15,
-    'min_rr_ratio': 1.5,
-    'stop_loss_atr_multiplier': 2.5,
-    'use_trailing_stop': True,
-    'trailing_stop_pct': 2.0
+# The single, unified strategy for Project Apex
+APEX_SWING_STRATEGY = {
+    'name': 'ApexSwing',
+    'holding_period': 10,                 # Max days to hold a trade
+    'stop_loss_atr_multiplier': 2.0,      # ATR multiplier for the initial stop-loss
+    'profit_capture_pct': 50.0,           # The "50% rule" for dynamic profit taking
+    'min_conviction_score': 70            # The minimum Scrybe Score to consider a signal
 }
 
 # --- Market Index Analysis Config ---
@@ -146,4 +127,18 @@ NIFTY_50_TICKERS = [
     'SUNPHARMA.NS', 'TATACONSUM.NS', 'TATAMOTORS.NS',
     'TATASTEEL.NS', 'TCS.NS',        'TECHM.NS',
     'TITAN.NS',     'ULTRACEMCO.NS', 'WIPRO.NS'
+]
+
+# --- Dynamic Application Data ---
+# This list can be easily updated without changing the application code.
+MAJOR_ECONOMIC_EVENTS = [
+    {"date": "2025-07-12", "event": "CPI Inflation Data Release"},
+    {"date": "2025-07-15", "event": "Start of Quarterly Results Season"},
+    {"date": "2025-07-31", "event": "Monthly F&O Series Expiry"},
+    {"date": "2025-08-01", "event": "Auto Sales Figures Release (Monthly)"},
+    {"date": "2025-08-08", "event": "RBI Monetary Policy Meeting"},
+    {"date": "2025-08-12", "event": "IIP Data Release (Monthly)"},
+    {"date": "2025-08-28", "event": "Monthly F&O Series Expiry"},
+    {"date": "2025-09-01", "event": "Auto Sales Figures Release (Monthly)"},
+    {"date": "2025-09-12", "event": "CPI Inflation Data Release (Monthly)"},
 ]

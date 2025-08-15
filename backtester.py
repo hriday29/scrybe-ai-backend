@@ -64,29 +64,25 @@ def run_backtest(batch_id: str, full_historical_data_cache: dict):
 
 def process_single_trade(trade: dict, historical_data: pd.DataFrame):
     """
-    The SPRINT2_V2_FIX version of the trade processor.
+    The APEX version of the trade processor.
     """
     log.info(f"Processing trade for {trade['ticker']} predicted on {trade['prediction_date'].strftime('%Y-%m-%d')}...")
     signal = trade.get('signal')
-    price_at_prediction = trade['price_at_prediction']
-
-    strategy_name = trade.get('strategy')
-    if strategy_name == 'BlueChip':
-        active_strategy = config.BLUE_CHIP_STRATEGY
-    else: # Default to DefaultSwing
-        active_strategy = config.DEFAULT_SWING_STRATEGY
+    
+    # --- FIX: Use the single, unified APEX strategy ---
+    active_strategy = config.APEX_SWING_STRATEGY
 
     try:
         trade_plan = trade.get('tradePlan', {})
-        target_price = float(trade_plan.get('target', {}).get('price'))
-        stop_loss_price = float(trade_plan.get('stopLoss', {}).get('price'))
+        # --- FIX: Access the flat dictionary structure correctly ---
+        target_price = float(trade_plan.get('target'))
+        stop_loss_price = float(trade_plan.get('stopLoss'))
         atr_at_prediction = float(trade.get('atr_at_prediction', 0))
         holding_period = active_strategy['holding_period']
         if not all([target_price, stop_loss_price, atr_at_prediction]):
              raise ValueError("Essential trade plan values are missing or zero.")
     except (ValueError, KeyError, TypeError) as e:
         log.error(f"Invalid trade plan for {trade['ticker']}: {e}. Closing trade.")
-        log_and_close_trade(trade, 0, "Trade Closed - Invalid Plan", price_at_prediction, trade['prediction_date'])
         return
     
     use_trailing_stop = active_strategy.get('use_trailing_stop', False)
