@@ -108,10 +108,10 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     
                     # Assemble Full Context for AI
                     benchmarks_slice = benchmarks_data_cache.loc[:day_str] if benchmarks_data_cache is not None else pd.DataFrame()
-                    nifty_5d_change = (nifty_slice['close'].iloc[-1] / nifty_slice['close'].iloc[-6] - 1) * 100 if nifty_slice is not None and len(nifty_slice) > 5 else 0
-                    stock_5d_change = (latest_row['close'] / data_slice['close'].iloc[-6] - 1) * 100 if len(data_slice) > 5 else 0
+                    nifty_5d_change = (nifty_slice['Close'].iloc[-1] / nifty_slice['Close'].iloc[-6] - 1) * 100 if nifty_slice is not None and len(nifty_slice) > 5 else 0
+                    stock_5d_change = (latest_row['Close'] / data_slice['Close'].iloc[-6] - 1) * 100 if len(data_slice) > 5 else 0
                     relative_strength = "Outperforming" if stock_5d_change > nifty_5d_change else "Underperforming"
-                    weekly_data = data_slice['close'].resample('W').last()
+                    weekly_data = data_slice['Close'].resample('W').last()
                     weekly_trend = "Bullish" if len(weekly_data) > 2 and weekly_data.iloc[-1] > weekly_data.iloc[-2] else "Bearish"
                     fundamental_proxies = data_retriever.get_fundamental_proxies(data_slice)
 
@@ -162,7 +162,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                         prediction_doc['analystVerdict'] = filter_reason; prediction_doc['reason_code'] = reason_code
                     
                     if final_signal in ['BUY', 'SELL']:
-                        entry_price = latest_row['close']
+                        entry_price = latest_row['Close']
                         predicted_gain = prediction_doc.get('predicted_gain_pct', 0)
                         stop_multiplier = config.APEX_SWING_STRATEGY['stop_loss_atr_multiplier']
                         atr = latest_row['ATRr_14']
@@ -172,7 +172,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     
                     prediction_doc.update({
                         'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),
-                        'price_at_prediction': latest_row['close'], 'status': 'open', 'strategy': config.APEX_SWING_STRATEGY['name'],
+                        'price_at_prediction': latest_row['Close'], 'status': 'open', 'strategy': config.APEX_SWING_STRATEGY['name'],
                         'atr_at_prediction': latest_row['ATRr_14']
                     })
                     database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)

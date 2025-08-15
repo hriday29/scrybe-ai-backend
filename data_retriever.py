@@ -51,10 +51,14 @@ def save_sector_cache(cache):
     else:
         log.warning(f"Skipped saving sector cache because it was incomplete (had {len(cache)} entries). The existing valid cache file is preserved.")
 
+# In data_retriever.py
+import yfinance as yf
+from logger_config import log
+# ... other imports
+
 def get_historical_stock_data(ticker_symbol: str, end_date=None):
     """
-    Fetches historical daily OHLC stock data with a 1-year fallback.
-    Accepts an optional 'end_date' for historical point-in-time analysis.
+    Fetches historical daily OHLC stock data and standardizes columns to lowercase.
     """
     log.info(f"Fetching historical data for {ticker_symbol} from Yahoo Finance...")
     if end_date:
@@ -62,19 +66,24 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
         
     try:
         ticker = yf.Ticker(ticker_symbol)
-        
-        # Attempt to get 5 years of data, using the end_date if provided.
         df = ticker.history(period="5y", end=end_date)
 
         if df.empty:
-            log.warning(f"No 5-year data found for {ticker_symbol}. Trying 1-year period as a fallback...")
+            log.warning(f"No 5-year data found for {ticker_symbol}. Trying 1-year period...")
             df = ticker.history(period="1y", end=end_date)
 
         if df.empty:
-            log.warning(f"No historical data returned for {ticker_symbol} after fallback.")
+            log.warning(f"No historical data returned for {ticker_symbol}.")
             return None
             
-        df.index = df.index.tz_localize(None) # Remove timezone for consistency
+        # --- THIS IS THE EDIT ---
+        # Standardize columns to lowercase for system-wide consistency
+        df.rename(columns={
+            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
+        }, inplace=True)
+        # ----------------------
+
+        df.index = df.index.tz_localize(None) # Remove timezone
         log.info(f"Successfully fetched {len(df)} historical data points for {ticker_symbol}.")
         return df.sort_index()
 
@@ -503,15 +512,12 @@ def calculate_regime_from_data(historical_data: pd.DataFrame) -> str:
     except Exception:
         return "Neutral" # Default to Neutral on any error
     
-# In data_retriever.py
-
 def get_fundamental_proxies(data_slice: pd.DataFrame) -> dict:
     """
     Calculates fundamental proxy metrics using point-in-time historical price data.
-    This avoids lookahead bias by not using live fundamental data in a backtest.
+    This version correctly uses UPPERCASE column names.
     """
     if data_slice is None or len(data_slice) < 252:
-        # Requires at least one year of data for meaningful calculation
         return {
             "valuation_proxy": "N/A",
             "quality_proxy_volatility": "N/A",
@@ -519,33 +525,26 @@ def get_fundamental_proxies(data_slice: pd.DataFrame) -> dict:
         }
 
     # --- Proxy 1: Valuation (52-Week Range Position) ---
-    # Where is the current price relative to its 1-year high and low?
-    # A score of 100 means it's at the 52-week high (expensive).
-    # A score of 0 means it's at the 52-week low (cheap).
-    high_52_week = data_slice['high'].iloc[-252:].max()
-    low_52_week = data_slice['low'].iloc[-252:].min()
-    latest_close = data_slice['close'].iloc[-1]
+    # FIX: Use uppercase 'High', 'Low', and 'Close'
+    high_52_week = data_slice['High'].iloc[-252:].max()
+    low_52_week = data_slice['Low'].iloc[-252:].min()
+    latest_close = data_slice['Close'].iloc[-1]
     
-    # Avoid division by zero if high equals low
     valuation_range_score = 100
     if (high_52_week - low_52_week) > 0:
         valuation_range_score = ((latest_close - low_52_week) / (high_52_week - low_52_week)) * 100
 
     # --- Proxy 2: Quality/Durability (Realized Volatility) ---
-    # High-quality, durable companies tend to be less volatile.
-    # We calculate the standard deviation of daily returns over the last 90 days.
-    returns_90_day = data_slice['close'].iloc[-90:].pct_change()
+    # FIX: Use uppercase 'Close'
+    returns_90_day = data_slice['Close'].iloc[-90:].pct_change()
     realized_volatility_90d = returns_90_day.std() * (252**0.5) # Annualized volatility
 
     # --- Convert Proxies to a final "Quality Score" ---
-    # This is a simple model: lower volatility = higher quality score.
-    # We cap volatility at 50% for scoring to handle extreme outliers.
     capped_vol = min(realized_volatility_90d, 0.50)
-    # Inverse relationship: high vol -> low score. (1 - (vol / cap)) * 100
     quality_score = (1 - (capped_vol / 0.50)) * 100
     
     return {
         "valuation_proxy": f"{valuation_range_score:.1f}% of 52-Week Range",
         "quality_proxy_volatility": f"{realized_volatility_90d:.2%}",
-        "quality_score": int(quality_score) # A final score from 0-100
+        "quality_score": int(quality_score)
     }
