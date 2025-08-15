@@ -242,7 +242,6 @@ def run_all_jobs():
 
         market_regime = data_retriever.get_market_regime()
         
-        # Prepare Live Macro Context Data for the AI
         log.info("Fetching live benchmark data for macro context...")
         benchmarks_data = data_retriever.get_benchmarks_data(period="10d")
         macro_data = {}
@@ -262,14 +261,21 @@ def run_all_jobs():
 
         log.info(f"--- Starting analysis for {len(nifty50_tickers)} tickers ---")
         for ticker in nifty50_tickers:
+            
+            # --- Step 1: Determine the default strategy profile based on Stock Personality ---
+            if ticker in config.HIGH_BETA_CYCLICAL_TICKERS:
+                default_strategy_profile = config.DEFAULT_SWING_STRATEGY
+            elif ticker in config.LOW_VOLATILITY_COMPOUNDER_TICKERS:
+                default_strategy_profile = config.LOW_VOLATILITY_STRATEGY
+            else: # Default to Stable Blue-Chip for all others
+                default_strategy_profile = config.BLUE_CHIP_STRATEGY
+            
+            log.info(f"Applying default profile ('{default_strategy_profile['name']}') for {ticker}")
+
             vst_analysis = None
-            if ticker in config.BLUE_CHIP_TICKERS:
-                active_strategy = config.BLUE_CHIP_STRATEGY
-                log.info(f"Applying Blue-Chip Strategy Profile for {ticker}")
-            else:
-                active_strategy = config.DEFAULT_SWING_STRATEGY
+            best_analysis_info = None
             try:
-                vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime, macro_data=macro_data, active_strategy=active_strategy)
+                vst_analysis, best_analysis_info = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime, macro_data=macro_data, default_strategy_profile=default_strategy_profile)
             except Exception as e:
                 log.warning(f"Analysis pipeline failed for {ticker}. Error: {e}")
                 if "429" in str(e) and "quota" in str(e).lower():
@@ -278,7 +284,7 @@ def run_all_jobs():
                         new_key = key_manager.rotate_key()
                         analyzer = AIAnalyzer(api_key=new_key)
                         log.info("Retrying analysis with the new key...")
-                        vst_analysis = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime, macro_data=macro_data)
+                        vst_analysis, best_analysis_info = run_vst_analysis_pipeline(ticker, analyzer, market_data, market_regime, macro_data=macro_data, default_strategy_profile=default_strategy_profile)
                     except Exception as retry_e:
                          log.error(f"Retry failed for {ticker} after key rotation. Error: {retry_e}")
                 else:
@@ -290,6 +296,14 @@ def run_all_jobs():
                     database_manager.save_vst_analysis(ticker, vst_analysis)
                 continue
 
+            # --- Step 2: Select the FINAL strategy parameters based on the WINNING specialist ---
+            winning_specialist_name = best_analysis_info['name']
+            if winning_specialist_name == 'Breakout':
+                final_active_strategy = config.BREAKOUT_STRATEGY
+            else: # For Momentum or Mean-Reversion, we use the stock's personality profile
+                final_active_strategy = default_strategy_profile
+            
+            vst_analysis['strategy'] = final_active_strategy['name'] # Ensure the final analysis doc has the correct strategy name
             database_manager.save_vst_analysis(ticker, vst_analysis)
             database_manager.save_live_prediction(vst_analysis)
             
@@ -301,17 +315,12 @@ def run_all_jobs():
             final_signal = original_signal
             filter_reason = None
 
-            # --- START: NEW "MARKET WEATHER" MASTER FILTER ---
             if market_regime == 'Bearish' and original_signal == 'BUY':
                 final_signal = 'HOLD'
                 filter_reason = f"MASTER FILTER VETO: BUY signal for {ticker} blocked by Bearish market regime."
-            # In a strong Bullish market, we will be more skeptical of SELL signals.
             elif market_regime == 'Bullish' and original_signal == 'SELL' and abs(scrybe_score) < 80:
-                    final_signal = 'HOLD'
-                    filter_reason = f"MASTER FILTER VETO: SELL signal for {ticker} blocked by Bullish market regime (conviction < 80)."
-            # --- END: NEW "MARKET WEATHER" MASTER FILTER ---
-
-            # --- Existing Filters (Conviction and Quality) ---
+                final_signal = 'HOLD'
+                filter_reason = f"MASTER FILTER VETO: SELL signal for {ticker} blocked by Bullish market regime (conviction < 80)."
             elif abs(scrybe_score) < 60 and original_signal != 'HOLD':
                 final_signal = 'HOLD'
                 filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed because it did not meet the conviction threshold (>60)."
@@ -342,19 +351,18 @@ def run_all_jobs():
                     if not atr:
                         raise ValueError("ATR not found in analysis document.")
 
-                    # Use parameters from the selected active_strategy
-                    rr_ratio = active_strategy['min_rr_ratio']
-                    stop_multiplier = active_strategy['stop_loss_atr_multiplier']
+                    rr_ratio = final_active_strategy['min_rr_ratio']
+                    stop_multiplier = final_active_strategy['stop_loss_atr_multiplier']
                     
                     stop_loss_price = entry_price - (stop_multiplier * atr) if signal == 'BUY' else entry_price + (stop_multiplier * atr)
                     target_price = entry_price + ((stop_multiplier * atr) * rr_ratio) if signal == 'BUY' else entry_price - ((stop_multiplier * atr) * rr_ratio)
 
                     trade_object = {
-                        "signal": signal, "strategy": active_strategy['name'],
+                        "signal": signal, "strategy": final_active_strategy['name'],
                         "entry_price": entry_price, "entry_date": vst_analysis.get('prediction_date'),
                         "target": round(target_price, 2), "stop_loss": round(stop_loss_price, 2),
                         "risk_reward_ratio": rr_ratio,
-                        "expiry_date": datetime.now(timezone.utc) + timedelta(days=active_strategy['holding_period']),
+                        "expiry_date": datetime.now(timezone.utc) + timedelta(days=final_active_strategy['holding_period']),
                         "confidence": vst_analysis.get('confidence')
                     }
                     database_manager.set_active_trade(ticker, trade_object)

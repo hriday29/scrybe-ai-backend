@@ -39,15 +39,34 @@ else:
 PRO_MODEL = 'gemini-2.5-pro'
 FLASH_MODEL = 'gemini-2.5-flash'
 
-# --- Strategy Profiles ---
+# --- Strategy & Stock Personality Profiles ---
 
-# A dictionary to map our blue-chip stocks for easy lookup
-BLUE_CHIP_TICKERS = {
-    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS",
-    "INFY.NS", "HINDUNILVR.NS", "BHARTIARTL.NS", "ITC.NS", "KOTAKBANK.NS"
-}
+# This is our final, categorized map of the official Nifty 50 list.
+# The system will use this to dynamically apply the best-fit strategy to each stock.
 
-# Default strategy for most Nifty 50 stocks (momentum-focused)
+HIGH_BETA_CYCLICAL_TICKERS = {
+    "ADANIENT.NS", "ADANIPORTS.NS", "AXISBANK.NS", "BAJAJFINSV.NS", "BAJFINANCE.NS",
+    "BPCL.NS", "EICHERMOT.NS", "GRASIM.NS", "HINDALCO.NS", "INDUSINDBK.NS",
+    "JSWSTEEL.NS", "M&M.NS", "SBIN.NS", "SHRIRAMFIN.NS", "TATAMOTORS.NS",
+    "TATASTEEL.NS"
+} # Total: 16 Stocks
+
+STABLE_BLUE_CHIP_TICKERS = {
+    "RELIANCE.NS", "TCS.NS", "HDFCBANK.NS", "ICICIBANK.NS", "INFY.NS", "BHARTIARTL.NS",
+    "KOTAKBANK.NS", "LT.NS", "WIPRO.NS", "HCLTECH.NS", "TECHM.NS", "BAJAJ-AUTO.NS",
+    "MARUTI.NS", "POWERGRID.NS", "NTPC.NS", "ONGC.NS", "COALINDIA.NS", "JIOFIN.NS",
+    "ULTRACEMCO.NS", "TITAN.NS", "BEL.NS", "HEROMOTOCO.NS", "HDFCLIFE.NS", "SBILIFE.NS"
+} # Total: 24 Stocks
+
+LOW_VOLATILITY_COMPOUNDER_TICKERS = {
+    "ASIANPAINT.NS", "HINDUNILVR.NS", "ITC.NS", "NESTLEIND.NS", "BRITANNIA.NS",
+    "CIPLA.NS", "SUNPHARMA.NS", "DRREDDY.NS", "APOLLOHOSP.NS", "DIVISLAB.NS",
+    "TATACONSUM.NS"
+} # Total: 11 Stocks
+
+# --- Strategy Parameter Dictionaries ---
+
+# Default strategy for High-Beta & Cyclical stocks
 DEFAULT_SWING_STRATEGY = {
     'name': 'DefaultSwing',
     'horizon_text': 'Short-term Swing (3-7 Days)',
@@ -58,26 +77,36 @@ DEFAULT_SWING_STRATEGY = {
     'trailing_stop_pct': 1.5
 }
 
-# A more patient strategy tailored for large, stable blue-chip companies
+# A more patient strategy for large, stable blue-chip companies
 BLUE_CHIP_STRATEGY = {
     'name': 'BlueChip',
     'horizon_text': 'Positional Swing (10-20 Days)',
-    'holding_period': 15, # Longer holding period
-    'min_rr_ratio': 1.5,  # More realistic R/R target for slower movers
-    'stop_loss_atr_multiplier': 2.5, # Wider stop to accommodate normal volatility
+    'holding_period': 15,
+    'min_rr_ratio': 1.5,
+    'stop_loss_atr_multiplier': 2.5,
     'use_trailing_stop': True,
-    'trailing_stop_pct': 2.0,
+    'trailing_stop_pct': 2.0
 }
 
 # A fast, aggressive strategy for capturing breakout momentum
 BREAKOUT_STRATEGY = {
     'name': 'Breakout',
     'horizon_text': 'Rapid Breakout (2-5 Days)',
-    'holding_period': 5, # Shorter hold time to capture the initial burst
-    'min_rr_ratio': 2.5,  # Higher R/R target for explosive moves
-    'stop_loss_atr_multiplier': 1.5, # Tighter initial stop
+    'holding_period': 5,
+    'min_rr_ratio': 2.5,
+    'stop_loss_atr_multiplier': 1.5,
     'use_trailing_stop': True,
-    'trailing_stop_pct': 1.5 # Aggressive trailing stop to lock in profits quickly
+    'trailing_stop_pct': 1.5
+}
+
+# A highly defensive, mean-reversion-focused strategy for low-volatility stocks
+LOW_VOLATILITY_STRATEGY = {
+    'name': 'LowVolatility',
+    'horizon_text': 'Range-bound Swing (15-30 Days)',
+    'holding_period': 20,
+    'min_rr_ratio': 1.25,
+    'stop_loss_atr_multiplier': 3.0,
+    'use_trailing_stop': False
 }
 
 # --- Market Index Analysis Config ---
@@ -141,21 +170,21 @@ BACKTEST_PORTFOLIO_CONFIG = {
 BETA_TESTER_EMAILS = ["vighriday@gmail.com"]
 
 NIFTY_50_TICKERS = [
-  'ADANIENT.NS',    'ADANIPORTS.NS', 'APOLLOHOSP.NS',
-  'ASIANPAINT.NS', 'AXISBANK.NS',    'BAJAJ-AUTO.NS',
-  'BAJAJFINSV.NS', 'BAJFINANCE.NS', 'BEL.NS',
-  'BHARTIARTL.NS', 'CIPLA.NS',       'COALINDIA.NS',
-  'DRREDDY.NS',    'EICHERMOT.NS',   'ETERNAL.NS',
-  'GRASIM.NS',     'HCLTECH.NS',     'HDFCBANK.NS',
-  'HDFCLIFE.NS',   'HEROMOTOCO.NS', 'HINDALCO.NS',
-  'HINDUNILVR.NS', 'ICICIBANK.NS',   'INDUSINDBK.NS',
-  'INFY.NS',       'ITC.NS',         'JIOFIN.NS',
-  'JSWSTEEL.NS',   'KOTAKBANK.NS',   'LT.NS',
-  'M&M.NS',        'MARUTI.NS',      'NESTLEIND.NS',
-  'NTPC.NS',       'ONGC.NS',        'POWERGRID.NS',
-  'RELIANCE.NS',   'SBILIFE.NS',     'SBIN.NS',
-  'SHRIRAMFIN.NS', 'SUNPHARMA.NS',   'TATACONSUM.NS',
-  'TATAMOTORS.NS', 'TATASTEEL.NS',   'TCS.NS',
-  'TECHM.NS',      'TITAN.NS',       'TRENT.NS',
-  'ULTRACEMCO.NS', 'WIPRO.NS'
+    'ADANIENT.NS',  'ADANIPORTS.NS', 'APOLLOHOSP.NS',
+    'ASIANPAINT.NS', 'AXISBANK.NS',  'BAJAJ-AUTO.NS',
+    'BAJAJFINSV.NS','BAJFINANCE.NS', 'BEL.NS',
+    'BHARTIARTL.NS','BPCL.NS',       'BRITANNIA.NS',
+    'CIPLA.NS',     'COALINDIA.NS',  'DIVISLAB.NS',
+    'DRREDDY.NS',   'EICHERMOT.NS',  'GRASIM.NS',
+    'HCLTECH.NS',   'HDFCBANK.NS',   'HDFCLIFE.NS',
+    'HEROMOTOCO.NS','HINDALCO.NS',   'HINDUNILVR.NS',
+    'ICICIBANK.NS', 'INDUSINDBK.NS', 'INFY.NS',
+    'ITC.NS',       'JIOFIN.NS',     'JSWSTEEL.NS',
+    'KOTAKBANK.NS', 'LT.NS',         'M&M.NS',
+    'MARUTI.NS',    'NESTLEIND.NS',  'NTPC.NS',
+    'ONGC.NS',      'POWERGRID.NS',  'RELIANCE.NS',
+    'SBILIFE.NS',   'SBIN.NS',       'SHRIRAMFIN.NS',
+    'SUNPHARMA.NS', 'TATACONSUM.NS', 'TATAMOTORS.NS',
+    'TATASTEEL.NS', 'TCS.NS',        'TECHM.NS',
+    'TITAN.NS',     'ULTRACEMCO.NS', 'WIPRO.NS'
 ]
