@@ -71,8 +71,19 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
         key_manager = APIKeyManager(api_keys=config.GEMINI_API_KEY_POOL)
         analyzer = AIAnalyzer(api_key=key_manager.get_key())
         log.info("Pre-loading all historical data...")
+        
+        # --- START: DEFINITIVE FIX ---
+        # Load stock data (already returns lowercase from our fixed retriever)
         full_historical_data_cache = {ticker: data for ticker in stocks_to_test if (data := data_retriever.get_historical_stock_data(ticker, end_date=end_date)) is not None and len(data) > 252}
-        nifty_data_cache = data_retriever.get_historical_stock_data("^NSEI", end_date=end_date)
+        
+        # Load Nifty data
+        nifty_data_cache_raw = data_retriever.get_historical_stock_data("^NSEI", end_date=end_date)
+        # **THIS IS THE FIX**: Manually ensure Nifty data columns are lowercase, just in case.
+        nifty_data_cache = nifty_data_cache_raw.rename(columns={
+            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
+        })
+        # --- END: DEFINITIVE FIX ---
+        
         benchmarks_data_cache = data_retriever.get_benchmarks_data(end_date=end_date)
         log.info("✅ All data pre-loading complete.")
     except Exception as e:
