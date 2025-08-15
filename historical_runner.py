@@ -217,27 +217,29 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                         scrybe_score = final_analysis.get('scrybeScore', 0)
                         dvm_scores = analyzer.get_dvm_scores(live_financial_data, latest_indicators)
                         final_analysis['dvmScores'] = dvm_scores
-
-                        is_conviction_ok = abs(scrybe_score) >= 60 or original_signal == 'HOLD'
-                        is_quality_ok = True
-                        # The Quality check ONLY applies to BUY signals.
-                        if original_signal == 'BUY':
-                            if dvm_scores:
-                                durability_score = dvm_scores.get('durability', {}).get('score', 100)
-                                if durability_score < 40:
-                                    is_quality_ok = False
                         
                         final_signal = original_signal
                         filter_reason = None
-                        if not is_conviction_ok:
+
+                        # --- START: "MARKET WEATHER" MASTER FILTER ---
+                        if current_regime == 'Bearish' and original_signal == 'BUY':
+                            final_signal = 'HOLD'
+                            filter_reason = f"MASTER FILTER VETO: BUY signal for {ticker} blocked by Bearish market regime."
+                        # In a strong Bullish market, we will be more skeptical of SELL signals.
+                        elif current_regime == 'Bullish' and original_signal == 'SELL' and abs(scrybe_score) < 80:
+                             final_signal = 'HOLD'
+                             filter_reason = f"MASTER FILTER VETO: SELL signal for {ticker} blocked by Bullish market regime (conviction < 80)."
+                        # --- END: "MARKET WEATHER" MASTER FILTER ---
+                        
+                        # --- Existing Filters (Conviction and Quality) ---
+                        elif abs(scrybe_score) < 60 and original_signal != 'HOLD':
                             final_signal = 'HOLD'
                             filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed because it did not meet the conviction threshold (>60)."
-                        elif not is_quality_ok:
-                            final_signal = 'HOLD'
-                            filter_reason = f"Signal '{original_signal}' (Score: {scrybe_score}) was vetoed because it did not meet the conviction threshold (>60)."
-                        elif not is_quality_ok:
-                            final_signal = 'HOLD'
-                            filter_reason = f"Signal '{original_signal}' was vetoed due to a poor fundamental Quality (Durability) score."
+                        elif original_signal == 'BUY':
+                            durability_score = dvm_scores.get('durability', {}).get('score', 100) if dvm_scores else 100
+                            if durability_score < 40:
+                                final_signal = 'HOLD'
+                                filter_reason = f"Signal '{original_signal}' was vetoed due to a poor fundamental Quality (Durability) score."
                         
                         final_analysis['signal'] = final_signal
                         if filter_reason:

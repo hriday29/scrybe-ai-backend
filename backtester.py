@@ -69,14 +69,13 @@ def process_single_trade(trade: dict, historical_data: pd.DataFrame):
     price_at_prediction = trade['price_at_prediction']
 
     # --- START: Adaptive Strategy Loading ---
-    strategy_name = trade.get('strategy') # e.g., 'BlueChip' or 'DefaultSwing'
+    strategy_name = trade.get('strategy') # e.g., 'BlueChip', 'DefaultSwing', or 'Breakout'
     if strategy_name == 'BlueChip':
         active_strategy = config.BLUE_CHIP_STRATEGY
-    elif strategy_name == 'DefaultSwing':
+    elif strategy_name == 'Breakout': # <-- ADD THIS ELIF BLOCK
+        active_strategy = config.BREAKOUT_STRATEGY
+    else: # DefaultSwing becomes the default case
         active_strategy = config.DEFAULT_SWING_STRATEGY
-    else:
-        log.error(f"Unknown strategy '{strategy_name}' for trade {trade['_id']}. Defaulting.")
-        active_strategy = config.DEFAULT_SWING_STRATEGY # Fallback to default
     # --- END: Adaptive Strategy Loading ---
 
     try:

@@ -69,6 +69,17 @@ BLUE_CHIP_STRATEGY = {
     'trailing_stop_pct': 2.0,
 }
 
+# A fast, aggressive strategy for capturing breakout momentum
+BREAKOUT_STRATEGY = {
+    'name': 'Breakout',
+    'horizon_text': 'Rapid Breakout (2-5 Days)',
+    'holding_period': 5, # Shorter hold time to capture the initial burst
+    'min_rr_ratio': 2.5,  # Higher R/R target for explosive moves
+    'stop_loss_atr_multiplier': 1.5, # Tighter initial stop
+    'use_trailing_stop': True,
+    'trailing_stop_pct': 1.5 # Aggressive trailing stop to lock in profits quickly
+}
+
 # --- Market Index Analysis Config ---
 # Tickers are from Yahoo Finance
 INDEX_LIST = {
