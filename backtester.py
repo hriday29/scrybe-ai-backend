@@ -178,14 +178,15 @@ def log_and_close_trade(trade: dict, evaluation_day: int, event: str, event_pric
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the trade simulator for a specific backtest batch.")
+    # The end_date argument is no longer needed for the backtester itself
     parser.add_argument('--batch_id', required=True, help='The unique ID of the backtest batch to process.')
-    parser.add_argument('--end_date', required=True, help='The end date (YYYY-MM-DD) of the simulation period to prevent lookahead bias.')
     args = parser.parse_args()
 
-    log.info(f"--- Starting Trade Simulation for Batch: {args.batch_id} up to {args.end_date} ---")
+    log.info(f"--- Starting Trade Simulation for Batch: {args.batch_id} ---")
     
     database_manager.init_db(purpose='scheduler')
-    # Pass the end_date to the data loading function
-    full_data_cache = preload_historical_data_for_batch(batch_id=args.batch_id, end_date=args.end_date)
+    # Fetch all data up to the present day by passing end_date=None
+    full_data_cache = preload_historical_data_for_batch(batch_id=args.batch_id, end_date=None)
     
     run_backtest(batch_id=args.batch_id, full_historical_data_cache=full_data_cache)
+    database_manager.close_db_connection()
