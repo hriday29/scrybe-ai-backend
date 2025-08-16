@@ -102,35 +102,36 @@ def process_single_trade(trade: dict, historical_data: pd.DataFrame):
         current_day_date = day_data.Index.to_pydatetime().replace(tzinfo=timezone.utc)
 
         if signal == 'BUY':
-            if day_data.low <= current_stop_loss:
+            if day_data.Low <= current_stop_loss:
                 reason = "Trade Closed - Trailing Stop Hit" if use_trailing_stop and current_stop_loss > stop_loss_price else "Trade Closed - Stop-Loss Hit"
                 log_and_close_trade(trade, day_number, reason, current_stop_loss, current_day_date)
                 return
-            if day_data.high >= target_price:
+            if day_data.High >= target_price:
                 log_and_close_trade(trade, day_number, "Trade Closed - Target Hit", target_price, current_day_date)
                 return
             if use_trailing_stop:
-                new_potential_stop = day_data.high - (atr_at_prediction * trailing_stop_atr_multiplier)
+                new_potential_stop = day_data.High - (atr_at_prediction * trailing_stop_atr_multiplier)
                 if new_potential_stop > current_stop_loss:
                     current_stop_loss = new_potential_stop
                     log.info(f"Trailing stop for {trade['ticker']} moved up to {current_stop_loss:.2f}")
 
+
         elif signal == 'SELL':
-            if day_data.high >= current_stop_loss:
+            if day_data.High >= current_stop_loss:
                 reason = "Trade Closed - Trailing Stop Hit" if use_trailing_stop and current_stop_loss < stop_loss_price else "Trade Closed - Stop-Loss Hit"
                 log_and_close_trade(trade, day_number, reason, current_stop_loss, current_day_date)
                 return
-            if day_data.low <= target_price:
+            if day_data.Low <= target_price:
                 log_and_close_trade(trade, day_number, "Trade Closed - Target Hit", target_price, current_day_date)
                 return
             if use_trailing_stop:
-                new_potential_stop = day_data.low + (atr_at_prediction * trailing_stop_atr_multiplier)
+                new_potential_stop = day_data.Low + (atr_at_prediction * trailing_stop_atr_multiplier)
                 if new_potential_stop < current_stop_loss:
                     current_stop_loss = new_potential_stop
                     log.info(f"Trailing stop for {trade['ticker']} moved down to {current_stop_loss:.2f}")
 
         if day_number >= holding_period:
-            log_and_close_trade(trade, day_number, f"Trade Closed - {holding_period}-Day Time Exit", day_data.close, current_day_date)
+            log_and_close_trade(trade, day_number, f"Trade Closed - {holding_period}-Day Time Exit", day_data.Close, current_day_date)
             return
 
     log.info(f"--> Trade for {trade['ticker']} still open after {len(trading_days_since)} days.")

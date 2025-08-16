@@ -1,5 +1,3 @@
-# config.py
-
 import os
 from dotenv import load_dotenv
 
@@ -9,7 +7,7 @@ load_dotenv()
 ANALYSIS_DB_URI = os.getenv("ANALYSIS_DB_URI")
 SCHEDULER_DB_URI = os.getenv("SCHEDULER_DB_URI")
 GEMINI_API_KEY = os.getenv("GOOGLE_API_KEY")
-NEWSAPI_API_KEY = os.getenv('NEWSAPI_API_KEY')
+NEWSAPI_API_KEY = os.getenv("NEWSAPI_API_KEY")
 
 GEMINI_API_KEY_POOL = [
     key for key in [
@@ -30,30 +28,33 @@ GEMINI_API_KEY_POOL = [
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
 GMAIL_APP_PASSWORD = os.getenv("GMAIL_APP_PASSWORD")
 
-if not all([ANALYSIS_DB_URI, SCHEDULER_DB_URI, GEMINI_API_KEY, NEWSAPI_API_KEY]):
-    print("⚠️  Warning: One or more environment variables (DB URIs, API Key) are missing.")
-else:
-    print("✅ Secure configuration loaded successfully for both databases.")
+SMTP_SERVER = "smtp.gmail.com"
+SMTP_PORT = 465  # SSL
+
+# Beta fallback list
+BETA_TESTER_EMAILS = ["vighriday@gmail.com"]
+
+EMAIL_RECIPIENTS = os.getenv("EMAIL_RECIPIENTS", "")
+EMAIL_RECIPIENTS = [email.strip() for email in EMAIL_RECIPIENTS.split(",") if email.strip()]
+
+if not EMAIL_RECIPIENTS:
+    EMAIL_RECIPIENTS = BETA_TESTER_EMAILS
 
 # --- Models ---
-PRO_MODEL = 'gemini-2.5-pro'
-FLASH_MODEL = 'gemini-2.5-flash'
+PRO_MODEL = "gemini-2.5-pro"
+FLASH_MODEL = "gemini-2.5-flash"
 
 # --- Strategy Profiles ---
-
-# The single, unified strategy for Project Apex
 APEX_SWING_STRATEGY = {
-    'name': 'ApexSwing',
-    'holding_period': 10,                 # Max days to hold a trade
-    'stop_loss_atr_multiplier': 2.0,      # ATR multiplier for the initial stop-loss
-    'profit_capture_pct': 50.0,           # The "50% rule" for dynamic profit taking
-    'min_conviction_score': 70            # The minimum Scrybe Score to consider a signal
+    "name": "ApexSwing",
+    "holding_period": 10,
+    "stop_loss_atr_multiplier": 2.0,
+    "profit_capture_pct": 50.0,
+    "min_conviction_score": 70,
 }
 
 # --- Market Index Analysis Config ---
-# Tickers are from Yahoo Finance
 INDEX_LIST = {
-    # --- Major Broad-Based Indices ---
     "NIFTY 50": "^NSEI",
     "SENSEX": "^BSESN",
     "NIFTY Next 50": "^CNXNXT",
@@ -62,8 +63,6 @@ INDEX_LIST = {
     "NIFTY Midcap 100": "^CNXMIDCAP",
     "NIFTY Smallcap 100": "NIFTY_SMALCAP_100.NS",
     "NIFTY MidSmallcap 400": "NIFTY_MIDSML_400.NS",
-
-    # --- Key Sectoral Indices ---
     "NIFTY Bank": "^NSEBANK",
     "NIFTY Financial Services": "NIFTY_FIN_SERVICE.NS",
     "NIFTY IT": "^CNXIT",
@@ -74,63 +73,49 @@ INDEX_LIST = {
     "NIFTY PSU Bank": "^CNXPSUBANK",
     "NIFTY Private Bank": "NIFTY_PRIVATEBANK.NS",
     "NIFTY Oil & Gas": "NIFTY_OIL_AND_GAS.NS",
-
-    # --- Thematic & Strategy Indices ---
     "NIFTY India Consumption": "^CNXCONSUM",
     "NIFTY50 Equal Weight": "NIFTY50_EQL_WGT.NS",
     "NIFTY Alpha 50": "NIFTY_ALPHA_50.NS",
     "NIFTY Low Volatility 50": "NIFTY_LOW_VOL_50.NS",
     "NIFTY High Beta 50": "NIFTY_HIGH_BETA_50.NS",
     "NIFTY Quality 30": "NIFTY_QUALITY_30.NS",
-
-    # --- BSE Indices ---
     "BSE MidCap": "^BSEMD",
     "BSE SmallCap": "^BSESM",
     "BSE Healthcare": "^BSEHC",
     "BSE FMCG": "^BSEFMC",
 }
 
-VOLUME_SURGE_THRESHOLD = 1.6 #represents a 60% surge
+VOLUME_SURGE_THRESHOLD = 1.6
 ADX_THRESHOLD = 25
 
 BACKTEST_CONFIG = {
-    # Brokerage: e.g., 0.05% per side (buy and sell)
     "brokerage_pct": 0.05,
-    # Slippage: Estimated price difference due to order execution speed
     "slippage_pct": 0.02,
-    # STT: Securities Transaction Tax on delivery sell trades
-    "stt_pct": 0.1
+    "stt_pct": 0.1,
 }
 
 BACKTEST_PORTFOLIO_CONFIG = {
-    "initial_capital": 100000.0,      # Start with 1 Lakh
-    "position_size_pct_of_capital": 10.0 # Allocate 10% of initial capital to each trade
+    "initial_capital": 100000.0,
+    "position_size_pct_of_capital": 10.0,
 }
 
-BETA_TESTER_EMAILS = ["vighriday@gmail.com"]
-
 NIFTY_50_TICKERS = [
-    'ADANIENT.NS',  'ADANIPORTS.NS', 'APOLLOHOSP.NS',
-    'ASIANPAINT.NS', 'AXISBANK.NS',  'BAJAJ-AUTO.NS',
-    'BAJAJFINSV.NS','BAJFINANCE.NS', 'BEL.NS',
-    'BHARTIARTL.NS','BPCL.NS',       'BRITANNIA.NS',
-    'CIPLA.NS',     'COALINDIA.NS',  'DIVISLAB.NS',
-    'DRREDDY.NS',   'EICHERMOT.NS',  'GRASIM.NS',
-    'HCLTECH.NS',   'HDFCBANK.NS',   'HDFCLIFE.NS',
-    'HEROMOTOCO.NS','HINDALCO.NS',   'HINDUNILVR.NS',
-    'ICICIBANK.NS', 'INDUSINDBK.NS', 'INFY.NS',
-    'ITC.NS',       'JIOFIN.NS',     'JSWSTEEL.NS',
-    'KOTAKBANK.NS', 'LT.NS',         'M&M.NS',
-    'MARUTI.NS',    'NESTLEIND.NS',  'NTPC.NS',
-    'ONGC.NS',      'POWERGRID.NS',  'RELIANCE.NS',
-    'SBILIFE.NS',   'SBIN.NS',       'SHRIRAMFIN.NS',
-    'SUNPHARMA.NS', 'TATACONSUM.NS', 'TATAMOTORS.NS',
-    'TATASTEEL.NS', 'TCS.NS',        'TECHM.NS',
-    'TITAN.NS',     'ULTRACEMCO.NS', 'WIPRO.NS'
+    "ADANIENT.NS","ADANIPORTS.NS","APOLLOHOSP.NS","ASIANPAINT.NS","AXISBANK.NS","BAJAJ-AUTO.NS",
+    "BAJAJFINSV.NS","BAJFINANCE.NS","BEL.NS","BHARTIARTL.NS","BPCL.NS","BRITANNIA.NS","CIPLA.NS",
+    "COALINDIA.NS","DIVISLAB.NS","DRREDDY.NS","EICHERMOT.NS","GRASIM.NS","HCLTECH.NS","HDFCBANK.NS",
+    "HDFCLIFE.NS","HEROMOTOCO.NS","HINDALCO.NS","HINDUNILVR.NS","ICICIBANK.NS","INDUSINDBK.NS",
+    "INFY.NS","ITC.NS","JIOFIN.NS","JSWSTEEL.NS","KOTAKBANK.NS","LT.NS","M&M.NS","MARUTI.NS",
+    "NESTLEIND.NS","NTPC.NS","ONGC.NS","POWERGRID.NS","RELIANCE.NS","SBILIFE.NS","SBIN.NS",
+    "SHRIRAMFIN.NS","SUNPHARMA.NS","TATACONSUM.NS","TATAMOTORS.NS","TATASTEEL.NS","TCS.NS",
+    "TECHM.NS","TITAN.NS","ULTRACEMCO.NS","WIPRO.NS",
 ]
 
-# --- Dynamic Application Data ---
-# This list can be easily updated without changing the application code.
+# The official, curated V1.0 A-List for Project Apex
+LIVE_TRADING_UNIVERSE = [
+    'LT.NS', 'BAJFINANCE.NS', 'TATAMOTORS.NS', 'BAJAJ-AUTO.NS', 'BAJAJFINSV.NS',
+    'WIPRO.NS', 'TITAN.NS', 'SBIN.NS', 'HINDALCO.NS', 'M&M.NS'
+]
+
 MAJOR_ECONOMIC_EVENTS = [
     {"date": "2025-07-12", "event": "CPI Inflation Data Release"},
     {"date": "2025-07-15", "event": "Start of Quarterly Results Season"},
@@ -142,3 +127,10 @@ MAJOR_ECONOMIC_EVENTS = [
     {"date": "2025-09-01", "event": "Auto Sales Figures Release (Monthly)"},
     {"date": "2025-09-12", "event": "CPI Inflation Data Release (Monthly)"},
 ]
+
+LIVE_MACRO_CONTEXT = {
+    "India GDP Growth (YoY)": "7.8% (Q1 2025 Estimate)",
+    "RBI Policy Stance": "Neutral with a focus on inflation control",
+    "Key Global Factor": "Monitoring global indices for signs of slowdown.",
+    "Domestic Consumer Sentiment": "Cautiously Optimistic",
+}

@@ -7,12 +7,12 @@ def reset_backtest_batch(batch_id: str):
     """
     Safely resets a specific backtest batch by:
     1. Deleting all performance data associated with the batch.
-    2. Setting the status of all predictions in the batch back to 'open'.
+    2. Setting the status of all *Closed* predictions in the batch back to 'open'.
     """
     log.info(f"--- Preparing to reset backtest batch: '{batch_id}' ---")
     
     # Safety confirmation prompt
-    confirm = input(f"Are you sure you want to delete all performance data and reset all predictions for batch '{batch_id}'? [y/n]: ")
+    confirm = input(f"Are you sure you want to delete all performance data and reset CLOSED predictions for batch '{batch_id}'? [y/n]: ")
     if confirm.lower() != 'y':
         log.warning("Operation cancelled by user.")
         return
@@ -25,10 +25,10 @@ def reset_backtest_batch(batch_id: str):
         perf_result = database_manager.performance_collection.delete_many({"batch_id": batch_id})
         log.info(f"Successfully deleted {perf_result.deleted_count} performance records.")
 
-        # 2. Reset prediction statuses for the batch
-        log.info(f"Resetting prediction statuses to 'open' for batch: {batch_id}...")
+        # 2. Reset prediction statuses ONLY for closed trades
+        log.info(f"Resetting CLOSED prediction statuses to 'open' for batch: {batch_id}...")
         pred_result = database_manager.predictions_collection.update_many(
-            {"batch_id": batch_id},
+            {"batch_id": batch_id, "status": "Closed"},
             {"$set": {"status": "open"}}
         )
         log.info(f"Successfully reset {pred_result.modified_count} predictions.")

@@ -1,5 +1,6 @@
 # performance_reporter.py
 import pandas as pd
+import os
 import numpy as np
 import database_manager
 from logger_config import log
@@ -90,7 +91,10 @@ def generate_performance_report(batch_id: str):
         ax.set_ylabel("Portfolio Value (INR)", color='white')
         ax.grid(True, color='#333A4C', linestyle='--')
         ax.legend()
-        chart_filename = f"report_{batch_id}_equity_curve.png"
+        reports_dir = 'reports'
+        if not os.path.exists(reports_dir):
+            os.makedirs(reports_dir)
+        chart_filename = os.path.join(reports_dir, f"report_{batch_id}_equity_curve.png")
         plt.savefig(chart_filename)
         log.info(f"Equity curve chart saved to: {Colors.YELLOW}{chart_filename}{Colors.END}")
 

@@ -1,5 +1,29 @@
+# Environment variables
+.env
+
+# Firebase service account key
+firebase-service-account.json
+
+# Python bytecode and cache
 __pycache__/
 *.pyc
-.env
+*.pyo
+*.pyd
+
+# Virtual environment
 .venv/
-firebase-service-account.json
+venv/
+env/
+
+# Generated reports and charts
+reports/
+*.png
+
+# IDE and editor specific files
+.idea/
+.vscode/
+
+# Build artifacts
+build/
+dist/
+*.egg-info/

@@ -1,4 +1,3 @@
-# notifier.py
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
@@ -15,20 +14,18 @@ def send_daily_briefing(new_signals: list, closed_trades: list):
 
     sender_email = config.GMAIL_ADDRESS
     password = config.GMAIL_APP_PASSWORD
-    receiver_emails = config.BETA_TESTER_EMAILS
+    receiver_emails = config.EMAIL_RECIPIENTS
 
     if not all([sender_email, password, receiver_emails]):
         log.error("Email credentials or recipient list not configured. Cannot send email.")
         return
 
-    # Create the email content
     subject = f"Scrybe AI Daily Briefing: {datetime.now().strftime('%d %b, %Y')}"
     message = MIMEMultipart("alternative")
     message["Subject"] = subject
     message["From"] = f"Scrybe AI <{sender_email}>"
     message["To"] = ", ".join(receiver_emails)
 
-    # --- Build the HTML Body ---
     html_body = """
     <html>
       <head>
@@ -47,12 +44,12 @@ def send_daily_briefing(new_signals: list, closed_trades: list):
       <body>
         <div class="container">
     """
-    
+
     if new_signals:
         html_body += "<h2>New Trade Signals</h2>"
         for signal in new_signals:
-            signal_class = "buy" if signal['signal'] == 'BUY' else 'sell'
-            score = signal.get('scrybeScore', 0)
+            signal_class = "buy" if signal['signal'] == 'BUY' else "sell"
+            score = signal.get("scrybeScore", 0)
             score_text = f"+{score}" if score > 0 else str(score)
             
             html_body += f"""
@@ -82,13 +79,12 @@ def send_daily_briefing(new_signals: list, closed_trades: list):
       </body>
     </html>
     """
-    
+
     message.attach(MIMEText(html_body, "html"))
 
-    # Send the email
     try:
-        log.info(f"Connecting to SMTP server to send daily briefing...")
-        server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+        log.info("Connecting to SMTP server to send daily briefing...")
+        server = smtplib.SMTP_SSL(config.SMTP_SERVER, config.SMTP_PORT)
         server.login(sender_email, password)
         server.sendmail(sender_email, receiver_emails, message.as_string())
         server.close()

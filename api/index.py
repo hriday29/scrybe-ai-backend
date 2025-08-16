@@ -205,10 +205,7 @@ def get_index_analysis_data(index_ticker):
         return jsonify({"error": "Invalid index ticker provided."}), 404
 
     try:
-        current_macro_context = {
-            "India GDP Growth (YoY)": "7.8% (Q1'25)", 
-            "RBI Policy Stance": "Neutral with a focus on inflation"
-        }
+        current_macro_context = config.LIVE_MACRO_CONTEXT
         
         analysis_data = ai_analyzer_instance.get_index_analysis(index_name, index_ticker, current_macro_context)
         

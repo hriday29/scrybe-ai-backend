@@ -206,21 +206,28 @@ def run_all_jobs():
     The master "Apex-Aware" job runner.
     """
     log.info("--- 🚀 Starting all daily jobs (APEX UNIFIED VERSION) ---")
+
+    # --- Tracking lists for notifier ---
+    new_signals_today = []
+    closed_trades_today = []
+
     try:
         database_manager.init_db(purpose='analysis')
         key_manager = APIKeyManager(api_keys=config.GEMINI_API_KEY_POOL)
         analyzer = AIAnalyzer(api_key=key_manager.get_key())
 
-        closed_trades = manage_open_trades()
+        # --- Manage existing trades ---
+        closed_trades_today = manage_open_trades()
         market_regime = data_retriever.get_market_regime()
         
-        tickers_to_run = config.NIFTY_50_TICKERS 
+        tickers_to_run = config.LIVE_TRADING_UNIVERSE
 
         for ticker in tickers_to_run:
             final_analysis = None
             try:
                 final_analysis = run_apex_analysis_pipeline(ticker, analyzer, market_regime)
-                if not final_analysis: continue
+                if not final_analysis:
+                    continue
                 
                 active_strategy = config.APEX_SWING_STRATEGY
                 log.info(f"Applying Profile ('{active_strategy['name']}') for {ticker}")
@@ -232,14 +239,20 @@ def run_all_jobs():
                 live_quality_score = fundamental_data.get("quality_score", 0)
                 is_quality_ok = True if original_signal != 'BUY' else live_quality_score >= 40
                 is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
-                is_regime_ok = (original_signal == 'BUY' and market_regime == 'Bullish') or (original_signal == 'SELL' and market_regime == 'Bearish')
+                is_regime_ok = (
+                    (original_signal == 'BUY' and market_regime == 'Bullish') or
+                    (original_signal == 'SELL' and market_regime == 'Bearish')
+                )
                 
                 final_signal = original_signal
                 filter_reason, reason_code = None, None
                 if original_signal in ['BUY', 'SELL']:
-                    if not is_regime_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Signal '{original_signal}' contradicts regime '{market_regime}'.", "REGIME_VETO"
-                    elif not is_conviction_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Conviction score ({scrybe_score}) is below threshold.", "LOW_CONVICTION"
-                    elif not is_quality_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Poor fundamental quality (Proxy Score: {live_quality_score}).", "QUALITY_VETO"
+                    if not is_regime_ok:
+                        final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Signal '{original_signal}' contradicts regime '{market_regime}'.", "REGIME_VETO"
+                    elif not is_conviction_ok:
+                        final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Conviction score ({scrybe_score}) is below threshold.", "LOW_CONVICTION"
+                    elif not is_quality_ok:
+                        final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Poor fundamental quality (Proxy Score: {live_quality_score}).", "QUALITY_VETO"
 
                 prediction_doc = final_analysis.copy()
                 prediction_doc['signal'] = final_signal
@@ -254,19 +267,43 @@ def run_all_jobs():
                     stop_multiplier = active_strategy['stop_loss_atr_multiplier']
                     atr = prediction_doc['atr_at_prediction']
                     
-                    stop_loss_price = entry_price - (stop_multiplier * atr) if final_signal == 'BUY' else entry_price + (stop_multiplier * atr)
-                    target_price = entry_price * (1 + (predicted_gain / 100.0)) if final_signal == 'BUY' else entry_price * (1 - (predicted_gain / 100.0))
+                    stop_loss_price = (
+                        entry_price - (stop_multiplier * atr)
+                        if final_signal == 'BUY'
+                        else entry_price + (stop_multiplier * atr)
+                    )
+                    target_price = (
+                        entry_price * (1 + (predicted_gain / 100.0))
+                        if final_signal == 'BUY'
+                        else entry_price * (1 - (predicted_gain / 100.0))
+                    )
                     
-                    prediction_doc['tradePlan'] = { "entryPrice": round(entry_price, 2), "target": round(target_price, 2), "stopLoss": round(stop_loss_price, 2) }
+                    prediction_doc['tradePlan'] = {
+                        "entryPrice": round(entry_price, 2),
+                        "target": round(target_price, 2),
+                        "stopLoss": round(stop_loss_price, 2)
+                    }
                     
                     trade_object = {
-                        "signal": final_signal, "strategy": active_strategy['name'], "entry_price": entry_price,
-                        "entry_date": prediction_doc['timestamp'], "target": round(target_price, 2),
+                        "signal": final_signal,
+                        "strategy": active_strategy['name'],
+                        "entry_price": entry_price,
+                        "entry_date": prediction_doc['timestamp'],
+                        "target": round(target_price, 2),
                         "stop_loss": round(stop_loss_price, 2),
                         "expiry_date": datetime.now(timezone.utc) + timedelta(days=active_strategy['holding_period']),
-                        "confidence": prediction_doc.get('confidence')
+                        "confidence": prediction_doc.get('confidence'),
+                        "scrybeScore": scrybe_score   # ✅ added for DB consistency
                     }
                     database_manager.set_active_trade(ticker, trade_object)
+
+                    # --- Capture for email ---
+                    new_signals_today.append({
+                        "ticker": ticker,
+                        "signal": final_signal,
+                        "scrybeScore": scrybe_score,
+                        "confidence": prediction_doc.get('confidence')
+                    })
                 else:
                     database_manager.set_active_trade(ticker, None)
 
@@ -281,12 +318,20 @@ def run_all_jobs():
                     analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                 continue
         
-        # NOTE: Notifier functions would be called here in a real deployment
-        # send_daily_briefing([], closed_trades)
+        # --- Email notifier integration ---
+        from notifier import send_daily_briefing
+        try:
+            send_daily_briefing(new_signals=new_signals_today, closed_trades=closed_trades_today)
+        except Exception as e:
+            log.error(f"Failed to send daily briefing: {e}", exc_info=True)
 
     finally:
         database_manager.close_db_connection()
     log.info("--- 🔒 Database connection closed ---")
+    log.info("--- ✅ Daily jobs completed ---")
+
+    # Optional: return results for debugging
+    return {"new_signals": new_signals_today, "closed_trades": closed_trades_today}
 
 if __name__ == "__main__":
     run_all_jobs()
