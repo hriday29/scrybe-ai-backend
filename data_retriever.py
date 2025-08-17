@@ -550,3 +550,30 @@ def get_fundamental_proxies(data_slice: pd.DataFrame) -> dict:
         "quality_proxy_volatility": f"{realized_volatility_90d:.2%}",
         "quality_score": int(quality_score)
     }
+
+
+def get_volatility_regime(historical_vix_data: pd.DataFrame) -> str:
+    """
+    Determines the volatility regime from a given DataFrame of historical VIX data.
+    """
+    if historical_vix_data is None or len(historical_vix_data) < 20:
+        return "Normal" # Default to Normal if not enough data
+
+    try:
+        latest_vix = historical_vix_data['Close'].iloc[-1]
+        vix_20_day_avg = historical_vix_data['Close'].rolling(window=20).mean().iloc[-1]
+
+        # Define thresholds for VIX
+        HIGH_VIX_THRESHOLD = 20.0
+        
+        # Determine the regime
+        if latest_vix > HIGH_VIX_THRESHOLD and latest_vix > (vix_20_day_avg * 1.15):
+            # If VIX is high and has risen more than 15% above its 20-day average, it's a high-risk state
+            return "High-Risk"
+        elif latest_vix < 14:
+            return "Low"
+        else:
+            return "Normal"
+
+    except Exception:
+        return "Normal" # Default to Normal on any error

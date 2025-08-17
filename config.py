@@ -112,8 +112,14 @@ NIFTY_50_TICKERS = [
 
 # The official, curated V1.0 A-List for Project Apex
 LIVE_TRADING_UNIVERSE = [
-    'LT.NS', 'BAJFINANCE.NS', 'TATAMOTORS.NS', 'BAJAJ-AUTO.NS', 'BAJAJFINSV.NS',
-    'WIPRO.NS', 'TITAN.NS', 'SBIN.NS', 'HINDALCO.NS', 'M&M.NS'
+    "LT.NS",
+    "BAJFINANCE.NS",
+    "TATAMOTORS.NS",
+    "BAJAJ-AUTO.NS",
+    "BAJAJFINSV.NS",
+    "WIPRO.NS",
+    "TITAN.NS",
+    "SBIN.NS"
 ]
 
 MAJOR_ECONOMIC_EVENTS = [

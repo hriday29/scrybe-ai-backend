@@ -81,7 +81,8 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
         nifty_data_cache = nifty_data_cache_raw.rename(columns={
             'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'
         })
-        # --- END: DEFINITIVE FIX ---
+        # Load India VIX data
+        vix_data_cache = data_retriever.get_historical_stock_data("^INDIAVIX", end_date=end_date)
         
         benchmarks_data_cache = data_retriever.get_benchmarks_data(end_date=end_date)
         log.info("✅ All data pre-loading complete.")
@@ -95,6 +96,13 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
         log.info(f"\n--- Starting simulation for {len(simulation_days)} trading days ---")
         for i, current_day in enumerate(simulation_days):
             day_str = current_day.strftime('%Y-%m-%d')
+            vix_slice = vix_data_cache.loc[:day_str] if vix_data_cache is not None else None
+            volatility_regime = data_retriever.get_volatility_regime(vix_slice)
+
+            if volatility_regime == "High-Risk":
+                log.warning(f"VOLATILITY FILTER ENGAGED: Market is in 'High-Risk' state. Standing aside for day {day_str}.")
+                if i + 1 < len(simulation_days): save_state(simulation_days[i+1])
+                continue # Skip all trading for this day
             log.info(f"\n--- Simulating Day {i+1}/{len(simulation_days)}: {day_str} ---")
             nifty_slice = nifty_data_cache.loc[:day_str] if nifty_data_cache is not None else None
             current_regime = data_retriever.calculate_regime_from_data(nifty_slice)

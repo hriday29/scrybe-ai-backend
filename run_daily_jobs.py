@@ -213,6 +213,16 @@ def run_all_jobs():
 
     try:
         database_manager.init_db(purpose='analysis')
+        # --- START: Live Volatility Filter ---
+        vix_data = data_retriever.get_historical_stock_data("^INDIAVIX")
+        volatility_regime = data_retriever.get_volatility_regime(vix_data)
+        
+        if volatility_regime == "High-Risk":
+            log.warning("VOLATILITY FILTER ENGAGED: Live market is in 'High-Risk' state. Standing aside for today.")
+            # We can optionally send a notification that no trades will be generated today
+            # send_daily_briefing(...) 
+            return # Exit the entire job runner for the day
+        # --- END: Live Volatility Filter ---
         key_manager = APIKeyManager(api_keys=config.GEMINI_API_KEY_POOL)
         analyzer = AIAnalyzer(api_key=key_manager.get_key())
 
