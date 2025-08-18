@@ -217,14 +217,38 @@ class AIAnalyzer:
         ]
 
         # The standard retry logic from your previous functions would go here
-        try:
-            response = model.generate_content(prompt_parts, request_options={"timeout": 300})
-            return json.loads(response.text)
-        except Exception as e:
-            log.error(f"Apex analysis AI call failed for {ticker}. Error: {e}")
-            if "429" in str(e) and "quota" in str(e).lower():
-                raise e # Raise to trigger key rotation
-            return None
+        max_retries = 4
+        delay = 2
+        for attempt in range(max_retries):
+            try:
+                response = model.generate_content(prompt_parts, request_options={"timeout": 300})
+                
+                # --- START: YOUR ENHANCED LOGIC ---
+                if not response.parts:
+                    finish_reason = "Unavailable"
+                    if hasattr(response, "candidates") and response.candidates:
+                        finish_reason = getattr(response.candidates[0], "finish_reason", "Unknown")
+                    
+                    log.warning(
+                        f"[AI] Attempt {attempt + 1} for {ticker} returned an empty response "
+                        f"(finish_reason: {finish_reason}). Retrying..."
+                    )
+                    raise ValueError("Empty response from API")
+                # --- END: YOUR ENHANCED LOGIC ---
+                
+                return json.loads(response.text)
+            except Exception as e:
+                log.warning(f"[AI] Attempt {attempt + 1} for {ticker} failed. Error: {e}")
+                if "429" in str(e) and "quota" in str(e).lower():
+                    log.error("Quota exceeded. Raising exception to trigger key rotation.")
+                    raise e
+                if attempt < max_retries - 1:
+                    log.info(f"Waiting for {delay} seconds before retrying...")
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    log.error(f"[AI] Final attempt failed for {ticker}. Skipping analysis.")
+                    return None
         
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """
