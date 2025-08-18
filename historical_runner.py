@@ -144,12 +144,17 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     
                     strategic_review_30d = _get_30_day_performance_review(current_day, batch_id)
                     tactical_lookback_1d = _get_1_day_tactical_lookback(current_day, ticker, batch_id)
+                    per_stock_history = _get_per_stock_trade_history(ticker, batch_id, current_day)
                     
                     final_analysis = None
                     for attempt in range(len(key_manager.api_keys)):
                         try:
-                            final_analysis = analyzer.get_apex_analysis(ticker, full_context_for_ai, strategic_review_30d, tactical_lookback_1d)
+                            final_analysis = analyzer.get_apex_analysis(
+                                ticker, full_context_for_ai, 
+                                strategic_review_30d, tactical_lookback_1d, per_stock_history
+                            )
                             break
+                        
                         except Exception as e:
                             if "429" in str(e):
                                 log.warning(f"Quota error on attempt {attempt + 1}. Rotating key...")
@@ -201,6 +206,22 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
     if os.path.exists(STATE_FILE): os.remove(STATE_FILE)
     log.info("\n--- ✅ APEX Historical Run Finished! ---")
     database_manager.close_db_connection()
+
+def _get_per_stock_trade_history(ticker: str, batch_id: str, current_day: pd.Timestamp) -> str:
+    """Gets the results of the last 3 closed trades for a specific stock."""
+    query = { "batch_id": batch_id, "ticker": ticker, "close_date": {"$lt": current_day.to_pydatetime()} }
+    # Sort by close_date descending and limit to the last 3 trades
+    recent_trades = list(database_manager.performance_collection.find(query).sort("close_date", -1).limit(3))
+    if not recent_trades:
+        return "No recent trade history for this stock."
+    
+    history_lines = []
+    for i, trade in enumerate(recent_trades):
+        line = (f"{i+1}. Signal: {trade.get('signal')}, "
+                f"Outcome: {trade.get('net_return_pct'):.2f}% "
+                f"({trade.get('closing_reason')})")
+        history_lines.append(line)
+    return "\n".join(history_lines)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Apex historical backtest.")

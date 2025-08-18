@@ -12,8 +12,20 @@ from utils import APIKeyManager
 import pandas_ta as ta
 import pandas as pd
 
-# --- START: LIVE HELPER FUNCTIONS (Mirrors historical_runner) ---
-# These query the LIVE database collections
+def _get_live_per_stock_trade_history(ticker: str) -> str:
+    """Gets the results of the last 3 closed trades for a specific stock from the live DB."""
+    query = { "ticker": ticker }
+    recent_trades = list(database_manager.live_performance_collection.find(query).sort("close_date", -1).limit(3))
+    if not recent_trades:
+        return "No recent live trade history for this stock."
+    
+    history_lines = []
+    for i, trade in enumerate(recent_trades):
+        line = (f"{i+1}. Signal: {trade.get('signal')}, "
+                f"Outcome: {trade.get('return_pct'):.2f}% "
+                f"({trade.get('closing_reason')})")
+        history_lines.append(line)
+    return "\n".join(history_lines)
 
 def _get_live_30_day_performance_review() -> str:
     """Gets a 30-day performance review from the LIVE performance collection."""
@@ -184,10 +196,14 @@ def run_apex_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_regime:
 
     strategic_review_30d = _get_live_30_day_performance_review()
     tactical_lookback_1d = _get_live_1_day_tactical_lookback(ticker)
-    
+    per_stock_history = _get_live_per_stock_trade_history(ticker)
+
     final_analysis = analyzer.get_apex_analysis(
-        ticker=ticker, full_context=full_context_for_ai,
-        strategic_review=strategic_review_30d, tactical_lookback=tactical_lookback_1d
+        ticker=ticker,
+        full_context=full_context_for_ai,
+        strategic_review=strategic_review_30d,
+        tactical_lookback=tactical_lookback_1d,
+        per_stock_history=per_stock_history
     )
 
     if not final_analysis: raise ValueError("Apex AI failed to return an analysis.")

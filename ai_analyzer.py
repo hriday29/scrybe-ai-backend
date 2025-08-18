@@ -61,7 +61,7 @@ class AIAnalyzer:
             log.error(f"Single news impact analysis call failed. Error: {e}")
             return None
 
-    def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str) -> dict:
+    def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str) -> dict:
         """
         Generates a definitive, institutional-grade analysis using the "Apex" multi-layered model.
         """
@@ -72,6 +72,9 @@ class AIAnalyzer:
 
         **PROTOCOL - STEP 1: REVIEW YOUR OWN PERFORMANCE.**
         Before you begin your analysis, you MUST first review the "Omni-Context" data provided: your "30-Day Performance Review" and your "Previous Day's Note." In your final verdict, you must explicitly state how this context has influenced your confidence and final score for today's decision.
+
+        **PROTOCOL - STEP 1.5: DYNAMIC RISK ADJUSTMENT.**
+        After reviewing the Omni-Context, you MUST analyze the "Per-Stock Recent Trade History". If you observe a pattern of recent losses (e.g., two or more losses in the last three trades) for this specific stock, you MUST adopt a highly cautious stance. In this state, you are forbidden from issuing a BUY or SELL signal unless the setup is of the absolute highest quality and your conviction (`scrybeScore`) is exceptionally high (above 90). You must justify this high-conviction call in your verdict, explicitly acknowledging the recent poor performance.
 
         **PROTOCOL - STEP 2: MULTI-LAYERED THESIS FORMATION.**
         You will now synthesize the following six layers of intelligence into a single, cohesive thesis. You must weigh each layer according to the specified importance.
@@ -206,9 +209,9 @@ class AIAnalyzer:
 
         prompt_parts = [
             "## Omni-Context Performance Review ##",
-            strategic_review,
-            "\n## Previous Day's Tactical Note ##",
-            tactical_lookback,
+            f"30-Day Strategic Review:\n{strategic_review}",
+            f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history}",
+            f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback}",
             "\n## Today's Full Data Packet ##",
             json.dumps(full_context)
         ]
