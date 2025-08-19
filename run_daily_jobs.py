@@ -12,6 +12,66 @@ from utils import APIKeyManager
 import pandas_ta as ta
 import pandas as pd
 
+def _synthesize_dvm_from_apex(apex_analysis: dict, fundamental_proxies: dict) -> dict:
+    """
+    Derives a simple DVM score from the rich Apex output for frontend display.
+    """
+    momentum_score = apex_analysis.get('scrybeScore', 0)
+    durability_score = fundamental_proxies.get('quality_score', 50)
+    valuation_proxy_str = fundamental_proxies.get('valuation_proxy', '50.0%')
+    try:
+        valuation_pct = float(valuation_proxy_str.split('%')[0])
+        valuation_score = 100 - valuation_pct
+    except:
+        valuation_score = 50
+    return { "d_score": int(durability_score), "v_score": int(valuation_score), "m_score": int(momentum_score) }
+
+def _get_live_dynamic_risk_mode(ticker: str) -> tuple[str, float]:
+    """
+    Determines the risk mode for a stock based on its recent LIVE performance.
+    """
+    cfg = config.DYNAMIC_RISK_CONFIG
+    
+    # 1. Check for an active cool-down period in the database
+    stock_status = database_manager.analysis_results_collection.find_one({"ticker": ticker})
+    if stock_status and "risk_status" in stock_status:
+        risk_info = stock_status["risk_status"]
+        if risk_info.get("mode") == "Red" and datetime.now(timezone.utc) < risk_info.get("cooldown_until"):
+            log.warning(f"CIRCUIT BREAKER: {ticker} is in a live cool-down period. No new trades allowed.")
+            return "Red", cfg['red_mode_position_size_pct']
+
+    # 2. Fetch recent trade history from the live performance collection
+    query = {"ticker": ticker}
+    recent_trades = list(database_manager.live_performance_collection.find(query).sort("close_date", -1).limit(cfg['lookback_period']))
+    
+    if len(recent_trades) < cfg['lookback_period']:
+        return "Green", cfg['green_mode_position_size_pct']
+
+    # 3. Check for consecutive losses
+    consecutive_losses = 0
+    for trade in recent_trades:
+        if trade.get('net_return_pct', 0) < 0:
+            consecutive_losses += 1
+        else:
+            break
+            
+    if consecutive_losses >= cfg['red_mode_threshold']:
+        cooldown_end_date = datetime.now(timezone.utc) + timedelta(days=cfg['cooldown_period_days'])
+        log.warning(f"CIRCUIT BREAKER ENGAGED: {ticker} has {consecutive_losses} consecutive live losses. Entering cool-down.")
+        database_manager.analysis_results_collection.update_one(
+            {"ticker": ticker},
+            {"$set": {"risk_status": {"mode": "Red", "cooldown_until": cooldown_end_date}}}
+        )
+        return "Red", cfg['red_mode_position_size_pct']
+
+    # 4. Check for total losses
+    total_losses = sum(1 for trade in recent_trades if trade.get('net_return_pct', 0) < 0)
+    if total_losses >= cfg['yellow_mode_threshold']:
+        log.warning(f"RISK MODE YELLOW: {ticker} has {total_losses} losses in its last {len(recent_trades)} live trades. Reducing position size.")
+        return "Yellow", cfg['yellow_mode_position_size_pct']
+
+    return "Green", cfg['green_mode_position_size_pct']
+
 def _get_live_per_stock_trade_history(ticker: str) -> str:
     """Gets the results of the last 3 closed trades for a specific stock from the live DB."""
     query = { "ticker": ticker }
@@ -22,7 +82,7 @@ def _get_live_per_stock_trade_history(ticker: str) -> str:
     history_lines = []
     for i, trade in enumerate(recent_trades):
         line = (f"{i+1}. Signal: {trade.get('signal')}, "
-                f"Outcome: {trade.get('return_pct'):.2f}% "
+                f"Outcome: {trade.get('net_return_pct'):.2f}% "
                 f"({trade.get('closing_reason')})")
         history_lines.append(line)
     return "\n".join(history_lines)
@@ -40,9 +100,9 @@ def _get_live_30_day_performance_review() -> str:
     df = pd.DataFrame(recent_trades)
     # The rest of the logic is identical to the historical version
     total_signals = len(df)
-    win_rate = (df['return_pct'] > 0).mean() * 100
-    gross_profit = df[df['return_pct'] > 0]['return_pct'].sum()
-    gross_loss = abs(df[df['return_pct'] < 0]['return_pct'].sum())
+    win_rate = (df['net_return_pct'] > 0).mean() * 100
+    gross_profit = df[df['net_return_pct'] > 0]['net_return_pct'].sum()
+    gross_loss = abs(df[df['net_return_pct'] < 0]['net_return_pct'].sum())
     profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
     
     review = (f"Live 30-Day Performance Review:\n- Total Trades Closed: {total_signals}\n- Win Rate: {win_rate:.1f}%\n- Profit Factor: {profit_factor:.2f}")
@@ -149,39 +209,41 @@ def manage_open_trades():
 
 def run_apex_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_regime: str):
     """
-    The "Apex-Aware" live analysis pipeline that mirrors historical_runner.py.
+    The "Apex-Aware" live analysis pipeline. CORRECTED to return proxies.
     """
     log.info(f"\n--- STARTING APEX LIVE ANALYSIS FOR: {ticker} ---")
     
     existing_trade_doc = database_manager.analysis_results_collection.find_one({"ticker": ticker, "active_trade": {"$ne": None}})
     if existing_trade_doc:
         log.warning(f"Skipping new analysis for {ticker} as it already has an active trade.")
-        return None
+        return None, None # Return None for both values
 
     historical_data = data_retriever.get_historical_stock_data(ticker)
     if historical_data is None or len(historical_data) < 252:
         raise ValueError("Not enough historical data for Apex analysis.")
     
-    data_for_ta = historical_data.rename(columns={'open': 'Open', 'high': 'High', 'low': 'Low', 'close': 'Close', 'volume': 'Volume'})
-    data_for_ta.ta.bbands(length=20, append=True); data_for_ta.ta.rsi(length=14, append=True)
-    data_for_ta.ta.macd(fast=12, slow=26, signal=9, append=True); data_for_ta.ta.adx(length=14, append=True)
-    data_for_ta.ta.atr(length=14, append=True)
+    # Calculate indicators directly on the dataframe
+    historical_data.ta.bbands(length=20, append=True)
+    historical_data.ta.rsi(length=14, append=True)
+    historical_data.ta.macd(fast=12, slow=26, signal=9, append=True)
+    historical_data.ta.adx(length=14, append=True)
+    historical_data.ta.atr(length=14, append=True)
     
     indicator_cols = ['BBU_20_2.0', 'BBL_20_2.0', 'RSI_14', 'MACD_12_26_9', 'ADX_14', 'ATRr_14']
-    for col in indicator_cols:
-        if col in data_for_ta.columns: historical_data[col] = data_for_ta[col]
-
     latest_row = historical_data.iloc[-1]
     if latest_row[indicator_cols].isnull().any():
         raise ValueError("NaN indicators found in live data.")
 
+    # --- FIX: This function now calculates and returns the proxies along with the AI analysis ---
+    fundamental_proxies = data_retriever.get_fundamental_proxies(historical_data)
+    
+    # Assemble the rest of the context for the AI
     nifty_data = data_retriever.get_historical_stock_data("^NSEI")
     nifty_5d_change = (nifty_data['close'].iloc[-1] / nifty_data['close'].iloc[-6] - 1) * 100 if nifty_data is not None and len(nifty_data) > 5 else 0
     stock_5d_change = (latest_row['close'] / historical_data['close'].iloc[-6] - 1) * 100 if len(historical_data) > 5 else 0
     relative_strength = "Outperforming" if stock_5d_change > nifty_5d_change else "Underperforming"
     weekly_data = historical_data['close'].resample('W').last()
     weekly_trend = "Bullish" if len(weekly_data) > 2 and weekly_data.iloc[-1] > weekly_data.iloc[-2] else "Bearish"
-    fundamental_proxies = data_retriever.get_fundamental_proxies(historical_data)
     options_data = data_retriever.get_options_data(ticker)
     news_data = data_retriever.get_news_articles_for_ticker(ticker)
 
@@ -206,7 +268,8 @@ def run_apex_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_regime:
         per_stock_history=per_stock_history
     )
 
-    if not final_analysis: raise ValueError("Apex AI failed to return an analysis.")
+    if not final_analysis:
+        raise ValueError("Apex AI failed to return an analysis.")
 
     final_analysis.update({
         'analysis_id': str(uuid.uuid4()), 'timestamp': datetime.now(timezone.utc),
@@ -215,55 +278,62 @@ def run_apex_analysis_pipeline(ticker: str, analyzer: AIAnalyzer, market_regime:
     })
     
     log.info(f"--- ✅ SUCCESS: APEX live analysis complete for {ticker} ---")
-    return final_analysis
+    
+    # --- FIX: Return both the analysis and the proxies ---
+    return final_analysis, fundamental_proxies
+
+
+# --- Step 3 of 3: REPLACE your existing 'run_all_jobs' function with this FINAL version ---
 
 def run_all_jobs():
     """
-    The master "Apex-Aware" job runner.
+    The master "Apex-Aware" job runner. FINAL V1.0 VERSION.
     """
-    log.info("--- 🚀 Starting all daily jobs (APEX UNIFIED VERSION) ---")
-
-    # --- Tracking lists for notifier ---
+    log.info("--- 🚀 Starting all daily jobs (APEX V1.0 FINAL) ---")
+    
     new_signals_today = []
     closed_trades_today = []
 
     try:
         database_manager.init_db(purpose='analysis')
-        # --- START: Live Volatility Filter ---
+        
         vix_data = data_retriever.get_historical_stock_data("^INDIAVIX")
         volatility_regime = data_retriever.get_volatility_regime(vix_data)
         
         if volatility_regime == "High-Risk":
             log.warning("VOLATILITY FILTER ENGAGED: Live market is in 'High-Risk' state. Standing aside for today.")
-            # We can optionally send a notification that no trades will be generated today
-            # send_daily_briefing(...) 
-            return # Exit the entire job runner for the day
-        # --- END: Live Volatility Filter ---
+            closed_trades_today = manage_open_trades() # Still manage open trades
+            return # Exit before generating new signals
+            
         key_manager = APIKeyManager(api_keys=config.GEMINI_API_KEY_POOL)
         analyzer = AIAnalyzer(api_key=key_manager.get_key())
-
-        # --- Manage existing trades ---
         closed_trades_today = manage_open_trades()
         market_regime = data_retriever.get_market_regime()
-        
         tickers_to_run = config.LIVE_TRADING_UNIVERSE
 
         for ticker in tickers_to_run:
-            final_analysis = None
             try:
-                final_analysis = run_apex_analysis_pipeline(ticker, analyzer, market_regime)
+                risk_mode, position_size_pct = _get_live_dynamic_risk_mode(ticker)
+                if risk_mode == "Red":
+                    log.info(f"⛔ Skipping {ticker}: Risk mode is RED (dynamic overlay).")
+                    continue
+
+                # --- FIX: Correctly receive both return values ---
+                final_analysis, fundamental_proxies = run_apex_analysis_pipeline(ticker, analyzer, market_regime)
+                
                 if not final_analysis:
                     continue
                 
                 active_strategy = config.APEX_SWING_STRATEGY
                 log.info(f"Applying Profile ('{active_strategy['name']}') for {ticker}")
                 
+                # --- FIX: No more redundant data fetching. Use the returned proxies. ---
+                dvm_scores = _synthesize_dvm_from_apex(final_analysis, fundamental_proxies)
                 original_signal = final_analysis.get('signal')
                 scrybe_score = final_analysis.get('scrybeScore', 0)
                 
-                fundamental_data = final_analysis.get("layer_3_fundamental_moat", {})
-                live_quality_score = fundamental_data.get("quality_score", 0)
-                is_quality_ok = True if original_signal != 'BUY' else live_quality_score >= 40
+                # --- FIX: Use the 'd_score' from the synthesized scores for the quality check ---
+                is_quality_ok = True if original_signal != 'BUY' else dvm_scores.get("d_score", 0) >= 40
                 is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
                 is_regime_ok = (
                     (original_signal == 'BUY' and market_regime == 'Bullish') or
@@ -278,7 +348,8 @@ def run_all_jobs():
                     elif not is_conviction_ok:
                         final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Conviction score ({scrybe_score}) is below threshold.", "LOW_CONVICTION"
                     elif not is_quality_ok:
-                        final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Poor fundamental quality (Proxy Score: {live_quality_score}).", "QUALITY_VETO"
+                        # --- FIX: Use the correct variable in the log message ---
+                        final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Poor fundamental quality (Proxy Score: {dvm_scores.get('d_score', 0)}).", "QUALITY_VETO"
 
                 prediction_doc = final_analysis.copy()
                 prediction_doc['signal'] = final_signal
@@ -293,43 +364,21 @@ def run_all_jobs():
                     stop_multiplier = active_strategy['stop_loss_atr_multiplier']
                     atr = prediction_doc['atr_at_prediction']
                     
-                    stop_loss_price = (
-                        entry_price - (stop_multiplier * atr)
-                        if final_signal == 'BUY'
-                        else entry_price + (stop_multiplier * atr)
-                    )
-                    target_price = (
-                        entry_price * (1 + (predicted_gain / 100.0))
-                        if final_signal == 'BUY'
-                        else entry_price * (1 - (predicted_gain / 100.0))
-                    )
+                    stop_loss_price = (entry_price - (stop_multiplier * atr)) if final_signal == 'BUY' else (entry_price + (stop_multiplier * atr))
+                    target_price = (entry_price * (1 + (predicted_gain / 100.0))) if final_signal == 'BUY' else (entry_price * (1 - (predicted_gain / 100.0)))
                     
-                    prediction_doc['tradePlan'] = {
-                        "entryPrice": round(entry_price, 2),
-                        "target": round(target_price, 2),
-                        "stopLoss": round(stop_loss_price, 2)
-                    }
+                    prediction_doc['tradePlan'] = {"entryPrice": round(entry_price, 2), "target": round(target_price, 2), "stopLoss": round(stop_loss_price, 2)}
                     
                     trade_object = {
-                        "signal": final_signal,
-                        "strategy": active_strategy['name'],
-                        "entry_price": entry_price,
-                        "entry_date": prediction_doc['timestamp'],
-                        "target": round(target_price, 2),
+                        "signal": final_signal, "strategy": active_strategy['name'], "entry_price": entry_price,
+                        "entry_date": prediction_doc['timestamp'], "target": round(target_price, 2),
                         "stop_loss": round(stop_loss_price, 2),
                         "expiry_date": datetime.now(timezone.utc) + timedelta(days=active_strategy['holding_period']),
-                        "confidence": prediction_doc.get('confidence'),
-                        "scrybeScore": scrybe_score   # ✅ added for DB consistency
+                        "confidence": prediction_doc.get('confidence'), "scrybeScore": scrybe_score,
+                        "position_size_pct": position_size_pct
                     }
                     database_manager.set_active_trade(ticker, trade_object)
-
-                    # --- Capture for email ---
-                    new_signals_today.append({
-                        "ticker": ticker,
-                        "signal": final_signal,
-                        "scrybeScore": scrybe_score,
-                        "confidence": prediction_doc.get('confidence')
-                    })
+                    new_signals_today.append({"ticker": ticker, "signal": final_signal, "scrybeScore": scrybe_score, "confidence": prediction_doc.get('confidence')})
                 else:
                     database_manager.set_active_trade(ticker, None)
 
@@ -343,20 +392,20 @@ def run_all_jobs():
                     log.warning("Quota reached. Rotating API key...")
                     analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                 continue
-        
-        # --- Email notifier integration ---
+    
+    finally:
+        log.info("Preparing to send daily briefing...")
+        # --- FIX: Moved notifier to 'finally' block for guaranteed execution ---
         from notifier import send_daily_briefing
         try:
             send_daily_briefing(new_signals=new_signals_today, closed_trades=closed_trades_today)
         except Exception as e:
             log.error(f"Failed to send daily briefing: {e}", exc_info=True)
-
-    finally:
+        
         database_manager.close_db_connection()
-    log.info("--- 🔒 Database connection closed ---")
-    log.info("--- ✅ Daily jobs completed ---")
+        log.info("--- 🔒 Database connection closed ---")
+        log.info("--- ✅ Daily jobs completed ---")
 
-    # Optional: return results for debugging
     return {"new_signals": new_signals_today, "closed_trades": closed_trades_today}
 
 if __name__ == "__main__":

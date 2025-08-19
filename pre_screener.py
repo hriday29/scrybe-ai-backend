@@ -1,4 +1,4 @@
-# pre_screener.py (Corrected)
+# pre_screener.py (Updated and Final)
 import pandas as pd
 import config
 import data_retriever
@@ -13,22 +13,31 @@ def run_pre_screening():
     log.info("--- Starting Intelligent Shortlisting Pre-Screener ---")
     tickers = config.NIFTY_50_TICKERS
     
+    # --- FIX: Use the end_date from the config file ---
+    # This makes the script dynamic and configurable without changing code.
+    # If PRE_SCREENER_END_DATE in config.py is None, it fetches the latest data.
+    screener_end_date = config.PRE_SCREENER_END_DATE
+    if screener_end_date:
+        log.warning(f"Using historical end date for pre-screening: {screener_end_date}")
+    # --- END FIX ---
+    
     results = []
 
     for ticker in tickers:
         log.info(f"Analyzing {ticker}...")
-        data = data_retriever.get_historical_stock_data(ticker, end_date="2024-06-30")
+        
+        # --- FIX: Pass the configured end_date to the data retriever ---
+        data = data_retriever.get_historical_stock_data(ticker, end_date=screener_end_date)
+        # --- END FIX ---
         
         if data is None or len(data) < 252:
             log.warning(f"Skipping {ticker}, not enough historical data.")
             continue
 
-        # --- START DEFINITIVE FIX ---
         # Stage 1: Volatility & Character Analysis
         data.ta.atr(length=14, append=True)
         
-        # Corrected: Find column starting with 'ATR' (no underscore) to catch 'ATRr_14'
-        # Using .upper() makes the search case-insensitive and maximally robust.
+        # Robustly find the ATR column, regardless of its exact name (e.g., 'ATRr_14')
         atr_col_name = None
         for col in data.columns:
             if col.upper().startswith('ATR'):
@@ -39,10 +48,8 @@ def run_pre_screening():
             log.warning(f"Could not find ATR column for {ticker}. Skipping.")
             continue
 
-        # Use the standard 'Close' column name (uppercase)
-        data['atr_pct'] = (data[atr_col_name] / data['Close']) * 100
+        data['atr_pct'] = (data[atr_col_name] / data['close']) * 100
         avg_atr_pct = data['atr_pct'].mean()
-        # --- END DEFINITIVE FIX ---
 
         # Stage 2: Trend Profile Analysis
         data.ta.adx(length=14, append=True)

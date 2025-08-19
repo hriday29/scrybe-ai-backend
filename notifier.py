@@ -63,11 +63,11 @@ def send_daily_briefing(new_signals: list, closed_trades: list):
     if closed_trades:
         html_body += "<h2>Closed Trades Today</h2>"
         for trade in closed_trades:
-             html_body += f"""
+            html_body += f"""
             <div class="trade-item closed">
               <p><strong>{trade['ticker']} ({trade['signal']})</strong></p>
               <p>Outcome: {trade['closing_reason']}</p>
-              <p>Return: {trade['return_pct']:.2f}%</p>
+              <p>Return: {trade['net_return_pct']:.2f}%</p>
             </div>
             """
 

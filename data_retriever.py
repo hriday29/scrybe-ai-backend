@@ -79,7 +79,7 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
         # --- THIS IS THE EDIT ---
         # Standardize columns to lowercase for system-wide consistency
         df.rename(columns={
-            'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'
+            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
         }, inplace=True)
         # ----------------------
 
@@ -322,7 +322,7 @@ def get_intraday_data(ticker_symbol: str):
         # --- THIS IS THE FIX ---
         # Normalize column names to lowercase for consistency
         df.rename(columns={
-            'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'
+            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
         }, inplace=True)
         # ----------------------
 
@@ -527,18 +527,16 @@ def get_fundamental_proxies(data_slice: pd.DataFrame) -> dict:
         }
 
     # --- Proxy 1: Valuation (52-Week Range Position) ---
-    # FIX: Use uppercase 'High', 'Low', and 'Close'
-    high_52_week = data_slice['High'].iloc[-252:].max()
-    low_52_week = data_slice['Low'].iloc[-252:].min()
-    latest_close = data_slice['Close'].iloc[-1]
+    high_52_week = data_slice['high'].iloc[-252:].max()
+    low_52_week = data_slice['low'].iloc[-252:].min()
+    latest_close = data_slice['close'].iloc[-1]
     
     valuation_range_score = 100
     if (high_52_week - low_52_week) > 0:
         valuation_range_score = ((latest_close - low_52_week) / (high_52_week - low_52_week)) * 100
 
     # --- Proxy 2: Quality/Durability (Realized Volatility) ---
-    # FIX: Use uppercase 'Close'
-    returns_90_day = data_slice['Close'].iloc[-90:].pct_change()
+    returns_90_day = data_slice['close'].iloc[-90:].pct_change()
     realized_volatility_90d = returns_90_day.std() * (252**0.5) # Annualized volatility
 
     # --- Convert Proxies to a final "Quality Score" ---

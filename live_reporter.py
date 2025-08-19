@@ -5,34 +5,46 @@ import database_manager
 from logger_config import log
 
 def _calculate_metrics(trades_df: pd.DataFrame) -> dict:
-    """A helper function to calculate performance KPIs from a DataFrame of trades."""
-    
+    """Calculate performance KPIs from a DataFrame of trades.
+
+    Args:
+        trades_df (pd.DataFrame): DataFrame containing at least a 'net_return_pct' column.
+
+    Returns:
+        dict: Dictionary with performance metrics.
+    """
+
     if trades_df.empty:
         return {
-            "Total Trades": 0, "Win Rate": "N/A", "Profit Factor": "N/A",
-            "Average Gain %": "N/A", "Average Loss %": "N/A",
-            "Biggest Winner %": "N/A", "Biggest Loser %": "N/A"
+            "Total Trades": 0,
+            "Win Rate": "N/A",
+            "Profit Factor": "N/A",
+            "Average Gain %": "N/A",
+            "Average Loss %": "N/A",
+            "Biggest Winner %": "N/A",
+            "Biggest Loser %": "N/A"
         }
 
     total_trades = len(trades_df)
-    winning_trades = trades_df[trades_df['return_pct'] > 0]
-    losing_trades = trades_df[trades_df['return_pct'] < 0]
-    
+    winning_trades = trades_df[trades_df['net_return_pct'] > 0]
+    losing_trades = trades_df[trades_df['net_return_pct'] < 0]
+
+    # --- Win Rate ---
     win_rate = (len(winning_trades) / total_trades) * 100 if total_trades > 0 else 0
-    
-    # --- Profit Factor Calculation ---
-    total_gains = winning_trades['return_pct'].sum()
-    total_losses = abs(losing_trades['return_pct'].sum())
+
+    # --- Profit Factor ---
+    total_gains = winning_trades['net_return_pct'].sum()
+    total_losses = abs(losing_trades['net_return_pct'].sum())
     profit_factor = total_gains / total_losses if total_losses > 0 else float('inf')
 
     return {
         "Total Trades": total_trades,
         "Win Rate": f"{win_rate:.2f}%",
         "Profit Factor": f"{profit_factor:.2f}" if profit_factor != float('inf') else "inf",
-        "Average Gain %": f"{winning_trades['return_pct'].mean():.2f}%" if not winning_trades.empty else "N/A",
-        "Average Loss %": f"{losing_trades['return_pct'].mean():.2f}%" if not losing_trades.empty else "N/A",
-        "Biggest Winner %": f"{winning_trades['return_pct'].max():.2f}%" if not winning_trades.empty else "N/A",
-        "Biggest Loser %": f"{losing_trades['return_pct'].min():.2f}%" if not losing_trades.empty else "N/A",
+        "Average Gain %": f"{winning_trades['net_return_pct'].mean():.2f}%" if not winning_trades.empty else "N/A",
+        "Average Loss %": f"{losing_trades['net_return_pct'].mean():.2f}%" if not losing_trades.empty else "N/A",
+        "Biggest Winner %": f"{winning_trades['net_return_pct'].max():.2f}%" if not winning_trades.empty else "N/A",
+        "Biggest Loser %": f"{losing_trades['net_return_pct'].min():.2f}%" if not losing_trades.empty else "N/A"
     }
 
 def _print_report(title: str, metrics: dict):

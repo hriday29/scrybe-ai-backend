@@ -102,13 +102,18 @@ def close_live_trade(ticker: str, trade_object: dict, close_reason: str, close_p
     """Closes a live trade, logs performance, and clears the active_trade state."""
     log.info(f"Closing trade for {ticker} and logging performance.")
     entry_price = trade_object['entry_price']
-    return_pct = ((close_price - entry_price) / entry_price) * 100 if trade_object['signal'] == 'BUY' else ((entry_price - close_price) / entry_price) * 100
+    gross_return_pct = ((close_price - entry_price) / entry_price) * 100 if trade_object['signal'] == 'BUY' else ((entry_price - close_price) / entry_price) * 100
+    
+    # 3. Calculate net return by subtracting estimated costs from config
+    costs = config.BACKTEST_CONFIG
+    total_costs_pct = (costs['brokerage_pct'] * 2) + (costs['slippage_pct'] * 2) + costs['stt_pct']
+    net_return_pct = gross_return_pct - total_costs_pct
     
     performance_doc = {
         "ticker": ticker, "strategy": trade_object.get('strategy', 'unknown'),
         "signal": trade_object['signal'], "status": "Closed",
         "open_date": trade_object['entry_date'], "close_date": datetime.now(timezone.utc),
-        "closing_reason": close_reason, "return_pct": round(return_pct, 2),
+        "closing_reason": close_reason, "net_return_pct": round(net_return_pct, 2),
         "entry_price": entry_price, "close_price": close_price
     }
     live_performance_collection.insert_one(performance_doc)

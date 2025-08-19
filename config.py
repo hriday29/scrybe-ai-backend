@@ -51,6 +51,8 @@ APEX_SWING_STRATEGY = {
     "stop_loss_atr_multiplier": 2.0,
     "profit_capture_pct": 50.0,
     "min_conviction_score": 70,
+    "use_trailing_stop": True,
+    "trailing_stop_atr_multiplier": 1.5
 }
 
 # --- Market Index Analysis Config ---
@@ -61,7 +63,7 @@ INDEX_LIST = {
     "NIFTY 100": "^CNX100",
     "NIFTY 500": "NIFTY500.NS",
     "NIFTY Midcap 100": "^CNXMIDCAP",
-    "NIFTY Smallcap 100": "NIFTY_SMALCAP_100.NS",
+    "NIFTY Smallcap 100": "NIFTY_SMALLCAP_100.NS",
     "NIFTY MidSmallcap 400": "NIFTY_MIDSML_400.NS",
     "NIFTY Bank": "^NSEBANK",
     "NIFTY Financial Services": "NIFTY_FIN_SERVICE.NS",
@@ -139,4 +141,15 @@ LIVE_MACRO_CONTEXT = {
     "RBI Policy Stance": "Neutral with a focus on inflation control",
     "Key Global Factor": "Monitoring global indices for signs of slowdown.",
     "Domestic Consumer Sentiment": "Cautiously Optimistic",
+}
+
+# --- Dynamic Risk Management Configuration ---
+DYNAMIC_RISK_CONFIG = {
+    'lookback_period': 3,                 # Number of past trades to consider for a stock
+    'red_mode_threshold': 2,              # Number of CONSECUTIVE losses to enter Red Mode
+    'yellow_mode_threshold': 2,           # Number of TOTAL losses in lookback to enter Yellow Mode
+    'green_mode_position_size_pct': 100.0,
+    'yellow_mode_position_size_pct': 50.0,
+    'red_mode_position_size_pct': 0.0,    # The "Circuit Breaker" - no new trades
+    'cooldown_period_days': 5             # Days a stock stays in Red Mode
 }

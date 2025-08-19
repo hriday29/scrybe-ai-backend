@@ -86,7 +86,7 @@ def process_single_trade(trade: dict, historical_data: pd.DataFrame):
         return
     
     use_trailing_stop = active_strategy.get('use_trailing_stop', False)
-    trailing_stop_atr_multiplier = active_strategy.get('trailing_stop_pct', 1.5)
+    trailing_stop_atr_multiplier = active_strategy.get('trailing_stop_atr_multiplier', 1.5)
     
     current_stop_loss = stop_loss_price
     
@@ -142,6 +142,15 @@ def log_and_close_trade(trade: dict, evaluation_day: int, event: str, event_pric
     signal = trade.get('signal')
     strategy_name = trade.get('strategy', 'unknown')
     batch_id = trade.get('batch_id')
+
+    # --- START: Dynamic Position Sizing for P&L ---
+    initial_capital = config.BACKTEST_PORTFOLIO_CONFIG['initial_capital']
+    # Use the specific position size for THIS trade, defaulting to 100% if not found
+    position_size_pct = trade.get('position_size_pct', 100.0)
+    # We assume the position size is a % of the INITIAL capital for backtest consistency
+    # NOT compounding capital.
+    position_size = initial_capital * (position_size_pct / 100.0)
+    # --- END: Dynamic Position Sizing ---
     
     # If the plan was invalid or unrealistic, the return is neutralized to zero.
     if "Invalid Plan" in event or "Unrealistic Plan" in event:
@@ -170,7 +179,9 @@ def log_and_close_trade(trade: dict, evaluation_day: int, event: str, event_pric
         "closing_reason": event, 
         "gross_return_pct": round(gross_return_pct, 2),
         "net_return_pct": round(net_return_pct, 2), 
-        "batch_id": batch_id
+        "batch_id": batch_id,
+        "position_size_pct": position_size_pct,
+        "metadata": trade.get("metadata", {}),
     }
     
     database_manager.performance_collection.insert_one(performance_doc)

@@ -15,6 +15,32 @@ import argparse
 
 STATE_FILE = 'simulation_state.json'
 
+
+def _synthesize_dvm_from_apex(apex_analysis: dict, fundamental_proxies: dict) -> dict:
+    """
+    Derives a simple DVM score from the rich Apex output for frontend display.
+    """
+    # M-Score is directly from the Apex AI's main conviction score
+    momentum_score = apex_analysis.get('scrybeScore', 0)
+    
+    # D-Score is from our 'quality_score' proxy, which is based on volatility
+    durability_score = fundamental_proxies.get('quality_score', 50)
+    
+    # V-Score is derived from our 'valuation_proxy' (position in 52-week range)
+    # We invert it because a low position (e.g., 10%) implies better value (score of 90).
+    valuation_proxy_str = fundamental_proxies.get('valuation_proxy', '50.0%')
+    try:
+        valuation_pct = float(valuation_proxy_str.split('%')[0])
+        valuation_score = 100 - valuation_pct
+    except:
+        valuation_score = 50 # Default to a neutral score on any error
+
+    return {
+        "d_score": int(durability_score),
+        "v_score": int(valuation_score),
+        "m_score": int(momentum_score)
+    }
+
 ## START: Helper Functions for Omni-Context ##
 def _get_30_day_performance_review(current_day: pd.Timestamp, batch_id: str) -> str:
     thirty_days_prior = current_day - pd.Timedelta(days=30)
@@ -62,6 +88,7 @@ def load_state():
 def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to_test: list, is_fresh_run: bool = False, generate_charts: bool = False):
     log.info(f"### STARTING APEX HISTORICAL RUN FOR BATCH: {batch_id} ###")
     log.info(f"Period: {start_date} to {end_date}")
+    cooldown_tracker = {}
     database_manager.init_db(purpose='scheduler')
     if is_fresh_run:
         log.warning("FRESH RUN ENABLED: Deleting all previous data.")
@@ -77,10 +104,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
         full_historical_data_cache = {ticker: data for ticker in stocks_to_test if (data := data_retriever.get_historical_stock_data(ticker, end_date=end_date)) is not None and len(data) > 252}
         
         # Load Nifty data
-        nifty_data_cache_raw = data_retriever.get_historical_stock_data("^NSEI", end_date=end_date)
-        nifty_data_cache = nifty_data_cache_raw.rename(columns={
-            'Open': 'Open', 'High': 'High', 'Low': 'Low', 'Close': 'Close', 'Volume': 'Volume'
-        })
+        nifty_data_cache = data_retriever.get_historical_stock_data("^NSEI", end_date=end_date)
         # Load India VIX data
         vix_data_cache = data_retriever.get_historical_stock_data("^INDIAVIX", end_date=end_date)
         
@@ -112,6 +136,13 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                 try:
                     data_slice = full_historical_data_cache[ticker].loc[:day_str].copy()
                     if len(data_slice) < 252: continue
+
+                    # --- START: Dynamic Risk Overlay ---
+                    risk_mode, position_size_pct = _get_dynamic_risk_mode(ticker, batch_id, current_day, cooldown_tracker)
+                    if risk_mode == "Red":
+                        continue # Skip all analysis for this stock today
+                    # --- END: Dynamic Risk Overlay ---
+
                     log.info(f"--- Analyzing Ticker: {ticker} for {day_str} ---")
                     
                     # Safe Indicator Calculation
@@ -126,10 +157,10 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     
                     # Assemble Full Context for AI
                     benchmarks_slice = benchmarks_data_cache.loc[:day_str] if benchmarks_data_cache is not None else pd.DataFrame()
-                    nifty_5d_change = (nifty_slice['Close'].iloc[-1] / nifty_slice['Close'].iloc[-6] - 1) * 100 if nifty_slice is not None and len(nifty_slice) > 5 else 0
-                    stock_5d_change = (latest_row['Close'] / data_slice['Close'].iloc[-6] - 1) * 100 if len(data_slice) > 5 else 0
+                    nifty_5d_change = (nifty_slice['close'].iloc[-1] / nifty_slice['close'].iloc[-6] - 1) * 100 if nifty_slice is not None and len(nifty_slice) > 5 else 0
+                    stock_5d_change = (latest_row['close'] / data_slice['close'].iloc[-6] - 1) * 100 if len(data_slice) > 5 else 0
                     relative_strength = "Outperforming" if stock_5d_change > nifty_5d_change else "Underperforming"
-                    weekly_data = data_slice['Close'].resample('W').last()
+                    weekly_data = data_slice['close'].resample('W').last()
                     weekly_trend = "Bullish" if len(weekly_data) > 2 and weekly_data.iloc[-1] > weekly_data.iloc[-2] else "Bearish"
                     fundamental_proxies = data_retriever.get_fundamental_proxies(data_slice)
 
@@ -163,11 +194,11 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                             else: log.error(f"A non-quota error occurred: {e}"); break
                     
                     if not final_analysis: continue
-
+                    dvm_scores = _synthesize_dvm_from_apex(final_analysis, fundamental_proxies)
                     original_signal = final_analysis.get('signal')
                     scrybe_score = final_analysis.get('scrybeScore', 0)
                     
-                    is_quality_ok = True if original_signal != 'BUY' else fundamental_proxies.get("quality_score", 0) >= 40
+                    is_quality_ok = True if original_signal != 'BUY' else dvm_scores.get("d_score", 0) >= 40
                     is_conviction_ok = abs(scrybe_score) >= config.APEX_SWING_STRATEGY['min_conviction_score']
                     is_regime_ok = (original_signal == 'BUY' and current_regime == 'Bullish') or (original_signal == 'SELL' and current_regime == 'Bearish')
                     
@@ -176,7 +207,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     if original_signal in ['BUY', 'SELL']:
                         if not is_regime_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Signal '{original_signal}' contradicts regime '{current_regime}'.", "REGIME_VETO"
                         elif not is_conviction_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Conviction score ({scrybe_score}) is below threshold.", "LOW_CONVICTION"
-                        elif not is_quality_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Poor fundamental quality (Proxy Score: {fundamental_proxies.get('quality_score', 0)}).", "QUALITY_VETO"
+                        elif not is_quality_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Poor fundamental quality (Proxy Score: {dvm_scores.get('d_score', 0)}).", "QUALITY_VETO"
                     
                     prediction_doc = final_analysis.copy()
                     prediction_doc['signal'] = final_signal
@@ -185,7 +216,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                         prediction_doc['analystVerdict'] = filter_reason; prediction_doc['reason_code'] = reason_code
                     
                     if final_signal in ['BUY', 'SELL']:
-                        entry_price = latest_row['Close']
+                        entry_price = latest_row['close']
                         predicted_gain = prediction_doc.get('predicted_gain_pct', 0)
                         stop_multiplier = config.APEX_SWING_STRATEGY['stop_loss_atr_multiplier']
                         atr = latest_row['ATRr_14']
@@ -195,8 +226,9 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     
                     prediction_doc.update({
                         'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),
-                        'price_at_prediction': latest_row['Close'], 'status': 'open', 'strategy': config.APEX_SWING_STRATEGY['name'],
-                        'atr_at_prediction': latest_row['ATRr_14']
+                        'price_at_prediction': latest_row['close'], 'status': 'open', 'strategy': config.APEX_SWING_STRATEGY['name'],
+                        'atr_at_prediction': latest_row['ATRr_14'],
+                        'position_size_pct': position_size_pct
                     })
                     database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
                     time.sleep(5)
@@ -222,6 +254,47 @@ def _get_per_stock_trade_history(ticker: str, batch_id: str, current_day: pd.Tim
                 f"({trade.get('closing_reason')})")
         history_lines.append(line)
     return "\n".join(history_lines)
+
+def _get_dynamic_risk_mode(ticker: str, batch_id: str, current_day: pd.Timestamp, cooldown_tracker: dict) -> tuple[str, float]:
+    """
+    Determines the risk mode (Green, Yellow, Red) and position size for a stock
+    based on its recent performance and any active cool-down periods.
+    """
+    cfg = config.DYNAMIC_RISK_CONFIG
+    
+    # Check if the stock is in a cool-down period
+    if ticker in cooldown_tracker and current_day <= cooldown_tracker[ticker]:
+        log.warning(f"CIRCUIT BREAKER: {ticker} is in a cool-down period. No trades allowed.")
+        return "Red", cfg['red_mode_position_size_pct']
+
+    # Fetch recent trade history
+    query = {"batch_id": batch_id, "ticker": ticker, "close_date": {"$lt": current_day.to_pydatetime()}}
+    recent_trades = list(database_manager.performance_collection.find(query).sort("close_date", -1).limit(cfg['lookback_period']))
+    
+    if len(recent_trades) < cfg['lookback_period']:
+        return "Green", cfg['green_mode_position_size_pct'] # Not enough history, trade normally
+
+    # Check for consecutive losses
+    consecutive_losses = 0
+    for trade in recent_trades:
+        if trade.get('net_return_pct', 0) < 0:
+            consecutive_losses += 1
+        else:
+            break # Streak is broken
+    
+    if consecutive_losses >= cfg['red_mode_threshold']:
+        cooldown_end_date = current_day + pd.Timedelta(days=cfg['cooldown_period_days'])
+        cooldown_tracker[ticker] = cooldown_end_date
+        log.warning(f"CIRCUIT BREAKER ENGAGED: {ticker} has {consecutive_losses} consecutive losses. Entering cool-down until {cooldown_end_date.strftime('%Y-%m-%d')}.")
+        return "Red", cfg['red_mode_position_size_pct']
+
+    # Check for total losses
+    total_losses = sum(1 for trade in recent_trades if trade.get('net_return_pct', 0) < 0)
+    if total_losses >= cfg['yellow_mode_threshold']:
+        log.warning(f"RISK MODE YELLOW: {ticker} has {total_losses} losses in its last {len(recent_trades)} trades. Reducing position size.")
+        return "Yellow", cfg['yellow_mode_position_size_pct']
+
+    return "Green", cfg['green_mode_position_size_pct']
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the Apex historical backtest.")

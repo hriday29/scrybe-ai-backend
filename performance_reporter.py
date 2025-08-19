@@ -7,6 +7,7 @@ from logger_config import log
 import argparse
 import matplotlib.pyplot as plt
 import config # Import the whole config file
+from bson.objectid import ObjectId
 
 # --- ANSI color codes for immersive terminal output ---
 class Colors:
@@ -51,15 +52,26 @@ def generate_performance_report(batch_id: str):
         df['close_date'] = pd.to_datetime(df['close_date'])
 
         initial_capital = config.BACKTEST_PORTFOLIO_CONFIG['initial_capital']
-        position_size_pct = config.BACKTEST_PORTFOLIO_CONFIG['position_size_pct_of_capital']
-        position_size = initial_capital * (position_size_pct / 100.0)
-        
         df_sorted = df.sort_values(by='close_date').reset_index(drop=True)
         
         equity = initial_capital
         equity_curve = [initial_capital]
+        drawdown_series = []
         
-        for index, trade in df_sorted.iterrows():
+        # Merge with predictions to get the position size for each trade
+        prediction_ids = df_sorted['prediction_id'].tolist()
+        predictions_df = pd.DataFrame(list(database_manager.predictions_collection.find({'_id': {'$in': prediction_ids}})))
+        # Ensure we have a prediction_id to merge on
+        predictions_df = predictions_df.rename(columns={'_id': 'prediction_id'})
+        
+        # Merge the two dataframes
+        trades_with_sizing = pd.merge(df_sorted, predictions_df[['prediction_id', 'position_size_pct']], on='prediction_id', how='left')
+
+        for index, trade in trades_with_sizing.iterrows():
+            # Use the specific position size for THIS trade, defaulting to 100% if not found
+            position_size_pct = trade.get('position_size_pct', 100.0)
+            position_size = initial_capital * (position_size_pct / 100.0)
+            
             pnl_amount = position_size * (trade['net_return_pct'] / 100.0)
             equity += pnl_amount
             equity_curve.append(equity)
