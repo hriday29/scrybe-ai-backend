@@ -89,6 +89,8 @@ class AIAnalyzer:
         3.  **Predict Gain:** Provide a `predicted_gain_pct`. This is your realistic estimate of the potential profit for this trade setup over the strategy's holding period if the thesis plays out.
         4.  **Assess Risk:** You MUST identify the `keyRisks_and_Mitigants` to your thesis.
         5.  **Invalidate:** You MUST provide a specific `thesisInvalidationPoint` (a price or event) that would prove your analysis wrong.
+
+        **FINAL MANDATE: BE THOROUGH BUT CONCISE.** Your analysis must be deep, but your written output in all text fields (like `analystVerdict` and `keyInsight`) must be as efficient and succinct as possible. Use bullet points and direct language to avoid exceeding token limits.
         """
 
         output_schema = {
