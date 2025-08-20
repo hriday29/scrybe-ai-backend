@@ -86,7 +86,7 @@ def load_state():
     return None
 
 def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to_test: list, is_fresh_run: bool = False, generate_charts: bool = False):
-    log.info(f"### STARTING APEX HISTORICAL RUN FOR BATCH: {batch_id} ###")
+    log.info(f"### STARTING HISTORICAL RUN FOR BATCH: {batch_id} ###")
     log.info(f"Period: {start_date} to {end_date}")
     cooldown_tracker = {}
     database_manager.init_db(purpose='scheduler')
@@ -151,7 +151,6 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                         log.warning(f"Skipping {ticker} on {day_str} due to NaN indicators.")
                         continue
                     
-                    # Assemble the simple, focused dictionary for our new specialist
                     technical_indicators_for_ai = {
                         "ADX_14": round(latest_row['ADX_14'], 2),
                         "RSI_14": round(latest_row['RSI_14'], 2),
@@ -160,28 +159,35 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                         "EMA_50": round(latest_row['EMA_50'], 2)
                     }
                     
-                    # Call our new "Technical Analyst" specialist
                     final_analysis = analyzer.get_simple_momentum_signal(ticker, technical_indicators_for_ai)
 
                     if not final_analysis:
                         log.warning(f"AI analysis failed for {ticker} on {day_str}, skipping.")
                         continue
 
-                    # Directly use the signal from our new specialist
-                    final_signal = final_analysis.get('signal')
+                    # --- START: Market Regime Filter ---
+                    original_signal = final_analysis.get('signal')
+                    final_signal = original_signal
+
+                    is_regime_ok = (original_signal == 'BUY' and current_regime == 'Bullish') or \
+                                   (original_signal == 'SELL' and current_regime == 'Bearish')
+
+                    if original_signal in ['BUY', 'SELL'] and not is_regime_ok:
+                        final_signal = 'HOLD' # Veto the signal if it contradicts the market regime
+                        log.info(f"VETOED: Signal '{original_signal}' for {ticker} contradicts market regime '{current_regime}'.")
+                    # --- END: Market Regime Filter ---
+
                     prediction_doc = final_analysis.copy()
+                    prediction_doc['signal'] = final_signal
 
                     if final_signal in ['BUY', 'SELL']:
                         entry_price = latest_row['close']
                         atr = latest_row['ATRr_14']
                         
-                        # Risk is defined as 2x ATR
                         risk_per_share = 2 * atr
                         
-                        # Stop loss is placed based on risk
                         stop_loss_price = entry_price - risk_per_share if final_signal == 'BUY' else entry_price + risk_per_share
                         
-                        # Target is calculated for a fixed 1.5 Risk-to-Reward Ratio
                         reward_per_share = risk_per_share * 1.5
                         target_price = entry_price + reward_per_share if final_signal == 'BUY' else entry_price - reward_per_share
                         
@@ -193,7 +199,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     
                     prediction_doc.update({
                         'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),
-                        'price_at_prediction': latest_row['close'], 'status': 'open', 'strategy': "MomentumSpecialist_v1",
+                        'price_at_prediction': latest_row['close'], 'status': 'open', 'strategy': "MomentumSpecialist_v2_Regime", # Updated strategy name
                         'atr_at_prediction': latest_row['ATRr_14'],
                         'position_size_pct': position_size_pct
                     })
@@ -203,7 +209,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     log.error(f"CRITICAL FAILURE on day {day_str} for {ticker}: {e}", exc_info=True)
             if i + 1 < len(simulation_days): save_state(simulation_days[i+1])
     if os.path.exists(STATE_FILE): os.remove(STATE_FILE)
-    log.info("\n--- ✅ APEX Historical Run Finished! ---")
+    log.info("\n--- ✅ Historical Run Finished! ---")
     database_manager.close_db_connection()
 
 def _get_per_stock_trade_history(ticker: str, batch_id: str, current_day: pd.Timestamp) -> str:

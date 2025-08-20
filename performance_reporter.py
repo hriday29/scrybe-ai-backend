@@ -145,41 +145,41 @@ def generate_performance_report(batch_id: str):
             print("="*80)
     # --- END: LOSING TRADES BREAKDOWN ---
 
-    # --- START: NEW SECTION - AI & RISK FILTER ANALYSIS ---
-    if not all_predictions_df.empty:
-        total_analyses = len(all_predictions_df)
-        # Extract the original signal from the verdict if it was vetoed
-        def get_original_signal(row):
-            verdict = row.get('analystVerdict', '')
-            if 'vetoed' in verdict:
-                if "'BUY'" in verdict: return 'BUY'
-                if "'SELL'" in verdict: return 'SELL'
-            return row.get('signal')
+    # # --- START: NEW SECTION - AI & RISK FILTER ANALYSIS ---
+    # if not all_predictions_df.empty:
+    #     total_analyses = len(all_predictions_df)
+    #     # Extract the original signal from the verdict if it was vetoed
+    #     def get_original_signal(row):
+    #         verdict = row.get('analystVerdict', '')
+    #         if 'vetoed' in verdict:
+    #             if "'BUY'" in verdict: return 'BUY'
+    #             if "'SELL'" in verdict: return 'SELL'
+    #         return row.get('signal')
 
-        all_predictions_df['original_signal'] = all_predictions_df.apply(get_original_signal, axis=1)
+    #     all_predictions_df['original_signal'] = all_predictions_df.apply(get_original_signal, axis=1)
         
-        initial_signals = all_predictions_df[all_predictions_df['original_signal'].isin(['BUY', 'SELL'])]
+    #     initial_signals = all_predictions_df[all_predictions_df['original_signal'].isin(['BUY', 'SELL'])]
         
-        vetoed_regime = all_predictions_df[all_predictions_df['reason_code'] == "REGIME_VETO"]
-        vetoed_conviction = all_predictions_df[all_predictions_df['reason_code'] == "LOW_CONVICTION"]
-        vetoed_quality = all_predictions_df[all_predictions_df['reason_code'] == "QUALITY_VETO"]
+    #     vetoed_regime = all_predictions_df[all_predictions_df['reason_code'] == "REGIME_VETO"]
+    #     vetoed_conviction = all_predictions_df[all_predictions_df['reason_code'] == "LOW_CONVICTION"]
+    #     vetoed_quality = all_predictions_df[all_predictions_df['reason_code'] == "QUALITY_VETO"]
 
-        final_approved_signals = all_predictions_df[all_predictions_df['signal'].isin(['BUY', 'SELL'])]
+    #     final_approved_signals = all_predictions_df[all_predictions_df['signal'].isin(['BUY', 'SELL'])]
 
-        print("\n" + "="*60)
-        print(f"{Colors.CYAN}### Signal Funnel & Risk Manager Analysis ###{Colors.END}")
-        print("="*60)
-        print(f"{'Total AI Analyses Conducted:':<40} {total_analyses}")
-        print(f"{'Initial BUY/SELL Signals Generated:':<40} {len(initial_signals)}")
-        print("-" * 60)
-        print(f"{Colors.YELLOW}Risk Manager Vetoes:{Colors.END}")
-        print(f"{'  - By Market Regime:':<39} {len(vetoed_regime)}")
-        print(f"{'  - By Low Conviction (<60):':<39} {len(vetoed_conviction)}")
-        print(f"{'  - By Poor Quality/Durability:':<39} {len(vetoed_quality)}")
-        print("-" * 60)
-        print(f"{Colors.GREEN}{'Final Approved Signals for Trading:':<40} {len(final_approved_signals)}{Colors.END}")
-        print("="*60)
-    # --- END: AI & RISK FILTER ANALYSIS ---
+    #     print("\n" + "="*60)
+    #     print(f"{Colors.CYAN}### Signal Funnel & Risk Manager Analysis ###{Colors.END}")
+    #     print("="*60)
+    #     print(f"{'Total AI Analyses Conducted:':<40} {total_analyses}")
+    #     print(f"{'Initial BUY/SELL Signals Generated:':<40} {len(initial_signals)}")
+    #     print("-" * 60)
+    #     print(f"{Colors.YELLOW}Risk Manager Vetoes:{Colors.END}")
+    #     print(f"{'  - By Market Regime:':<39} {len(vetoed_regime)}")
+    #     print(f"{'  - By Low Conviction (<60):':<39} {len(vetoed_conviction)}")
+    #     print(f"{'  - By Poor Quality/Durability:':<39} {len(vetoed_quality)}")
+    #     print("-" * 60)
+    #     print(f"{Colors.GREEN}{'Final Approved Signals for Trading:':<40} {len(final_approved_signals)}{Colors.END}")
+    #     print("="*60)
+    # # --- END: AI & RISK FILTER ANALYSIS ---
 
 
 if __name__ == "__main__":
