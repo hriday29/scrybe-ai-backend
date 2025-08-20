@@ -136,7 +136,65 @@ class AIAnalyzer:
                 else:
                     log.error(f"[AI] Final attempt failed for {ticker}. Skipping analysis.")
                     return None
+
+    def get_mean_reversion_signal(self, ticker: str, technical_indicators: dict) -> dict:
+        """
+        Analyzes technicals to find mean-reversion trades in non-trending markets.
+        """
+        log.info(f"Generating mean-reversion signal for {ticker}...")
+
+        system_instruction = """
+        You are a technical analyst specializing in identifying high-probability mean-reversion swing trades in choppy or range-bound markets. Your task is to identify when a stock is oversold or overbought and likely to revert to its average price.
+
+        **YOUR CRITERIA:**
+        1.  **Non-Trending Confirmation (ADX):** The market must be choppy. This is indicated by an ADX value BELOW 22. This is the most important rule. If ADX is 22 or higher, there is a trend, and you must HOLD.
+        2.  **Oversold/Overbought (RSI):** For a BUY signal, the RSI should be in an 'oversold' territory (below 40). For a SELL signal, the RSI must be in an 'overbought' territory (above 60).
+        3.  **Price Location (Bollinger Bands):** For a BUY signal, the closing price should be NEAR or below the Lower Bollinger Band. For a SELL signal, the closing price should be NEAR or above the Upper Bollinger Band.
+
+        **YOUR RESPONSE:**
+        You must respond with a JSON object. Based ONLY on the criteria above, determine the signal. A signal is only valid if the ADX is LOW. Provide a high `convictionScore` if all criteria are met.
+        """
+
+        output_schema = {
+            "type": "OBJECT",
+            "properties": {
+                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
+                "convictionScore": {"type": "NUMBER", "description": "A score from 0-100 based on how well the criteria are met."},
+                "rationale": {"type": "STRING", "description": "A brief, one-sentence explanation of your decision based on the criteria."}
+            },
+            "required": ["signal", "convictionScore", "rationale"]
+        }
+
+        generation_config = genai.types.GenerationConfig(
+            response_mime_type="application/json", 
+            response_schema=output_schema
+        )
         
+        model = genai.GenerativeModel(
+            config.FLASH_MODEL, 
+            system_instruction=system_instruction, 
+            generation_config=generation_config
+        )
+
+        prompt_parts = [
+            f"Analyze the following technical data for {ticker} for a mean-reversion opportunity based ONLY on the rules provided in the system instruction.",
+            json.dumps(technical_indicators)
+        ]
+
+        try:
+            response = model.generate_content(prompt_parts, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            # --- THIS IS THE FIX ---
+            # If it's a quota error, we MUST raise it so the runner can catch it and rotate the key.
+            if "429" in str(e):
+                raise e
+            # For any other error, we log it and return None so the script can continue.
+            else:
+                log.error(f"[AI] Mean reversion analysis for {ticker} failed with a non-quota error: {e}")
+                return None
+            # --- END OF FIX ---
+    
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """
         Analyzes holistic data to find high-probability intraday short candidates

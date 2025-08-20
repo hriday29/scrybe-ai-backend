@@ -88,7 +88,6 @@ def load_state():
 def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to_test: list, is_fresh_run: bool = False, generate_charts: bool = False):
     log.info(f"### STARTING HISTORICAL RUN FOR BATCH: {batch_id} ###")
     log.info(f"Period: {start_date} to {end_date}")
-    cooldown_tracker = {}
     database_manager.init_db(purpose='scheduler')
     if is_fresh_run:
         log.warning("FRESH RUN ENABLED: Deleting all previous data.")
@@ -100,11 +99,6 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
         log.info("Pre-loading all historical data...")
         
         full_historical_data_cache = {ticker: data for ticker in stocks_to_test if (data := data_retriever.get_historical_stock_data(ticker, end_date=end_date)) is not None and len(data) > 252}
-        
-        nifty_data_cache = data_retriever.get_historical_stock_data("^NSEI", end_date=end_date)
-        vix_data_cache = data_retriever.get_historical_stock_data("^INDIAVIX", end_date=end_date)
-        
-        benchmarks_data_cache = data_retriever.get_benchmarks_data(end_date=end_date)
         log.info("✅ All data pre-loading complete.")
     except Exception as e:
         log.fatal(f"Failed during pre-run initialization. Error: {e}")
@@ -116,90 +110,66 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
         log.info(f"\n--- Starting simulation for {len(simulation_days)} trading days ---")
         for i, current_day in enumerate(simulation_days):
             day_str = current_day.strftime('%Y-%m-%d')
-            vix_slice = vix_data_cache.loc[:day_str] if vix_data_cache is not None else None
-            volatility_regime = data_retriever.get_volatility_regime(vix_slice)
-
-            if volatility_regime == "High-Risk":
-                log.warning(f"VOLATILITY FILTER ENGAGED: Market is in 'High-Risk' state. Standing aside for day {day_str}.")
-                if i + 1 < len(simulation_days): save_state(simulation_days[i+1])
-                continue
             log.info(f"\n--- Simulating Day {i+1}/{len(simulation_days)}: {day_str} ---")
-            nifty_slice = nifty_data_cache.loc[:day_str] if nifty_data_cache is not None else None
-            current_regime = data_retriever.calculate_regime_from_data(nifty_slice)
             
             for ticker in stocks_to_test:
                 if ticker not in full_historical_data_cache: continue
                 try:
                     data_slice = full_historical_data_cache[ticker].loc[:day_str].copy()
                     if len(data_slice) < 252: continue
-
-                    risk_mode, position_size_pct = _get_dynamic_risk_mode(ticker, batch_id, current_day, cooldown_tracker)
-                    if risk_mode == "Red":
-                        continue
                     
                     log.info(f"--- Analyzing Ticker: {ticker} for {day_str} ---")
                     
                     data_slice.ta.bbands(length=20, append=True); data_slice.ta.rsi(length=14, append=True)
-                    data_slice.ta.macd(fast=12, slow=26, signal=9, append=True); data_slice.ta.adx(length=14, append=True)
-                    data_slice.ta.atr(length=14, append=True)
-                    data_slice.ta.ema(length=20, append=True)
-                    data_slice.ta.ema(length=50, append=True)
+                    data_slice.ta.adx(length=14, append=True); data_slice.ta.atr(length=14, append=True)
 
                     latest_row = data_slice.iloc[-1]
-                    required_cols = ['BBU_20_2.0', 'RSI_14', 'MACD_12_26_9', 'ADX_14', 'ATRr_14', 'EMA_20', 'EMA_50']
+                    required_cols = ['BBU_20_2.0', 'BBL_20_2.0', 'RSI_14', 'ADX_14', 'ATRr_14']
                     if latest_row[required_cols].isnull().any():
                         log.warning(f"Skipping {ticker} on {day_str} due to NaN indicators.")
                         continue
                     
-                    technical_indicators_for_ai = { "ADX_14": round(latest_row['ADX_14'], 2), "RSI_14": round(latest_row['RSI_14'], 2), "close_price": round(latest_row['close'], 2), "EMA_20": round(latest_row['EMA_20'], 2), "EMA_50": round(latest_row['EMA_50'], 2) }
+                    technical_indicators_for_ai = {
+                        "ADX_14": round(latest_row['ADX_14'], 2),
+                        "RSI_14": round(latest_row['RSI_14'], 2),
+                        "close_price": round(latest_row['close'], 2),
+                        "Lower_Bollinger_Band": round(latest_row['BBL_20_2.0'], 2),
+                        "Upper_Bollinger_Band": round(latest_row['BBU_20_2.0'], 2)
+                    }
                     
-                    # --- START: RE-INTEGRATED KEY ROTATION LOGIC ---
+                    # --- START: CORRECTED KEY ROTATION LOGIC BLOCK ---
                     final_analysis = None
                     for attempt in range(len(key_manager.api_keys)):
                         try:
-                            final_analysis = analyzer.get_simple_momentum_signal(ticker, technical_indicators_for_ai)
-                            if final_analysis: # If successful, break the loop
+                            # IMPORTANT: Calling the new mean reversion function
+                            final_analysis = analyzer.get_mean_reversion_signal(ticker, technical_indicators_for_ai)
+                            if final_analysis:
                                 break 
                         except Exception as e:
                             if "429" in str(e):
                                 log.warning(f"Quota error on attempt {attempt + 1}. Rotating key...")
                                 if attempt < len(key_manager.api_keys) - 1:
-                                    analyzer = AIAnalyzer(api_key=key_manager.rotate_key()) # Re-initialize analyzer with new key
+                                    analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                                 else:
-                                    log.error("All API keys exhausted. Unable to get analysis.")
-                                    break # Exit loop if all keys failed
+                                    log.error("All API keys exhausted. Unable to get analysis for this day.")
+                                    break
                             else:
                                 log.error(f"A non-quota error occurred during AI analysis: {e}")
-                                break # Exit loop on other errors
-                    # --- END: RE-INTEGRATED KEY ROTATION LOGIC ---
+                                break 
+                    # --- END: CORRECTED KEY ROTATION LOGIC BLOCK ---
 
                     if not final_analysis:
                         log.warning(f"AI analysis failed for {ticker} on {day_str} after all retries, skipping.")
                         continue
 
-                    # --- START: Market Regime Filter ---
-                    original_signal = final_analysis.get('signal')
-                    final_signal = original_signal
-
-                    is_regime_ok = (original_signal == 'BUY' and current_regime == 'Bullish') or \
-                                   (original_signal == 'SELL' and current_regime == 'Bearish')
-
-                    if original_signal in ['BUY', 'SELL'] and not is_regime_ok:
-                        final_signal = 'HOLD' # Veto the signal if it contradicts the market regime
-                        log.info(f"VETOED: Signal '{original_signal}' for {ticker} contradicts market regime '{current_regime}'.")
-                    # --- END: Market Regime Filter ---
-
+                    final_signal = final_analysis.get('signal')
                     prediction_doc = final_analysis.copy()
-                    prediction_doc['signal'] = final_signal
 
                     if final_signal in ['BUY', 'SELL']:
                         entry_price = latest_row['close']
                         atr = latest_row['ATRr_14']
-                        
                         risk_per_share = 2 * atr
-                        
                         stop_loss_price = entry_price - risk_per_share if final_signal == 'BUY' else entry_price + risk_per_share
-                        
                         reward_per_share = risk_per_share * 1.5
                         target_price = entry_price + reward_per_share if final_signal == 'BUY' else entry_price - reward_per_share
                         
@@ -211,12 +181,12 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     
                     prediction_doc.update({
                         'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),
-                        'price_at_prediction': latest_row['close'], 'status': 'open', 'strategy': "MomentumSpecialist_v2_Regime", # Updated strategy name
+                        'price_at_prediction': latest_row['close'], 'status': 'open', 'strategy': "MeanReversion_v1",
                         'atr_at_prediction': latest_row['ATRr_14'],
-                        'position_size_pct': position_size_pct
+                        'position_size_pct': 100.0
                     })
                     database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
-                    time.sleep(5)
+                    time.sleep(5) # Keeping the sleep to be respectful to the API
                 except Exception as e:
                     log.error(f"CRITICAL FAILURE on day {day_str} for {ticker}: {e}", exc_info=True)
             if i + 1 < len(simulation_days): save_state(simulation_days[i+1])
