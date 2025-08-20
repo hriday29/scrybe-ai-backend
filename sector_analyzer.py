@@ -6,21 +6,22 @@ from logger_config import log
 
 # Define which indices from the config file represent the core sectors we want to track.
 # We exclude broad market, thematic, and non-NSE indices for this analysis.
+# (in sector_analyzer.py)
 CORE_SECTOR_INDICES = {
     "NIFTY Bank": "^NSEBANK",
-    "NIFTY Financial Services": "NIFTY_FIN_SERVICE.NS",
+    "NIFTY Financial Services": "NIFTY_FIN_SERVICE.NS", # This one is often unstable, but we'll try it.
     "NIFTY IT": "^CNXIT",
     "NIFTY Auto": "^CNXAUTO",
     "NIFTY Pharma": "^CNXPHARMA",
     "NIFTY FMCG": "^CNXFMCG",
     "NIFTY Metal": "^CNXMETAL",
     "NIFTY PSU Bank": "^CNXPSUBANK",
-    "NIFTY Private Bank": "NIFTY_PRIVATEBANK.NS",
-    "NIFTY Oil & Gas": "NIFTY_OIL_AND_GAS.NS",
+    "NIFTY Private Bank": "^CNXPRIVBANK", # Corrected Ticker
+    "NIFTY Oil & Gas": "^CNXENERGY",      # Corrected Ticker
     "NIFTY India Consumption": "^CNXCONSUM",
 }
 
-BENCHMARK_INDEX = "NIFTY500.NS" # Using Nifty 500 as a broad market benchmark
+BENCHMARK_INDEX = "^CNX500" # Using Nifty 500 as a broad market benchmark
 LOOKBACK_PERIOD_DAYS = 21 # Approximately one trading month
 TOP_N_SECTORS = 5 # The number of top sectors we want to focus on
 
