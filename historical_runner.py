@@ -151,18 +151,30 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                         log.warning(f"Skipping {ticker} on {day_str} due to NaN indicators.")
                         continue
                     
-                    technical_indicators_for_ai = {
-                        "ADX_14": round(latest_row['ADX_14'], 2),
-                        "RSI_14": round(latest_row['RSI_14'], 2),
-                        "close_price": round(latest_row['close'], 2),
-                        "EMA_20": round(latest_row['EMA_20'], 2),
-                        "EMA_50": round(latest_row['EMA_50'], 2)
-                    }
+                    technical_indicators_for_ai = { "ADX_14": round(latest_row['ADX_14'], 2), "RSI_14": round(latest_row['RSI_14'], 2), "close_price": round(latest_row['close'], 2), "EMA_20": round(latest_row['EMA_20'], 2), "EMA_50": round(latest_row['EMA_50'], 2) }
                     
-                    final_analysis = analyzer.get_simple_momentum_signal(ticker, technical_indicators_for_ai)
+                    # --- START: RE-INTEGRATED KEY ROTATION LOGIC ---
+                    final_analysis = None
+                    for attempt in range(len(key_manager.api_keys)):
+                        try:
+                            final_analysis = analyzer.get_simple_momentum_signal(ticker, technical_indicators_for_ai)
+                            if final_analysis: # If successful, break the loop
+                                break 
+                        except Exception as e:
+                            if "429" in str(e):
+                                log.warning(f"Quota error on attempt {attempt + 1}. Rotating key...")
+                                if attempt < len(key_manager.api_keys) - 1:
+                                    analyzer = AIAnalyzer(api_key=key_manager.rotate_key()) # Re-initialize analyzer with new key
+                                else:
+                                    log.error("All API keys exhausted. Unable to get analysis.")
+                                    break # Exit loop if all keys failed
+                            else:
+                                log.error(f"A non-quota error occurred during AI analysis: {e}")
+                                break # Exit loop on other errors
+                    # --- END: RE-INTEGRATED KEY ROTATION LOGIC ---
 
                     if not final_analysis:
-                        log.warning(f"AI analysis failed for {ticker} on {day_str}, skipping.")
+                        log.warning(f"AI analysis failed for {ticker} on {day_str} after all retries, skipping.")
                         continue
 
                     # --- START: Market Regime Filter ---
