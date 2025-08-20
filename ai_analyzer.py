@@ -61,168 +61,57 @@ class AIAnalyzer:
             log.error(f"Single news impact analysis call failed. Error: {e}")
             return None
 
-    def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str) -> dict:
+    def get_simple_momentum_signal(self, ticker: str, technical_indicators: dict) -> dict:
         """
-        Generates a definitive, institutional-grade analysis using the "Apex" multi-layered model.
+        Analyzes a stock's technical indicators to generate a simple, rules-based momentum signal.
         """
-        log.info(f"Generating APEX analysis for {ticker}...")
+        log.info(f"Generating simple momentum signal for {ticker}...")
 
         system_instruction = """
-        You are "Apex," the Chief Investment Officer of a high-conviction quantitative fund. Your analysis is legendary for its depth, clarity, and synthesis of disparate data points. You will produce an institutional-grade report for a given stock, culminating in a decisive **Scrybe Score** and a **Predicted Gain Percentage**.
-        
-        **PROTOCOL - STEP 1: REVIEW YOUR OWN PERFORMANCE.**
-        Before you begin your analysis, you MUST first review the "Omni-Context" data provided: your "30-Day Performance Review" and your "Previous Day's Note." In your final verdict, you must explicitly state how this context has influenced your confidence and final score for today's decision.
+        You are a technical analyst specializing in identifying high-probability momentum swing trades. Your task is to analyze a stock's daily technical indicators and determine if it is in a strong, established trend suitable for a trade.
 
-        **PROTOCOL - STEP 2: MULTI-LAYERED THESIS FORMATION.**
-        You will now synthesize the following six layers of intelligence into a single, cohesive thesis. You must weigh each layer according to the specified importance.
+        **YOUR CRITERIA:**
+        1.  **Trend Confirmation (ADX):** A strong trend is indicated by an ADX value above 25.
+        2.  **Momentum (RSI):** In an uptrend, the RSI should be above 50, showing bullish momentum. In a downtrend, it should be below 50.
+        3.  **Trend Alignment (Moving Averages):** The closing price must be above the 20-day and 50-day moving averages for a BUY signal, and below for a SELL signal.
 
-        - **Layer 1: Macro & Inter-market Context (Weight: 15%):** What is the risk environment? Are global markets, oil, and currencies providing tailwinds or headwinds?
-        - **Layer 2: Sector & Relative Strength (Weight: 20%):** Is the stock's sector in favor? Crucially, is the stock stronger or weaker than the Nifty 50 itself? Relative strength is a key indicator of alpha.
-        - **Layer 3: The Fundamental "Moat" (Weight: 15%):** Assess the company's financial health. Is this a durable business with strong profitability and manageable debt, or is it fundamentally weak?
-        - **Layer 4: Multi-Timeframe Technicals (Weight: 30%):** This is your most heavily weighted factor. Analyze and state the trend on the **Weekly Chart (long-term context)**, the setup on the **Daily Chart (our trade timeframe)**, and the immediate momentum on the **15-Minute Chart (entry timing)**.
-        - **Layer 5: Options Sentiment (Weight: 10%):** Where is the derivatives market placing its bets? Analyze the Put-Call Ratio and key Open Interest levels to gauge market positioning.
-        - **Layer 6: The News Catalyst (Weight: 10%):** Is there a recent earnings report, news event, or story driving the price?
-
-        **PROTOCOL - STEP 3: THE FINAL SYNTHESIS & PREDICTION.**
-        1.  **Synthesize:** In your `analystVerdict`, provide a master narrative combining all six layers, starting with how your Omni-Context review shaped your thinking.
-        2.  **Score:** Provide a `scrybeScore` from -100 to +100 based on your conviction.
-        3.  **Predict Gain:** Provide a `predicted_gain_pct`. This is your realistic estimate of the potential profit for this trade setup over the strategy's holding period if the thesis plays out.
-        4.  **Assess Risk:** You MUST identify the `keyRisks_and_Mitigants` to your thesis.
-        5.  **Invalidate:** You MUST provide a specific `thesisInvalidationPoint` (a price or event) that would prove your analysis wrong.
-
-        **FINAL MANDATE: BE THOROUGH BUT CONCISE.** Your analysis must be deep, but your written output in all text fields (like `analystVerdict` and `keyInsight`) must be as efficient and succinct as possible. Use bullet points and direct language to avoid exceeding token limits.
+        **YOUR RESPONSE:**
+        You must respond with a JSON object. Based ONLY on the criteria above, determine the signal. If all criteria for a BUY or SELL are met, provide a high `convictionScore`. If some but not all are met, provide a lower score. If criteria are contradictory, the signal must be HOLD.
         """
 
         output_schema = {
             "type": "OBJECT",
             "properties": {
-                # --- Core Decision Metrics ---
-                "scrybeScore": {
-                    "type": "NUMBER",
-                    "description": "The final conviction score from -100 (high conviction sell) to +100 (high conviction buy)."
-                },
-                "signal": {
-                    "type": "STRING",
-                    "enum": ["BUY", "SELL", "HOLD"],
-                    "description": "The definitive trading signal derived from the Scrybe Score."
-                },
-                "confidence": {
-                    "type": "STRING",
-                    "enum": ["Low", "Medium", "High", "Very High"],
-                    "description": "The qualitative confidence level, logically derived from the Scrybe Score."
-                },
-                "predicted_gain_pct": {
-                    "type": "NUMBER",
-                    "description": "The realistic estimated profit percentage for this trade setup over the holding period."
-                },
-                "gain_prediction_rationale": {
-                    "type": "STRING",
-                    "description": "A concise justification for the predicted gain percentage, based on volatility and technical targets."
-                },
-                "keyInsight": {
-                    "type": "STRING",
-                    "description": "The single most important, actionable takeaway from the entire analysis."
-                },
-                "analystVerdict": {
-                    "type": "STRING",
-                    "description": "The master narrative synthesizing all six layers, starting with the influence of the Omni-Context review."
-                },
-
-                # --- Risk Assessment ---
-                "keyRisks_and_Mitigants": {
-                    "type": "OBJECT",
-                    "description": "The top two factors that could cause this trade to fail, and any mitigating factors.",
-                    "properties": {
-                        "risk_1": {"type": "STRING"},
-                        "risk_2": {"type": "STRING"},
-                        "mitigant": {"type": "STRING"}
-                    },
-                    "required": ["risk_1", "risk_2", "mitigant"]
-                },
-                "thesisInvalidationPoint": {
-                    "type": "STRING",
-                    "description": "A specific price level or event that, if breached, would definitively invalidate the entire thesis."
-                },
-
-                # --- Detailed Analysis Layers ---
-                "keyObservations": {
-                    "type": "OBJECT",
-                    "description": "The key points of agreement and disagreement across the analytical layers.",
-                    "properties": {
-                        "confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}},
-                        "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}}
-                    },
-                    "required": ["confluencePoints", "contradictionPoints"]
-                },
-                "technicalBreakdown": {
-                    "type": "OBJECT",
-                    "description": "A detailed breakdown of the multi-timeframe technical analysis.",
-                    "properties": {
-                        "weekly_view": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
-                        "daily_view": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
-                        "intraday_view": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
-                        "ADX": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
-                        "RSI": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
-                        "MACD": {"type": "OBJECT", "properties": {"value": {"type": "STRING"}, "status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}}
-                    },
-                    "required": ["weekly_view", "daily_view", "intraday_view", "ADX", "RSI", "MACD"]
-                },
-                "fundamentalBreakdown": {
-                    "type": "OBJECT",
-                    "description": "A summary of the company's financial health.",
-                    "properties": {
-                        "Valuation": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
-                        "Profitability": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}},
-                        "Ownership": {"type": "OBJECT", "properties": {"status": {"type": "STRING"}, "interpretation": {"type": "STRING"}}}
-                    },
-                    "required": ["Valuation", "Profitability", "Ownership"]
-                },
-                 "optionsBreakdown": {
-                    "type": "OBJECT",
-                    "description": "A summary of the options market sentiment.",
-                    "properties": {
-                        "sentiment": {"type": "STRING", "enum": ["Bullish", "Bearish", "Neutral", "Unavailable"]},
-                        "key_level": {"type": "STRING", "description": "The most significant strike price from Max OI."}
-                    },
-                     "required": ["sentiment", "key_level"]
-                },
-                 "newsBreakdown": {
-                    "type": "OBJECT",
-                    "description": "A summary of any recent news catalyst.",
-                    "properties": {
-                        "sentiment": {"type": "STRING", "enum": ["Positive", "Negative", "Neutral", "None"]},
-                        "summary": {"type": "STRING", "description": "A one-sentence summary of the key news."}
-                    },
-                    "required": ["sentiment", "summary"]
-                }
+                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
+                "convictionScore": {"type": "NUMBER", "description": "A score from 0-100 based on how well the criteria are met."},
+                "rationale": {"type": "STRING", "description": "A brief, one-sentence explanation of your decision based on the criteria."}
             },
-            "required": [
-                "scrybeScore", "signal", "confidence", "predicted_gain_pct", "gain_prediction_rationale",
-                "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "thesisInvalidationPoint",
-                "keyObservations", "technicalBreakdown", "fundamentalBreakdown", "optionsBreakdown", "newsBreakdown"
-            ]
+            "required": ["signal", "convictionScore", "rationale"]
         }
 
-        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema, max_output_tokens=16384)
-        model = genai.GenerativeModel(config.PRO_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+        generation_config = genai.types.GenerationConfig(
+            response_mime_type="application/json", 
+            response_schema=output_schema
+        )
+        
+        # Using FLASH model for efficiency on this simple task
+        model = genai.GenerativeModel(
+            config.FLASH_MODEL, 
+            system_instruction=system_instruction, 
+            generation_config=generation_config
+        )
 
         prompt_parts = [
-            "## Omni-Context Performance Review ##",
-            f"30-Day Strategic Review:\n{strategic_review}",
-            f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history}",
-            f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback}",
-            "\n## Today's Full Data Packet ##",
-            json.dumps(full_context)
+            f"Analyze the following technical data for {ticker} based ONLY on the rules provided in the system instruction.",
+            json.dumps(technical_indicators)
         ]
 
-        # The standard retry logic from your previous functions would go here
         max_retries = 4
         delay = 2
         for attempt in range(max_retries):
             try:
-                response = model.generate_content(prompt_parts, request_options={"timeout": 300})
+                response = model.generate_content(prompt_parts, request_options={"timeout": 120})
                 
-                # --- START: YOUR ENHANCED LOGIC ---
                 if not response.parts:
                     finish_reason = "Unavailable"
                     if hasattr(response, "candidates") and response.candidates:
@@ -233,7 +122,6 @@ class AIAnalyzer:
                         f"(finish_reason: {finish_reason}). Retrying..."
                     )
                     raise ValueError("Empty response from API")
-                # --- END: YOUR ENHANCED LOGIC ---
                 
                 return json.loads(response.text)
             except Exception as e:

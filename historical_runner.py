@@ -99,13 +99,9 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
         analyzer = AIAnalyzer(api_key=key_manager.get_key())
         log.info("Pre-loading all historical data...")
         
-        # --- START: DEFINITIVE FIX ---
-        # Load stock data (already returns lowercase from our fixed retriever)
         full_historical_data_cache = {ticker: data for ticker in stocks_to_test if (data := data_retriever.get_historical_stock_data(ticker, end_date=end_date)) is not None and len(data) > 252}
         
-        # Load Nifty data
         nifty_data_cache = data_retriever.get_historical_stock_data("^NSEI", end_date=end_date)
-        # Load India VIX data
         vix_data_cache = data_retriever.get_historical_stock_data("^INDIAVIX", end_date=end_date)
         
         benchmarks_data_cache = data_retriever.get_benchmarks_data(end_date=end_date)
@@ -126,7 +122,7 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
             if volatility_regime == "High-Risk":
                 log.warning(f"VOLATILITY FILTER ENGAGED: Market is in 'High-Risk' state. Standing aside for day {day_str}.")
                 if i + 1 < len(simulation_days): save_state(simulation_days[i+1])
-                continue # Skip all trading for this day
+                continue
             log.info(f"\n--- Simulating Day {i+1}/{len(simulation_days)}: {day_str} ---")
             nifty_slice = nifty_data_cache.loc[:day_str] if nifty_data_cache is not None else None
             current_regime = data_retriever.calculate_regime_from_data(nifty_slice)
@@ -137,96 +133,67 @@ def run_historical_test(batch_id: str, start_date: str, end_date: str, stocks_to
                     data_slice = full_historical_data_cache[ticker].loc[:day_str].copy()
                     if len(data_slice) < 252: continue
 
-                    # --- START: Dynamic Risk Overlay ---
                     risk_mode, position_size_pct = _get_dynamic_risk_mode(ticker, batch_id, current_day, cooldown_tracker)
                     if risk_mode == "Red":
-                        continue # Skip all analysis for this stock today
-                    # --- END: Dynamic Risk Overlay ---
-
+                        continue
+                    
                     log.info(f"--- Analyzing Ticker: {ticker} for {day_str} ---")
                     
-                    # Safe Indicator Calculation
                     data_slice.ta.bbands(length=20, append=True); data_slice.ta.rsi(length=14, append=True)
                     data_slice.ta.macd(fast=12, slow=26, signal=9, append=True); data_slice.ta.adx(length=14, append=True)
                     data_slice.ta.atr(length=14, append=True)
+                    data_slice.ta.ema(length=20, append=True)
+                    data_slice.ta.ema(length=50, append=True)
+
                     latest_row = data_slice.iloc[-1]
-                    required_cols = ['BBU_20_2.0', 'RSI_14', 'MACD_12_26_9', 'ADX_14', 'ATRr_14']
+                    required_cols = ['BBU_20_2.0', 'RSI_14', 'MACD_12_26_9', 'ADX_14', 'ATRr_14', 'EMA_20', 'EMA_50']
                     if latest_row[required_cols].isnull().any():
                         log.warning(f"Skipping {ticker} on {day_str} due to NaN indicators.")
                         continue
                     
-                    # Assemble Full Context for AI
-                    benchmarks_slice = benchmarks_data_cache.loc[:day_str] if benchmarks_data_cache is not None else pd.DataFrame()
-                    nifty_5d_change = (nifty_slice['close'].iloc[-1] / nifty_slice['close'].iloc[-6] - 1) * 100 if nifty_slice is not None and len(nifty_slice) > 5 else 0
-                    stock_5d_change = (latest_row['close'] / data_slice['close'].iloc[-6] - 1) * 100 if len(data_slice) > 5 else 0
-                    relative_strength = "Outperforming" if stock_5d_change > nifty_5d_change else "Underperforming"
-                    weekly_data = data_slice['close'].resample('W').last()
-                    weekly_trend = "Bullish" if len(weekly_data) > 2 and weekly_data.iloc[-1] > weekly_data.iloc[-2] else "Bearish"
-                    fundamental_proxies = data_retriever.get_fundamental_proxies(data_slice)
-
-                    full_context_for_ai = {
-                        "layer_1_macro_context": {"nifty_50_regime": current_regime},
-                        "layer_2_relative_strength": {"stock_5d_change_pct": f"{stock_5d_change:.2f}%", "relative_strength_vs_nifty50": relative_strength},
-                        "layer_3_fundamental_moat": fundamental_proxies,
-                        "layer_4_technicals": {"daily_indicators": {"ADX": f"{latest_row['ADX_14']:.2f}", "RSI": f"{latest_row['RSI_14']:.2f}"}, "weekly_trend": weekly_trend},
-                        "layer_5_options_sentiment": {"sentiment": "N/A in backtest"},
-                        "layer_6_news_catalyst": {"summary": "N/A in backtest"}
+                    # Assemble the simple, focused dictionary for our new specialist
+                    technical_indicators_for_ai = {
+                        "ADX_14": round(latest_row['ADX_14'], 2),
+                        "RSI_14": round(latest_row['RSI_14'], 2),
+                        "close_price": round(latest_row['close'], 2),
+                        "EMA_20": round(latest_row['EMA_20'], 2),
+                        "EMA_50": round(latest_row['EMA_50'], 2)
                     }
                     
-                    strategic_review_30d = _get_30_day_performance_review(current_day, batch_id)
-                    tactical_lookback_1d = _get_1_day_tactical_lookback(current_day, ticker, batch_id)
-                    per_stock_history = _get_per_stock_trade_history(ticker, batch_id, current_day)
-                    
-                    final_analysis = None
-                    for attempt in range(len(key_manager.api_keys)):
-                        try:
-                            final_analysis = analyzer.get_apex_analysis(
-                                ticker, full_context_for_ai, 
-                                strategic_review_30d, tactical_lookback_1d, per_stock_history
-                            )
-                            break
-                        
-                        except Exception as e:
-                            if "429" in str(e):
-                                log.warning(f"Quota error on attempt {attempt + 1}. Rotating key...")
-                                if attempt < len(key_manager.api_keys) - 1: analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
-                                else: log.error("All API keys exhausted."); break
-                            else: log.error(f"A non-quota error occurred: {e}"); break
-                    
-                    if not final_analysis: continue
-                    dvm_scores = _synthesize_dvm_from_apex(final_analysis, fundamental_proxies)
-                    original_signal = final_analysis.get('signal')
-                    scrybe_score = final_analysis.get('scrybeScore', 0)
-                    
-                    is_quality_ok = True if original_signal != 'BUY' else dvm_scores.get("d_score", 0) >= 40
-                    is_conviction_ok = abs(scrybe_score) >= config.APEX_SWING_STRATEGY['min_conviction_score']
-                    is_regime_ok = (original_signal == 'BUY' and current_regime == 'Bullish') or (original_signal == 'SELL' and current_regime == 'Bearish')
-                    
-                    final_signal = original_signal
-                    filter_reason, reason_code = None, None
-                    if original_signal in ['BUY', 'SELL']:
-                        if not is_regime_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Signal '{original_signal}' contradicts regime '{current_regime}'.", "REGIME_VETO"
-                        elif not is_conviction_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Conviction score ({scrybe_score}) is below threshold.", "LOW_CONVICTION"
-                        elif not is_quality_ok: final_signal, filter_reason, reason_code = 'HOLD', f"Vetoed: Poor fundamental quality (Proxy Score: {dvm_scores.get('d_score', 0)}).", "QUALITY_VETO"
-                    
+                    # Call our new "Technical Analyst" specialist
+                    final_analysis = analyzer.get_simple_momentum_signal(ticker, technical_indicators_for_ai)
+
+                    if not final_analysis:
+                        log.warning(f"AI analysis failed for {ticker} on {day_str}, skipping.")
+                        continue
+
+                    # Directly use the signal from our new specialist
+                    final_signal = final_analysis.get('signal')
                     prediction_doc = final_analysis.copy()
-                    prediction_doc['signal'] = final_signal
-                    if filter_reason:
-                        log.info(filter_reason)
-                        prediction_doc['analystVerdict'] = filter_reason; prediction_doc['reason_code'] = reason_code
-                    
+
                     if final_signal in ['BUY', 'SELL']:
                         entry_price = latest_row['close']
-                        predicted_gain = prediction_doc.get('predicted_gain_pct', 0)
-                        stop_multiplier = config.APEX_SWING_STRATEGY['stop_loss_atr_multiplier']
                         atr = latest_row['ATRr_14']
-                        stop_loss_price = entry_price - (stop_multiplier * atr) if final_signal == 'BUY' else entry_price + (stop_multiplier * atr)
-                        target_price = entry_price * (1 + (predicted_gain / 100.0)) if final_signal == 'BUY' else entry_price * (1 - (predicted_gain / 100.0))
-                        prediction_doc['tradePlan'] = { "entryPrice": round(entry_price, 2), "target": round(target_price, 2), "stopLoss": round(stop_loss_price, 2) }
+                        
+                        # Risk is defined as 2x ATR
+                        risk_per_share = 2 * atr
+                        
+                        # Stop loss is placed based on risk
+                        stop_loss_price = entry_price - risk_per_share if final_signal == 'BUY' else entry_price + risk_per_share
+                        
+                        # Target is calculated for a fixed 1.5 Risk-to-Reward Ratio
+                        reward_per_share = risk_per_share * 1.5
+                        target_price = entry_price + reward_per_share if final_signal == 'BUY' else entry_price - reward_per_share
+                        
+                        prediction_doc['tradePlan'] = {
+                            "entryPrice": round(entry_price, 2), 
+                            "target": round(target_price, 2), 
+                            "stopLoss": round(stop_loss_price, 2)
+                        }
                     
                     prediction_doc.update({
                         'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),
-                        'price_at_prediction': latest_row['close'], 'status': 'open', 'strategy': config.APEX_SWING_STRATEGY['name'],
+                        'price_at_prediction': latest_row['close'], 'status': 'open', 'strategy': "MomentumSpecialist_v1",
                         'atr_at_prediction': latest_row['ATRr_14'],
                         'position_size_pct': position_size_pct
                     })

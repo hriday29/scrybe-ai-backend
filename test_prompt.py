@@ -1,27 +1,28 @@
-# In test_prompt.py
+# test_prompt.py (MODIFIED FOR 'Technical Analyst' SPECIALIST)
 
 import pandas as pd
 import config
 from logger_config import log
 import data_retriever
-import technical_analyzer
 from ai_analyzer import AIAnalyzer
-from datetime import datetime
+import json
+import pandas_ta as ta
 
 def run_single_prompt_test():
     """
-    A fast, single-API-call test to validate the final, robust prompt and calculation architecture.
+    A fast, single-API-call test to validate our new 'get_simple_momentum_signal'
+    function, acting as our "Technical Analyst" specialist.
     """
     # --- 1. SETUP: Define our single test case ---
-    TICKER_TO_TEST = "TATASTEEL.NS"
-    DATE_TO_TEST = "2025-06-06"
+    TICKER_TO_TEST = "LT.NS"
+    DATE_TO_TEST = "2025-07-15" # A day within your failing backtest period
     
-    log.info(f"--- 🧪 Running Strategy Laboratory Test ---")
-    log.info(f"Testing new prompt on {TICKER_TO_TEST} for date {DATE_TO_TEST}")
+    log.info(f"--- 🧪 Running Specialist Laboratory Test ---")
+    log.info(f"Testing 'Technical Analyst' on {TICKER_TO_TEST} for date {DATE_TO_TEST}")
 
     # --- 2. PREPARATION: Recreate the exact data the AI will see ---
     try:
-        analyzer = AIAnalyzer(api_key=config.GEMINI_API_KEY)
+        analyzer = AIAnalyzer(api_key=config.GEMINI_API_KEY_POOL[0]) # Use a key from the pool
 
         full_historical_data = data_retriever.get_historical_stock_data(TICKER_TO_TEST, end_date=DATE_TO_TEST)
         if full_historical_data is None or len(full_historical_data) < 100:
@@ -30,9 +31,10 @@ def run_single_prompt_test():
 
         data_slice = full_historical_data.loc[:DATE_TO_TEST].copy()
 
-        data_slice.ta.bbands(length=20, append=True)
+        # --- EDIT: Added EMA calculations for our new criteria ---
+        data_slice.ta.ema(length=20, append=True)
+        data_slice.ta.ema(length=50, append=True)
         data_slice.ta.rsi(length=14, append=True)
-        data_slice.ta.macd(fast=12, slow=26, signal=9, append=True)
         data_slice.ta.adx(length=14, append=True)
         data_slice.ta.atr(length=14, append=True)
         data_slice.dropna(inplace=True)
@@ -41,57 +43,61 @@ def run_single_prompt_test():
         price_at_prediction = latest_row['close']
         atr_at_prediction = latest_row['ATRr_14']
 
-        log.info(f"Price at prediction: {price_at_prediction:.2f}, ATR at prediction: {atr_at_prediction:.2f}")
-
-        live_financial_data = {"curatedData": {}, "rawDataSheet": {"symbol": TICKER_TO_TEST}}
-        latest_indicators = {"ADX": f"{latest_row['ADX_14']:.2f}", "RSI": f"{latest_row['RSI_14']:.2f}", "Bollinger Band Width Percent": f"{(latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0'] * 100:.2f}"}
-        market_context = {"CURRENT_MARKET_REGIME": "Neutral"}
+        # --- EDIT: Assembled a simple, focused dictionary for the new specialist ---
+        technical_indicators_for_ai = {
+            "ADX_14": round(latest_row['ADX_14'], 2),
+            "RSI_14": round(latest_row['RSI_14'], 2),
+            "close_price": round(latest_row['close'], 2),
+            "EMA_20": round(latest_row['EMA_20'], 2),
+            "EMA_50": round(latest_row['EMA_50'], 2)
+        }
+        log.info(f"Data being sent to AI: {json.dumps(technical_indicators_for_ai)}")
 
     except Exception as e:
         log.error(f"Error during data preparation: {e}")
         return
 
-    # --- 3. EXECUTION: Make one single API call ---
-    log.info("Making a single API call to the Momentum Specialist prompt...")
-    analysis_result = analyzer.get_momentum_analysis(
-        live_financial_data=live_financial_data,
-        latest_atr=atr_at_prediction,
-        model_name=config.PRO_MODEL,
-        charts={}, # Empty charts for a faster, chartless test run
-        trading_horizon_text=config.VST_STRATEGY['horizon_text'],
-        technical_indicators=latest_indicators,
-        min_rr_ratio=config.VST_STRATEGY['min_rr_ratio'],
-        market_context=market_context,
-        options_data={},
-        macro_data={} # Add empty macro_data as it's a required argument
+    # --- 3. EXECUTION: Make one single API call to the new function ---
+    log.info("Making a single API call to the 'get_simple_momentum_signal'...")
+    
+    # --- EDIT: Changed the function call to our new specialist ---
+    analysis_result = analyzer.get_simple_momentum_signal(
+        ticker=TICKER_TO_TEST,
+        technical_indicators=technical_indicators_for_ai
     )
+    
     # --- 4. VERIFICATION & SIMULATION ---
-    # NEW, CORRECT VALIDATION CHECK
     if not analysis_result or 'signal' not in analysis_result:
         log.error("AI analysis failed or returned an invalid structure.")
         return
 
     log.info("--- ✅ AI Analysis Received Successfully ---")
     log.info(f"Signal: {analysis_result.get('signal')}")
-    log.info(f"Scrybe Score: {analysis_result.get('scrybeScore')}")
-    log.info(f"Verdict: {analysis_result.get('analystVerdict')}")
+    log.info(f"Conviction Score: {analysis_result.get('convictionScore')}")
+    log.info(f"Rationale: \"{analysis_result.get('rationale')}\"")
 
-    # SIMULATE the Python-based trade plan calculation
+    # --- EDIT: Simulate the NEW deterministic trade plan calculation ---
     if analysis_result.get('signal') in ['BUY', 'SELL']:
         log.info("--- ⚙️ Simulating Deterministic Trade Plan Calculation ---")
         signal = analysis_result['signal']
-        rr_ratio = config.VST_STRATEGY['min_rr_ratio']
         
-        stop_loss_price = price_at_prediction - (2 * atr_at_prediction) if signal == 'BUY' else price_at_prediction + (2 * atr_at_prediction)
-        target_price = price_at_prediction + ((2 * atr_at_prediction) * rr_ratio) if signal == 'BUY' else price_at_prediction - ((2 * atr_at_prediction) * rr_ratio)
+        # Risk is defined as 2x ATR
+        risk_per_share = 2 * atr_at_prediction
+        
+        # Stop loss is placed based on risk
+        stop_loss_price = price_at_prediction - risk_per_share if signal == 'BUY' else price_at_prediction + risk_per_share
+        
+        # Target is calculated for a fixed 1.5 Risk-to-Reward Ratio
+        reward_per_share = risk_per_share * 1.5
+        target_price = price_at_prediction + reward_per_share if signal == 'BUY' else price_at_prediction - reward_per_share
         
         final_trade_plan = {
             "entryPrice": round(price_at_prediction, 2),
             "target": round(target_price, 2),
             "stopLoss": round(stop_loss_price, 2),
-            "riskRewardRatio": rr_ratio
+            "riskRewardRatio": 1.5
         }
-        log.info(f"Final Calculated Trade Plan: {final_trade_plan}")
+        log.info(f"Final Calculated Trade Plan: {json.dumps(final_trade_plan)}")
     else:
         log.info("Signal is 'HOLD', no trade plan generated.")
 
