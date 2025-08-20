@@ -10,16 +10,14 @@ import yfinance as yf # We need yfinance for the sector info
 # to the corresponding sector names provided by Yahoo Finance. This is crucial for matching.
 SECTOR_NAME_MAPPING = {
     "NIFTY Bank": "Financial Services",
-    "NIFTY Financial Services": "Financial Services",
-    "NIFTY IT": "Information Technology",
-    "NIFTY Auto": "Automobile and Auto Components",
+    "NIFTY IT": "Technology",
+    "NIFTY Auto": "Consumer Cyclical",  # Corrected from "Automobile and Auto Components"
     "NIFTY Pharma": "Healthcare",
-    "NIFTY FMCG": "Fast Moving Consumer Goods",
-    "NIFTY Metal": "Metals & Mining",
+    "NIFTY FMCG": "Consumer Defensive", # Corrected from "Fast Moving Consumer Goods"
+    "NIFTY Metal": "Basic Materials",   # Corrected from "Metals & Mining"
     "NIFTY PSU Bank": "Financial Services",
-    "NIFTY Private Bank": "Financial Services",
     "NIFTY Oil & Gas": "Energy",
-    "NIFTY India Consumption": "Fast Moving Consumer Goods",
+    "NIFTY India Consumption": "Consumer Defensive", # Corrected from "Fast Moving Consumer Goods"
 }
 
 # --- Screener Technical Parameters ---
