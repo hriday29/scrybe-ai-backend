@@ -1,0 +1,64 @@
+name: APEX Dynamic Backtest Runner
+
+on:
+  workflow_dispatch:
+    inputs:
+      batch_id:
+        description: 'Unique ID for this APEX backtest (e.g., apex_july_2025)'
+        required: true
+      start_date:
+        description: 'Start date (YYYY-MM-DD)'
+        required: true
+        default: '2025-07-01'
+      end_date:
+        description: 'End date (YYYY-MM-DD)'
+        required: true
+        default: '2025-07-31'
+      stock_universe:
+        description: 'Comma-separated list of ALL stocks for the screener (e.g., all Nifty 50)'
+        required: true
+      fresh_run:
+        description: 'Delete all previous backtest data before starting?'
+        type: boolean
+        required: true
+        default: true
+
+jobs:
+  run-apex-backtest:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2160 # 36 hours for long runs
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the APEX orchestrator script
+        env:
+          ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
+          SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
+          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
+          GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
+          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
+          GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
+          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
+          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
+          GOOGLE_API_KEY_6: ${{ secrets.GOOGLE_API_KEY_6 }}
+          GOOGLE_API_KEY_7: ${{ secrets.GOOGLE_API_KEY_7 }}
+          GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
+          GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
+          GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
+        run: |
+          python main_orchestrator.py \
+            --batch_id "${{ github.event.inputs.batch_id }}" \
+            --start_date "${{ github.event.inputs.start_date }}" \
+            --end_date "${{ github.event.inputs.end_date }}" \
+            --stock_universe "${{ github.event.inputs.stock_universe }}" \
+            --fresh_run "${{ github.event.inputs.fresh_run }}"
