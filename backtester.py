@@ -62,82 +62,79 @@ def run_backtest(batch_id: str, full_historical_data_cache: dict):
 
     log.info(f"--- ✅ Consolidated Backtesting Job Finished for Batch: {batch_id} ---")
 
-# In backtester.py
-
 def process_single_trade(trade: dict, historical_data: pd.DataFrame):
     """
-    The APEX version of the trade processor.
+    V3.0: The final, intelligent trade management processor.
+    Uses a fixed initial stop-loss and a dynamic ATR-based trailing stop-loss to protect profits.
     """
     log.info(f"Processing trade for {trade['ticker']} predicted on {trade['prediction_date'].strftime('%Y-%m-%d')}...")
-    signal = trade.get('signal')
     
+    signal = trade.get('signal')
     active_strategy = config.APEX_SWING_STRATEGY
+    holding_period = active_strategy['holding_period']
+    use_trailing_stop = active_strategy['use_trailing_stop']
+    trailing_stop_atr_multiplier = active_strategy['trailing_stop_atr_multiplier']
 
     try:
         trade_plan = trade.get('tradePlan', {})
         target_price = float(trade_plan.get('target'))
-        stop_loss_price = float(trade_plan.get('stopLoss'))
+        initial_stop_loss = float(trade_plan.get('stopLoss'))
         atr_at_prediction = float(trade.get('atr_at_prediction', 0))
-        holding_period = active_strategy['holding_period']
-        if not all([target_price, stop_loss_price, atr_at_prediction]):
+        if not all([target_price, initial_stop_loss, atr_at_prediction]):
              raise ValueError("Essential trade plan values are missing or zero.")
     except (ValueError, KeyError, TypeError) as e:
         log.error(f"Invalid trade plan for {trade['ticker']}: {e}. Closing trade.")
-        # NOTE: Consider logging this as a failed trade result
         return
     
-    use_trailing_stop = active_strategy.get('use_trailing_stop', False)
-    trailing_stop_atr_multiplier = active_strategy.get('trailing_stop_atr_multiplier', 1.5)
-    
-    current_stop_loss = stop_loss_price
-    
+    current_stop_loss = initial_stop_loss # Start with the initial stop
     prediction_date = trade['prediction_date'].replace(tzinfo=None)
     trading_days_since = historical_data[historical_data.index > prediction_date]
 
     if trading_days_since.empty:
-        log.info(f"--> Trade for {trade['ticker']} still open (no new market data available yet).")
         return
 
-    # --- START OF FIX ---
-    # The loop now correctly uses lowercase .low, .high, and .close
     for i, day_data in enumerate(trading_days_since.itertuples()):
         day_number = i + 1
         current_day_date = day_data.Index.to_pydatetime().replace(tzinfo=timezone.utc)
 
         if signal == 'BUY':
-            if day_data.low <= current_stop_loss: # Changed from .Low
-                reason = "Trade Closed - Trailing Stop Hit" if use_trailing_stop and current_stop_loss > stop_loss_price else "Trade Closed - Stop-Loss Hit"
+            if day_data.low <= current_stop_loss:
+                reason = "Trade Closed - Trailing Stop Hit" if current_stop_loss > initial_stop_loss else "Trade Closed - Stop-Loss Hit"
                 log_and_close_trade(trade, day_number, reason, current_stop_loss, current_day_date)
                 return
-            if day_data.high >= target_price: # Changed from .High
+            if day_data.high >= target_price:
                 log_and_close_trade(trade, day_number, "Trade Closed - Target Hit", target_price, current_day_date)
                 return
+            
+            # Trailing Stop Logic
             if use_trailing_stop:
-                new_potential_stop = day_data.high - (atr_at_prediction * trailing_stop_atr_multiplier) # Changed from .High
+                new_potential_stop = day_data.high - (atr_at_prediction * trailing_stop_atr_multiplier)
                 if new_potential_stop > current_stop_loss:
+                    log.info(f"Trailing Stop for {trade['ticker']} moved UP to {new_potential_stop:.2f}")
                     current_stop_loss = new_potential_stop
-                    log.info(f"Trailing stop for {trade['ticker']} moved up to {current_stop_loss:.2f}")
 
         elif signal == 'SELL':
-            if day_data.high >= current_stop_loss: # Changed from .High
-                reason = "Trade Closed - Trailing Stop Hit" if use_trailing_stop and current_stop_loss < stop_loss_price else "Trade Closed - Stop-Loss Hit"
+            # This logic is for future use if we implement short-selling
+            if day_data.high >= current_stop_loss:
+                reason = "Trade Closed - Trailing Stop Hit" if current_stop_loss < initial_stop_loss else "Trade Closed - Stop-Loss Hit"
                 log_and_close_trade(trade, day_number, reason, current_stop_loss, current_day_date)
                 return
-            if day_data.low <= target_price: # Changed from .Low
+            if day_data.low <= target_price:
                 log_and_close_trade(trade, day_number, "Trade Closed - Target Hit", target_price, current_day_date)
                 return
+            
             if use_trailing_stop:
-                new_potential_stop = day_data.low + (atr_at_prediction * trailing_stop_atr_multiplier) # Changed from .Low
+                new_potential_stop = day_data.low + (atr_at_prediction * trailing_stop_atr_multiplier)
                 if new_potential_stop < current_stop_loss:
+                    log.info(f"Trailing Stop for {trade['ticker']} moved DOWN to {new_potential_stop:.2f}")
                     current_stop_loss = new_potential_stop
-                    log.info(f"Trailing stop for {trade['ticker']} moved down to {current_stop_loss:.2f}")
-
+        
         if day_number >= holding_period:
-            log_and_close_trade(trade, day_number, f"Trade Closed - {holding_period}-Day Time Exit", day_data.close, current_day_date) # Changed from .Close
+            log_and_close_trade(trade, day_number, f"Trade Closed - {holding_period}-Day Time Exit", day_data.close, current_day_date)
             return
-    # --- END OF FIX ---
 
     log.info(f"--> Trade for {trade['ticker']} still open after {len(trading_days_since)} days.")
+
 
 def log_and_close_trade(trade: dict, evaluation_day: int, event: str, event_price: float, close_date: datetime):
     """Calculates gross and net returns and saves the final result."""

@@ -45,14 +45,15 @@ PRO_MODEL = "gemini-2.5-pro"
 FLASH_MODEL = "gemini-2.5-flash"
 
 # --- Strategy Profiles ---
+
 APEX_SWING_STRATEGY = {
     "name": "ApexSwing",
     "holding_period": 10,
     "stop_loss_atr_multiplier": 2.0,
-    "profit_capture_pct": 50.0,
+    "profit_target_rr_multiple": 2.0, 
     "min_conviction_score": 70,
-    "use_trailing_stop": True,
-    "trailing_stop_atr_multiplier": 1.5
+    "use_trailing_stop": True, # SET THIS TO True
+    "trailing_stop_atr_multiplier": 1.5 # ADD THIS LINE (must be less than the initial stop)
 }
 
 # --- Market Index Analysis Config ---
@@ -151,4 +152,12 @@ DYNAMIC_RISK_CONFIG = {
     'yellow_mode_position_size_pct': 50.0,
     'red_mode_position_size_pct': 0.0,    # The "Circuit Breaker" - no new trades
     'cooldown_period_days': 5             # Days a stock stays in Red Mode
+}
+HIGH_RISK_VIX_THRESHOLD = 20.0
+
+BACKTEST_PORTFOLIO_CONFIG = {
+    "initial_capital": 100000.0,
+    "position_size_pct_of_capital": 10.0, # This will no longer be used directly
+    "sizing_method": "risk_parity", # ADD THIS LINE
+    "risk_per_trade_pct": 1.0 # ADD THIS LINE (means we risk 1% of capital per trade)
 }
