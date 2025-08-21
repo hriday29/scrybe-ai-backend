@@ -69,12 +69,11 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
     if is_fresh_run:
         log.warning("FRESH RUN ENABLED: Deleting all previous data.")
         database_manager.clear_scheduler_data()
-        if os.path.exists(STATE_FILE): os.remove(STATE_FILE)
     
     try:
         key_manager = APIKeyManager(api_keys=config.GEMINI_API_KEY_POOL)
         analyzer = AIAnalyzer(api_key=key_manager.get_key())
-        log.info("Pre-loading all historical data for the stock universe...")
+        log.info("Pre-loading all historical data...")
         full_historical_data_cache = {ticker: data for ticker in stock_universe if (data := data_retriever.get_historical_stock_data(ticker, end_date=end_date)) is not None and len(data) > 252}
         nifty_data = data_retriever.get_historical_stock_data("^NSEI", end_date=end_date)
         vix_data = data_retriever.get_historical_stock_data("^INDIAVIX", end_date=end_date)
@@ -83,10 +82,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
         log.fatal(f"Failed during pre-run initialization. Error: {e}")
         return
 
-    resumed_start_date = load_state()
-    if resumed_start_date: start_date = resumed_start_date
     simulation_days = pd.bdate_range(start=start_date, end=end_date)
-    
     portfolio_config = config.BACKTEST_PORTFOLIO_CONFIG
     current_equity = portfolio_config['initial_capital']
 
@@ -107,11 +103,10 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
             
             market_regime = data_retriever.calculate_regime_from_data(nifty_data.loc[:day_str])
             strong_sectors = sector_analyzer.get_top_performing_sectors()
-            stocks_for_today = quantitative_screener.generate_dynamic_watchlist(strong_sectors)
+            stocks_for_today = quantitative_screener.generate_dynamic_watchlist(strong_sectors, full_historical_data_cache)
             
             if not stocks_for_today:
                 log.warning("The dynamic funnel returned no stocks for today. Proceeding to next day.")
-                if i + 1 < len(simulation_days): save_state(simulation_days[i+1])
                 continue
 
             for ticker in stocks_for_today:
@@ -154,6 +149,12 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     if original_signal in ['BUY', 'SELL']:
                         is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
                         is_regime_ok = (original_signal == 'BUY' and market_regime != 'Bearish') or (original_signal == 'SELL' and market_regime != 'Bullish')
+                        
+                        entry_price = latest_row['close']
+                        potential_risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr_at_prediction
+                        potential_reward_per_share = potential_risk_per_share * active_strategy['profit_target_rr_multiple']
+                        risk_reward_ratio = potential_reward_per_share / potential_risk_per_share if potential_risk_per_share > 0 else 0
+                        is_rr_ok = risk_reward_ratio >= 1.5
 
                         if original_signal == 'BUY' and market_is_high_risk:
                             final_signal, veto_reason = 'HOLD', f"VETOED BUY: High market VIX ({latest_vix:.2f})"
@@ -161,55 +162,38 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                             final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Signal contradicts Market Regime ({market_regime})"
                         elif not is_conviction_ok:
                             final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Conviction Score ({scrybe_score}) is below threshold"
+                        elif not is_rr_ok:
+                            final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Poor Risk/Reward Ratio ({risk_reward_ratio:.2f}R)"
                     
-                    prediction_doc = final_analysis
+                    prediction_doc = final_analysis.copy()
                     prediction_doc['signal'] = final_signal
 
                     if final_signal in ['BUY', 'SELL']:
-                        entry_price = latest_row['close']
-                        potential_risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr_at_prediction
-                        potential_reward_per_share = potential_risk_per_share * active_strategy['profit_target_rr_multiple']
-                        
-                        rupee_risk_per_trade = current_equity * (portfolio_config['risk_per_trade_pct'] / 100.0)
-                        num_shares_to_trade = int(rupee_risk_per_trade / potential_risk_per_share) if potential_risk_per_share > 0 else 0
-                        position_size_rupees = num_shares_to_trade * entry_price
-                        position_size_pct = (position_size_rupees / current_equity) * 100
-                        
-                        log.info(f"RISK CALC: Portfolio Risk: ₹{rupee_risk_per_trade:.2f}. Per-Share Risk: ₹{potential_risk_per_share:.2f}. ==> Position Size: {num_shares_to_trade} shares ({position_size_pct:.2f}%).")
+                        num_shares_to_trade = int((current_equity * (portfolio_config['risk_per_trade_pct'] / 100.0)) / potential_risk_per_share) if potential_risk_per_share > 0 else 0
+                        position_size_pct = (num_shares_to_trade * entry_price / current_equity) * 100
+                        log.info(f"RISK CALC: Portfolio Risk: ₹{current_equity * (portfolio_config['risk_per_trade_pct'] / 100.0):.2f}. Per-Share Risk: ₹{potential_risk_per_share:.2f}. ==> Position Size: {num_shares_to_trade} shares ({position_size_pct:.2f}%).")
                         
                         stop_loss_price = (entry_price - potential_risk_per_share) if final_signal == 'BUY' else (entry_price + potential_risk_per_share)
                         target_price = (entry_price + potential_reward_per_share) if final_signal == 'BUY' else (entry_price - potential_reward_per_share)
                         
                         prediction_doc['tradePlan'] = {"entryPrice": round(entry_price, 2), "target": round(target_price, 2), "stopLoss": round(stop_loss_price, 2)}
-                        prediction_doc.update({
-                            'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),
-                            'price_at_prediction': entry_price, 'status': 'open', 'strategy': "ApexSwing_v4_Full",
-                            'atr_at_prediction': atr_at_prediction, 'position_size_pct': position_size_pct,
-                        })
+                        prediction_doc.update({'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(), 'price_at_prediction': entry_price, 'status': 'open', 'strategy': "ApexSwing_v4_Full", 'atr_at_prediction': atr_at_prediction, 'position_size_pct': position_size_pct})
                         database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
-                        time.sleep(20)
                     else:
-                        prediction_doc['tradePlan'] = None
-                        prediction_doc.update({
-                            'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),
-                            'price_at_prediction': latest_row['close'], 'status': 'vetoed' if veto_reason else 'hold', 
-                            'strategy': "ApexSwing_v4_Full", 'atr_at_prediction': atr_at_prediction, 'veto_reason': veto_reason
-                        })
+                        prediction_doc.update({'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),'price_at_prediction': latest_row['close'], 'status': 'vetoed' if veto_reason else 'hold', 'strategy': "ApexSwing_v4_Full", 'atr_at_prediction': atr_at_prediction, 'veto_reason': veto_reason})
                         database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
-                        time.sleep(5)
 
                 except Exception as e:
                     log.error(f"CRITICAL FAILURE on day {day_str} for {ticker}: {e}", exc_info=True)
                     if "429" in str(e):
                         analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                     continue
-
-                log.info("Pausing for 45 seconds to respect API rate limit...")
-                time.sleep(45)
-
-            if i + 1 < len(simulation_days): save_state(simulation_days[i+1])
-    
-    if os.path.exists(STATE_FILE): os.remove(STATE_FILE)
+                finally:
+                    # This guarantees the pause happens after every stock analysis, even if an error occurs
+                    pause_duration = 5 if final_signal in ['BUY', 'SELL'] else 2
+                    log.info(f"Pausing for {pause_duration} seconds...")
+                    time.sleep(pause_duration)
+            
     log.info("\n--- ✅ APEX Dynamic Simulation Finished! ---")
     database_manager.close_db_connection()
 
@@ -219,12 +203,14 @@ if __name__ == "__main__":
     parser.add_argument('--start_date', required=True)
     parser.add_argument('--resume_date', required=False, default=None)
     parser.add_argument('--end_date', required=True)
-    parser.add_argument('--stock_universe', required=True, help="Comma-separated list defining the total stock UNIVERSE to screen from (e.g., all Nifty 50 stocks)")
+    parser.add_argument('--stock_universe', required=True, help="Comma-separated list defining the total stock UNIVERSE to screen from")
     parser.add_argument('--fresh_run', type=lambda x: (str(x).lower() == 'true'))
     args = parser.parse_args()
+    
     effective_start_date = args.start_date
-    if args.resume_date:
+    if args.resume_date and not args.fresh_run:
         log.warning(f"RESUME DATE PROVIDED. Overriding start date. The simulation will resume from: {args.resume_date}")
         effective_start_date = args.resume_date
+    
     stocks_list = [stock.strip() for stock in args.stock_universe.split(',')]
-    run_simulation(batch_id=args.batch_id, start_date=args.start_date, end_date=args.end_date, stock_universe=stocks_list, is_fresh_run=args.fresh_run)
+    run_simulation(batch_id=args.batch_id, start_date=effective_start_date, end_date=args.end_date, stock_universe=stocks_list, is_fresh_run=args.fresh_run)
