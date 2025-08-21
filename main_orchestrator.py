@@ -204,8 +204,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                         analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                     continue
 
-                log.info("Pausing for 33 seconds to respect API rate limit...")
-                time.sleep(33)
+                log.info("Pausing for 45 seconds to respect API rate limit...")
+                time.sleep(45)
 
             if i + 1 < len(simulation_days): save_state(simulation_days[i+1])
     

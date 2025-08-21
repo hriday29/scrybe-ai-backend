@@ -62,6 +62,7 @@ jobs:
           python main_orchestrator.py \
             --batch_id "${{ github.event.inputs.batch_id }}" \
             --start_date "${{ github.event.inputs.start_date }}" \
+            --resume_date "${{ github.event.inputs.resume_date }}" \
             --end_date "${{ github.event.inputs.end_date }}" \
             --stock_universe "${{ github.event.inputs.stock_universe }}" \
             --fresh_run "${{ github.event.inputs.fresh_run }}"
