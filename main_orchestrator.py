@@ -103,7 +103,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
             
             market_regime = data_retriever.calculate_regime_from_data(nifty_data.loc[:day_str])
             strong_sectors = sector_analyzer.get_top_performing_sectors()
-            stocks_for_today = quantitative_screener.generate_dynamic_watchlist(strong_sectors, full_historical_data_cache)
+            stocks_for_today = quantitative_screener.generate_dynamic_watchlist(strong_sectors, full_historical_data_cache, day_str)
             
             if not stocks_for_today:
                 log.warning("The dynamic funnel returned no stocks for today. Proceeding to next day.")
