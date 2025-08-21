@@ -44,16 +44,15 @@ if not EMAIL_RECIPIENTS:
 PRO_MODEL = "gemini-2.5-pro"
 FLASH_MODEL = "gemini-2.5-flash"
 
-# --- Strategy Profiles ---
-
+# --- Strategy Profile ---
 APEX_SWING_STRATEGY = {
     "name": "ApexSwing",
     "holding_period": 10,
     "stop_loss_atr_multiplier": 2.0,
     "profit_target_rr_multiple": 2.0, 
-    "min_conviction_score": 70,
-    "use_trailing_stop": True, # SET THIS TO True
-    "trailing_stop_atr_multiplier": 1.5 # ADD THIS LINE (must be less than the initial stop)
+    "min_conviction_score": 95,
+    "use_trailing_stop": True,
+    "trailing_stop_atr_multiplier": 1.5,
 }
 
 # --- Market Index Analysis Config ---

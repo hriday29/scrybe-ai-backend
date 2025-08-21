@@ -85,6 +85,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
     simulation_days = pd.bdate_range(start=start_date, end=end_date)
     portfolio_config = config.BACKTEST_PORTFOLIO_CONFIG
     current_equity = portfolio_config['initial_capital']
+    active_strategy = config.APEX_SWING_STRATEGY
 
     if not simulation_days.empty:
         log.info(f"\n--- Starting simulation for {len(simulation_days)} trading days ---")
@@ -98,7 +99,6 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 if market_is_high_risk:
                     log.warning(f"!! MASTER RISK OVERLAY ENGAGED !! VIX is at {latest_vix:.2f}. No new BUY signals will be processed today.")
             except (KeyError, IndexError):
-                log.warning("Could not retrieve VIX for today. Proceeding with caution.")
                 market_is_high_risk = False
             
             market_regime = data_retriever.calculate_regime_from_data(nifty_data.loc[:day_str])
@@ -110,6 +110,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 continue
 
             for ticker in stocks_for_today:
+                final_signal = "HOLD"
                 try:
                     point_in_time_data = full_historical_data_cache.get(ticker).loc[:day_str].copy()
                     if len(point_in_time_data) < 252: continue
@@ -119,13 +120,11 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     strategic_review = _get_30_day_performance_review(current_day, batch_id)
                     tactical_lookback = _get_1_day_tactical_lookback(current_day, ticker, batch_id)
                     per_stock_history = _get_per_stock_trade_history(ticker, batch_id, current_day)
-                    
                     latest_row = point_in_time_data.iloc[-1]
                     point_in_time_data.ta.atr(length=14, append=True)
                     atr_at_prediction = point_in_time_data['ATRr_14'].iloc[-1]
                     nifty_5d_change = (nifty_data.loc[:day_str]['close'].iloc[-1] / nifty_data.loc[:day_str]['close'].iloc[-6] - 1) * 100
                     stock_5d_change = (latest_row['close'] / point_in_time_data['close'].iloc[-6] - 1) * 100
-                    
                     full_context = {
                         "layer_1_macro_context": {"nifty_50_regime": market_regime},
                         "layer_2_relative_strength": {"relative_strength_vs_nifty50": "Outperforming" if stock_5d_change > nifty_5d_change else "Underperforming"},
@@ -135,35 +134,26 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     }
                     
                     final_analysis = analyzer.get_apex_analysis(ticker, full_context, strategic_review, tactical_lookback, per_stock_history)
-                    
                     if not final_analysis:
                         log.warning(f"Apex AI analysis failed for {ticker}, skipping.")
                         continue
-
-                    active_strategy = config.APEX_SWING_STRATEGY
+                    
                     original_signal = final_analysis.get('signal')
                     scrybe_score = final_analysis.get('scrybeScore', 0)
                     final_signal = original_signal
                     veto_reason = None
-                    
                     if original_signal in ['BUY', 'SELL']:
                         is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
                         is_regime_ok = (original_signal == 'BUY' and market_regime != 'Bearish') or (original_signal == 'SELL' and market_regime != 'Bullish')
-                        
                         entry_price = latest_row['close']
                         potential_risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr_at_prediction
                         potential_reward_per_share = potential_risk_per_share * active_strategy['profit_target_rr_multiple']
                         risk_reward_ratio = potential_reward_per_share / potential_risk_per_share if potential_risk_per_share > 0 else 0
                         is_rr_ok = risk_reward_ratio >= 1.5
-
-                        if original_signal == 'BUY' and market_is_high_risk:
-                            final_signal, veto_reason = 'HOLD', f"VETOED BUY: High market VIX ({latest_vix:.2f})"
-                        elif not is_regime_ok:
-                            final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Signal contradicts Market Regime ({market_regime})"
-                        elif not is_conviction_ok:
-                            final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Conviction Score ({scrybe_score}) is below threshold"
-                        elif not is_rr_ok:
-                            final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Poor Risk/Reward Ratio ({risk_reward_ratio:.2f}R)"
+                        if original_signal == 'BUY' and market_is_high_risk: final_signal, veto_reason = 'HOLD', f"VETOED BUY: High market VIX ({latest_vix:.2f})"
+                        elif not is_regime_ok: final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Signal contradicts Market Regime ({market_regime})"
+                        elif not is_conviction_ok: final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Conviction Score ({scrybe_score}) is below threshold of {active_strategy['min_conviction_score']}"
+                        elif not is_rr_ok: final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Poor Risk/Reward Ratio ({risk_reward_ratio:.2f}R)"
                     
                     prediction_doc = final_analysis.copy()
                     prediction_doc['signal'] = final_signal
@@ -172,15 +162,13 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                         num_shares_to_trade = int((current_equity * (portfolio_config['risk_per_trade_pct'] / 100.0)) / potential_risk_per_share) if potential_risk_per_share > 0 else 0
                         position_size_pct = (num_shares_to_trade * entry_price / current_equity) * 100
                         log.info(f"RISK CALC: Portfolio Risk: ₹{current_equity * (portfolio_config['risk_per_trade_pct'] / 100.0):.2f}. Per-Share Risk: ₹{potential_risk_per_share:.2f}. ==> Position Size: {num_shares_to_trade} shares ({position_size_pct:.2f}%).")
-                        
                         stop_loss_price = (entry_price - potential_risk_per_share) if final_signal == 'BUY' else (entry_price + potential_risk_per_share)
                         target_price = (entry_price + potential_reward_per_share) if final_signal == 'BUY' else (entry_price - potential_reward_per_share)
-                        
                         prediction_doc['tradePlan'] = {"entryPrice": round(entry_price, 2), "target": round(target_price, 2), "stopLoss": round(stop_loss_price, 2)}
-                        prediction_doc.update({'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(), 'price_at_prediction': entry_price, 'status': 'open', 'strategy': "ApexSwing_v4_Full", 'atr_at_prediction': atr_at_prediction, 'position_size_pct': position_size_pct})
+                        prediction_doc.update({'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(), 'price_at_prediction': entry_price, 'status': 'open', 'strategy': "ApexSwing_v5_HighConviction", 'atr_at_prediction': atr_at_prediction, 'position_size_pct': position_size_pct})
                         database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
                     else:
-                        prediction_doc.update({'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),'price_at_prediction': latest_row['close'], 'status': 'vetoed' if veto_reason else 'hold', 'strategy': "ApexSwing_v4_Full", 'atr_at_prediction': atr_at_prediction, 'veto_reason': veto_reason})
+                        prediction_doc.update({'analysis_id': str(uuid.uuid4()), 'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),'price_at_prediction': latest_row['close'], 'status': 'vetoed' if veto_reason else 'hold', 'strategy': "ApexSwing_v5_HighConviction", 'atr_at_prediction': atr_at_prediction, 'veto_reason': veto_reason})
                         database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
 
                 except Exception as e:
@@ -189,8 +177,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                         analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                     continue
                 finally:
-                    # This guarantees the pause happens after every stock analysis, even if an error occurs
-                    pause_duration = 5 if final_signal in ['BUY', 'SELL'] else 2
+                    pause_duration = 45 if final_signal in ['BUY', 'SELL'] else 5
                     log.info(f"Pausing for {pause_duration} seconds...")
                     time.sleep(pause_duration)
             
