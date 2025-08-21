@@ -10,6 +10,9 @@ on:
         description: 'Start date (YYYY-MM-DD)'
         required: true
         default: '2025-07-01'
+      resume_date:
+        description: 'OPTIONAL: Resume from this date (YYYY-MM-DD). Overrides start_date.'
+        required: false
       end_date:
         description: 'End date (YYYY-MM-DD)'
         required: true

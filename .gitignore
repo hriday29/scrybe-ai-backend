@@ -3,6 +3,7 @@
 
 # Firebase service account key
 firebase-service-account.json
+/secrets/
 
 # Python bytecode and cache
 __pycache__/

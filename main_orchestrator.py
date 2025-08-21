@@ -204,6 +204,9 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                         analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                     continue
 
+                log.info("Pausing for 33 seconds to respect API rate limit...")
+                time.sleep(33)
+
             if i + 1 < len(simulation_days): save_state(simulation_days[i+1])
     
     if os.path.exists(STATE_FILE): os.remove(STATE_FILE)
@@ -214,9 +217,14 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the APEX Dynamic Funnel historical backtest.")
     parser.add_argument('--batch_id', required=True)
     parser.add_argument('--start_date', required=True)
+    parser.add_argument('--resume_date', required=False, default=None)
     parser.add_argument('--end_date', required=True)
     parser.add_argument('--stock_universe', required=True, help="Comma-separated list defining the total stock UNIVERSE to screen from (e.g., all Nifty 50 stocks)")
     parser.add_argument('--fresh_run', type=lambda x: (str(x).lower() == 'true'))
     args = parser.parse_args()
+    effective_start_date = args.start_date
+    if args.resume_date:
+        log.warning(f"RESUME DATE PROVIDED. Overriding start date. The simulation will resume from: {args.resume_date}")
+        effective_start_date = args.resume_date
     stocks_list = [stock.strip() for stock in args.stock_universe.split(',')]
     run_simulation(batch_id=args.batch_id, start_date=args.start_date, end_date=args.end_date, stock_universe=stocks_list, is_fresh_run=args.fresh_run)
