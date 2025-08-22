@@ -156,7 +156,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                             log.error(f"Quota exceeded for {ticker}. Rotating key and retrying...")
                             analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                             retries += 1
-                            time.sleep(2) # A small pause before the next attempt
+                            log.info("Pausing for 35 seconds to respect RPM limits...")
+                            time.sleep(35) # A long pause to guarantee the RPM limit resets
                         else:
                             # For any other type of error, we don't retry. We log it and break.
                             log.error(f"CRITICAL FAILURE (non-quota) on day {day_str} for {ticker}: {e}", exc_info=True)

@@ -48,7 +48,7 @@ class AIAnalyzer:
         4.  **Assess Risk:** You MUST identify the `keyRisks_and_Mitigants` to your thesis.
         5.  **Invalidate:** You MUST provide a specific `thesisInvalidationPoint` (a price or event) that would prove your analysis wrong.
 
-        **FINAL MANDATE: BE THOROUGH BUT CONCISE.** Your analysis must be deep, but your written output in all text fields (like `analystVerdict` and `keyInsight`) must be as efficient and succinct as possible. Use bullet points and direct language to avoid exceeding token limits.
+        **FINAL MANDATE: BE THOROUGH BUT EXTREMELY CONCISE.** Your analysis must be deep, but your written output in all text fields (like `analystVerdict` and `keyInsight`) must be as efficient and succinct as possible. **Use bullet points and aggressive summarization; it is critical to stay within token limits.**
         """
 
         output_schema = {
