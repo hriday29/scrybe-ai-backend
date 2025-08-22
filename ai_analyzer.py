@@ -81,9 +81,25 @@ class AIAnalyzer:
             ]
         }
 
-        # NOTE: Using the PRO_MODEL for this high-level analysis
-        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema, max_output_tokens=16384)
-        model = genai.GenerativeModel(config.PRO_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+        generation_config = genai.types.GenerationConfig(
+        response_mime_type="application/json", 
+        response_schema=output_schema,
+        max_output_tokens=16384
+        )
+        
+        safety_settings = {
+            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
+            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
+        }
+
+        model = genai.GenerativeModel(
+            config.PRO_MODEL, 
+            system_instruction=system_instruction, 
+            generation_config=generation_config,
+            safety_settings=safety_settings 
+        )
 
         prompt_parts = [
             "## Omni-Context Performance Review ##",
@@ -94,36 +110,16 @@ class AIAnalyzer:
             json.dumps(full_context)
         ]
 
-        max_retries = 4
-        delay = 2
-        for attempt in range(max_retries):
-            try:
-                response = model.generate_content(prompt_parts, request_options={"timeout": 300})
-                
-                if not response.parts:
-                    finish_reason = "Unavailable"
-                    if hasattr(response, "candidates") and response.candidates:
-                        finish_reason = getattr(response.candidates[0], "finish_reason", "Unknown")
-                    
-                    log.warning(
-                        f"[AI] Attempt {attempt + 1} for {ticker} returned an empty response "
-                        f"(finish_reason: {finish_reason}). Retrying..."
-                    )
-                    raise ValueError("Empty response from API")
-                
-                return json.loads(response.text)
-            except Exception as e:
-                log.warning(f"[AI] Attempt {attempt + 1} for {ticker} failed. Error: {e}")
-                if "429" in str(e) and "quota" in str(e).lower():
-                    log.error("Quota exceeded. Raising exception to trigger key rotation.")
-                    raise e
-                if attempt < max_retries - 1:
-                    log.info(f"Waiting for {delay} seconds before retrying...")
-                    time.sleep(delay)
-                    delay *= 2
-                else:
-                    log.error(f"[AI] Final attempt failed for {ticker}. Skipping analysis.")
-                    return None
+        response = model.generate_content(prompt_parts, request_options={"timeout": 300})
+    
+        if not response.parts:
+            finish_reason_detail = "Unknown"
+            if hasattr(response, 'prompt_feedback') and hasattr(response.prompt_feedback, 'block_reason'):
+                finish_reason_detail = response.prompt_feedback.block_reason.name
+            raise ValueError(f"Empty or blocked response from API. Reason: {finish_reason_detail}")
+        
+        log.info(f"✅ Successfully received and parsed APEX analysis for {ticker}.")
+        return json.loads(response.text)
 
     def get_single_news_impact_analysis(self, article: dict) -> dict:
         """
