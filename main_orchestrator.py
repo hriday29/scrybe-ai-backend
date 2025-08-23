@@ -180,7 +180,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     is_regime_ok = (original_signal == 'BUY' and market_regime != 'Bearish') or (original_signal == 'SELL' and market_regime != 'Bullish')
                     entry_price = latest_row['close']
                     potential_risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr_at_prediction
-                    potential_reward_per_share = potential_risk_per_share * active_strategy['profit_target_rr_multiple']
+                    predicted_gain_pct = final_analysis.get('predicted_gain_pct', 0)
+                    potential_reward_per_share = entry_price * (predicted_gain_pct / 100.0)
                     risk_reward_ratio = potential_reward_per_share / potential_risk_per_share if potential_risk_per_share > 0 else 0
                     is_rr_ok = risk_reward_ratio >= 1.5
                     if original_signal == 'BUY' and market_is_high_risk: final_signal, veto_reason = 'HOLD', f"VETOED BUY: High market VIX ({latest_vix:.2f})"

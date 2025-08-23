@@ -146,7 +146,7 @@ def run_stateful_backtest(batch_id: str):
             equity_df['daily_return'] = equity_df['equity'].pct_change().fillna(0)
             sharpe_ratio = (equity_df['daily_return'].mean() / equity_df['daily_return'].std()) * (252**0.5) if equity_df['daily_return'].std() != 0 else 0
             downside_std = equity_df[equity_df['daily_return'] < 0]['daily_return'].std()
-            sortino_ratio = (equity_df['daily_return'].mean() / downside_std) * (252**0.5) if downside_std > 0 and not downside_std.isna() else 0
+            sortino_ratio = (equity_df['daily_return'].mean() / downside_std) * (252**0.5) if downside_std > 0 else 0
             annualized_return = total_return_pct * (252 / len(equity_df))
             calmar_ratio = annualized_return / max_drawdown_pct if max_drawdown_pct > 0 else 0
         else:

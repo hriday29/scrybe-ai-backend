@@ -21,6 +21,39 @@ SECTOR_NAME_MAPPING = {
 MIN_AVG_VOLUME = 500000
 TREND_CHECK_EMA = 50
 
+def _passes_fundamental_health_check(ticker: str) -> bool:
+    """
+    Performs a basic check on key fundamental metrics using yfinance.
+    Returns True if the stock is considered healthy, False otherwise.
+    """
+    try:
+        info = yf.Ticker(ticker).info
+        
+        pe_ratio = info.get('trailingPE')
+        debt_to_equity = info.get('debtToEquity')
+        return_on_equity = info.get('returnOnEquity')
+
+        # Rule 1: Must be profitable (positive P/E) and not absurdly valued
+        if pe_ratio is None or pe_ratio < 0 or pe_ratio > 100:
+            log.warning(f"    - Skipping {ticker}: Fails P/E check (P/E: {pe_ratio}).")
+            return False
+        
+        # Rule 2: Debt must be manageable (for non-financials, typically < 1.5 or 150)
+        # We use a high threshold to only filter out extreme cases.
+        if debt_to_equity is not None and debt_to_equity > 200:
+             log.warning(f"    - Skipping {ticker}: Fails Debt/Equity check (D/E: {debt_to_equity}).")
+             return False
+
+        # Rule 3: Must be generating good returns for shareholders
+        if return_on_equity is not None and return_on_equity < 0.10: # (ROE < 10%)
+            log.warning(f"    - Skipping {ticker}: Fails ROE check (ROE: {return_on_equity:.2f}).")
+            return False
+            
+        return True
+    except Exception as e:
+        log.warning(f"    - Could not perform fundamental check for {ticker}. Error: {e}. Skipping.")
+        return False
+    
 def _get_stock_sector_map(tickers: list[str]) -> dict:
     """
     Builds a dictionary mapping each stock ticker to its sector.
@@ -54,10 +87,9 @@ def _get_stock_sector_map(tickers: list[str]) -> dict:
 
 def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict, point_in_time: str) -> list[str]:
     """
-    The main screening function. Filters the universe down to a small
-    watchlist of high-potential stocks using PRE-LOADED, POINT-IN-TIME data.
+    V2 Screener: Upgraded with stricter trend and new momentum filters.
     """
-    log.info("--- [Funnel Step 3] Running Quantitative Pre-Screener ---")
+    log.info("--- [Funnel Step 3] Running V2 Quantitative Pre-Screener ---")
     
     target_sectors = {SECTOR_NAME_MAPPING[name] for name in strong_sectors if name in SECTOR_NAME_MAPPING}
     if not target_sectors:
@@ -72,16 +104,15 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
         ticker for ticker, sector in stock_sector_map.items() if sector in target_sectors
     ]
     log.info(f"Initial Universe: {len(universe)} stocks -> Sector Filter: {len(sector_filtered_stocks)} stocks")
-    if not sector_filtered_stocks:
-        return []
+    if not sector_filtered_stocks: return []
 
     final_watchlist = []
     for i, ticker in enumerate(sector_filtered_stocks):
-        log.info(f"  -> Applying technical screen for {ticker} ({i+1}/{len(sector_filtered_stocks)})...")
+        log.info(f"  -> Applying V2 technical screen for {ticker} ({i+1}/{len(sector_filtered_stocks)})...")
         
         data = full_data_cache.get(ticker).loc[:point_in_time].copy()
         if data is None or len(data) < TREND_CHECK_EMA + 20:
-            log.warning(f"    - Skipping {ticker}: Insufficient point-in-time data in cache.")
+            log.warning(f"    - Skipping {ticker}: Insufficient point-in-time data.")
             continue
 
         avg_volume = data['volume'].tail(20).mean()
@@ -89,17 +120,30 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
             log.warning(f"    - Skipping {ticker}: Fails volume check (Avg Vol: {int(avg_volume)})")
             continue
 
-        data.ta.ema(length=TREND_CHECK_EMA, append=True)
-        latest_close = data['close'].iloc[-1]
-        ema_value = data[f'EMA_{TREND_CHECK_EMA}'].iloc[-1]
+        data.ta.ema(length=20, append=True)
+        data.ta.ema(length=50, append=True)
+        data.ta.rsi(length=14, append=True)
+        data.dropna(inplace=True) # Drop rows with NaN indicators
 
-        if latest_close < ema_value:
-            log.warning(f"    - Skipping {ticker}: Fails trend check (Price {latest_close:.2f} < {TREND_CHECK_EMA}-EMA {ema_value:.2f})")
+        latest_close = data['close'].iloc[-1]
+        ema_20 = data['EMA_20'].iloc[-1]
+        ema_50 = data['EMA_50'].iloc[-1]
+        rsi_14 = data['RSI_14'].iloc[-1]
+
+        if not (latest_close > ema_20 > ema_50):
+            log.warning(f"    - Skipping {ticker}: Fails trend check (Price/20EMA/50EMA alignment).")
             continue
         
-        log.info(f"    - ✅ PASS: {ticker} passed all technical checks.")
+        if rsi_14 < 60:
+            log.warning(f"    - Skipping {ticker}: Fails momentum check (RSI {rsi_14:.2f} < 60).")
+            continue
+        
+        if not _passes_fundamental_health_check(ticker):
+            continue
+
+        log.info(f"    - ✅ PASS: {ticker} passed all V2 technical & fundamental checks.")
         final_watchlist.append(ticker)
 
-    log.info(f"✅ Pre-screening complete. Final dynamic watchlist contains {len(final_watchlist)} stocks.")
-    log.info(f"Final Watchlist: {final_watchlist}")
+    log.info(f"✅ V2 Pre-screening complete. Final dynamic watchlist contains {len(final_watchlist)} stocks.")
+    if final_watchlist: log.info(f"Final Watchlist: {final_watchlist}")
     return final_watchlist
