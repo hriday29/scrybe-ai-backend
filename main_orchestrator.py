@@ -206,9 +206,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
 
                 # --- This is the original finally block, now just used for pausing ---
-                pause_duration = 45 if final_signal in ['BUY', 'SELL'] else 5
-                log.info(f"Pausing for {pause_duration} seconds...")
-                time.sleep(pause_duration)
+                log.info("Pausing for 35 seconds to respect API rate limits...")
+                time.sleep(35)
             
     log.info("\n--- ✅ APEX Dynamic Simulation Finished! ---")
     database_manager.close_db_connection()
