@@ -110,38 +110,48 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
     for i, ticker in enumerate(sector_filtered_stocks):
         log.info(f"  -> Applying V2 technical screen for {ticker} ({i+1}/{len(sector_filtered_stocks)})...")
         
-        data = full_data_cache.get(ticker).loc[:point_in_time].copy()
-        if data is None or len(data) < TREND_CHECK_EMA + 20:
-            log.warning(f"    - Skipping {ticker}: Insufficient point-in-time data.")
+        # --- DEBUGGING: Use the full data cache first, then slice ---
+        full_historical_data = full_data_cache.get(ticker)
+        if full_historical_data is None or len(full_historical_data) < TREND_CHECK_EMA + 20:
+            log.warning(f"    - Skipping {ticker}: Insufficient full historical data.")
             continue
+        
+        # Correctly slice the data to the point_in_time for the backtest
+        data = full_historical_data.loc[:point_in_time].copy()
+        if data.empty or len(data) < TREND_CHECK_EMA + 20:
+             log.warning(f"    - Skipping {ticker}: Insufficient point-in-time data after slicing.")
+             continue
 
         avg_volume = data['volume'].tail(20).mean()
         if avg_volume < MIN_AVG_VOLUME:
             log.warning(f"    - Skipping {ticker}: Fails volume check (Avg Vol: {int(avg_volume)})")
             continue
 
-        data.ta.ema(length=20, append=True)
+        # Calculate indicators on the correct point-in-time slice
         data.ta.ema(length=50, append=True)
         data.ta.rsi(length=14, append=True)
-        data.dropna(inplace=True) # Drop rows with NaN indicators
+        data.dropna(inplace=True)
 
         latest_close = data['close'].iloc[-1]
-        ema_20 = data['EMA_20'].iloc[-1]
         ema_50 = data['EMA_50'].iloc[-1]
         rsi_14 = data['RSI_14'].iloc[-1]
 
-        if not (latest_close > ema_20 > ema_50):
-            log.warning(f"    - Skipping {ticker}: Fails trend check (Price/20EMA/50EMA alignment).")
-            continue
-        
-        if rsi_14 < 60:
-            log.warning(f"    - Skipping {ticker}: Fails momentum check (RSI {rsi_14:.2f} < 60).")
-            continue
-        
-        if not _passes_fundamental_health_check(ticker):
-            continue
+        # --- NEW DEBUG LOGGING ---
+        log.info(f"    - DEBUG DATA for {ticker}: Close={latest_close:.2f}, 50-EMA={ema_50:.2f}, RSI={rsi_14:.2f}")
 
-        log.info(f"    - ✅ PASS: {ticker} passed all V2 technical & fundamental checks.")
+        # --- Our V3.0 Filters (More Flexible) ---
+        proximity_threshold = 0.02  # Allow price to be within 2% of the EMA
+        is_in_uptrend_or_testing_support = latest_close >= (ema_50 * (1 - proximity_threshold))
+
+        if not is_in_uptrend_or_testing_support:
+            log.warning(f"    - Skipping {ticker}: Fails trend check (Price {latest_close:.2f} is too far below 50-EMA {ema_50:.2f}).")
+            continue
+        
+        if rsi_14 < 45:
+             log.warning(f"    - Skipping {ticker}: Fails momentum check.")
+             continue
+
+        log.info(f"    - ✅ PASS: {ticker} passed all technical checks.")
         final_watchlist.append(ticker)
 
     log.info(f"✅ V2 Pre-screening complete. Final dynamic watchlist contains {len(final_watchlist)} stocks.")

@@ -14,7 +14,7 @@ from utils import APIKeyManager
 import argparse
 import market_regime_analyzer
 import sector_analyzer
-import quantitative_screener
+from quantitative_screener import generate_dynamic_watchlist, _passes_fundamental_health_check
 
 STATE_FILE = 'simulation_state.json'
 
@@ -78,6 +78,23 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
         nifty_data = data_retriever.get_historical_stock_data("^NSEI", end_date=end_date)
         vix_data = data_retriever.get_historical_stock_data("^INDIAVIX", end_date=end_date)
         log.info("✅ All data pre-loading complete.")
+
+        # --- START: NEW FUNDAMENTAL PRE-FLIGHT CHECK ---
+        log.info("--- Running Fundamental Pre-Flight Check on Full Universe ---")
+        fundamentally_approved_stocks = []
+        for ticker in stock_universe:
+            log.info(f"  -> Checking fundamentals for {ticker}...")
+            # Note: We are now calling the function we imported at the top of the file
+            if _passes_fundamental_health_check(ticker):
+                fundamentally_approved_stocks.append(ticker)
+                log.info(f"    - ✅ PASS: {ticker} is fundamentally approved.")
+
+        log.info(f"✅ Fundamental Pre-Flight Check complete. {len(fundamentally_approved_stocks)}/{len(stock_universe)} stocks passed.")
+        if not fundamentally_approved_stocks:
+            log.fatal("No stocks passed the fundamental pre-flight check. Halting simulation.")
+            return
+        # --- END: NEW FUNDAMENTAL PRE-FLIGHT CHECK ---
+
     except Exception as e:
         log.fatal(f"Failed during pre-run initialization. Error: {e}")
         return
@@ -103,7 +120,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
             
             market_regime = data_retriever.calculate_regime_from_data(nifty_data.loc[:day_str])
             strong_sectors = sector_analyzer.get_top_performing_sectors()
-            stocks_for_today = quantitative_screener.generate_dynamic_watchlist(strong_sectors, full_historical_data_cache, day_str)
+            approved_stock_data_cache = {ticker: full_historical_data_cache[ticker] for ticker in fundamentally_approved_stocks if ticker in full_historical_data_cache}
+            stocks_for_today = generate_dynamic_watchlist(strong_sectors, approved_stock_data_cache, current_day)
             
             if not stocks_for_today:
                 log.warning("The dynamic funnel returned no stocks for today. Proceeding to next day.")
@@ -163,7 +181,6 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                             log.error(f"CRITICAL FAILURE (non-quota) on day {day_str} for {ticker}: {e}", exc_info=True)
                             final_analysis = None # Ensure it's None before breaking
                             break
-                # --- END: NEW RETRY LOGIC ---
 
                 # After the while loop, we check if we were ultimately successful
                 if not final_analysis:
