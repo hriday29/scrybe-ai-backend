@@ -50,7 +50,7 @@ APEX_SWING_STRATEGY = {
     "holding_period": 10,
     "stop_loss_atr_multiplier": 2.0,
     "profit_target_rr_multiple": 2.0, 
-    "min_conviction_score": 75,
+    "min_conviction_score": 80,
     "use_trailing_stop": True,
     "trailing_stop_atr_multiplier": 1.5,
 }
