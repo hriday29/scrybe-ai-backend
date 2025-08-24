@@ -116,10 +116,10 @@ class AIAnalyzer:
         # ---------------------------------------------------
 
         prompt_parts = [
-            "## Omni-Context Performance Review ##",
-            f"30-Day Strategic Review:\n{strategic_review}",
-            f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history}",
-            f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback}",
+            # "## Omni-Context Performance Review ##",
+            # f"30-Day Strategic Review:\n{strategic_review}",
+            # f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history}",
+            # f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback}",
             formatted_context  # Use the new formatted string instead of the raw json
         ]
 
