@@ -108,10 +108,10 @@ class AIAnalyzer:
         formatted_context = "\n## Today's Full Data Packet ##\n" + json.dumps(full_context, indent=2)
 
         prompt_parts = [
-            "## Omni-Context Performance Review ##",
-            f"30-Day Strategic Review:\n{strategic_review or 'Data Not Available'}",
-            f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history or 'Data Not Available'}",
-            f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback or 'Data Not Available'}",
+            # "## Omni-Context Performance Review ##",
+            # f"30-Day Strategic Review:\n{strategic_review or 'Data Not Available'}",
+            # f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history or 'Data Not Available'}",
+            # f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback or 'Data Not Available'}",
             formatted_context
         ]
 
