@@ -105,18 +105,7 @@ class AIAnalyzer:
             safety_settings=safety_settings 
         )
 
-        # --- NEW: Format the context into a readable string ---
-        formatted_context = "\n## Today's Full Data Packet ##\n"
-        for layer, data in full_context.items():
-            layer_name = layer.replace('_', ' ').title()
-            formatted_context += f"--- {layer_name} ---\n"
-            if isinstance(data, dict):
-                for key, value in data.items():
-                    key_name = key.replace('_', ' ').title()
-                    formatted_context += f"- {key_name}: {value}\n"
-            else:
-                formatted_context += f"- {data}\n"
-        # ---------------------------------------------------
+        formatted_context = "\n## Today's Full Data Packet ##\n" + json.dumps(full_context, indent=2)
 
         prompt_parts = [
             "## Omni-Context Performance Review ##",
