@@ -18,6 +18,24 @@ from quantitative_screener import generate_dynamic_watchlist, _passes_fundamenta
 
 STATE_FILE = 'simulation_state.json'
 
+def sanitize_context(context: dict) -> dict:
+    """Sanitizes the context dictionary to replace null-like values."""
+    sanitized_context = {}
+    for layer, details in context.items():
+        if isinstance(details, dict):
+            sanitized_details = {}
+            for k, v in details.items():
+                # Check for various null-like or placeholder strings
+                if not v or str(v).strip().lower() in ["unavailable", "n/a", "none", "null", "unavailable in backtest"]:
+                    sanitized_details[k] = "Data Not Available"
+                else:
+                    sanitized_details[k] = v
+            sanitized_context[layer] = sanitized_details
+        else:
+            # If the layer's value is not a dictionary, keep it as is
+            sanitized_context[layer] = details
+    return sanitized_context
+
 def _get_30_day_performance_review(current_day: pd.Timestamp, batch_id: str) -> str:
     # ... [This function remains unchanged, no need to copy it again] ...
     thirty_days_prior = current_day - pd.Timedelta(days=30)
@@ -152,6 +170,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                         point_in_time_data.ta.atr(length=14, append=True)
                         atr_at_prediction = point_in_time_data['ATRr_14'].iloc[-1]
                         nifty_5d_change = (nifty_data.loc[:day_str]['close'].iloc[-1] / nifty_data.loc[:day_str]['close'].iloc[-6] - 1) * 100
+
                         stock_5d_change = (latest_row['close'] / point_in_time_data['close'].iloc[-6] - 1) * 100
                         full_context = {
                             "layer_1_macro_context": {"nifty_50_regime": market_regime},
@@ -160,8 +179,10 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                             "layer_4_technicals": {"daily_close": latest_row['close']}, "layer_5_options_sentiment": {"sentiment": "Unavailable in backtest"},
                             "layer_6_news_catalyst": {"summary": "Unavailable in backtest"}
                         }
-                        
-                        final_analysis = analyzer.get_apex_analysis(ticker, full_context, strategic_review, tactical_lookback, per_stock_history)
+
+                        sanitized_full_context = sanitize_context(full_context)
+
+                        final_analysis = analyzer.get_apex_analysis(ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history)
                         
                         # IMPORTANT: If the analysis is successful, break out of the while loop
                         if final_analysis:
