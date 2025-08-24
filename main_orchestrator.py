@@ -170,7 +170,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
 
                     except Exception as e:
                         # This block now only handles the error and prepares for the next retry
-                        if "429" in str(e):
+                        if "429" in str(e) or "500" in str(e):
                             log.error(f"Quota exceeded for {ticker}. Rotating key and retrying...")
                             analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                             retries += 1
@@ -179,6 +179,11 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                         else:
                             # For any other type of error, we don't retry. We log it and break.
                             log.error(f"CRITICAL FAILURE (non-quota) on day {day_str} for {ticker}: {e}", exc_info=True)
+                            # --- NEW DEBUG LOGGING FOR BLOCKED RESPONSES ---
+                            if "blocked response" in str(e).lower():
+                                log.error(f"--- PROMPT CONTEXT THAT CAUSED BLOCK FOR {ticker} ---")
+                                log.error(json.dumps(full_context, indent=2))
+                            # ---------------------------------------------
                             final_analysis = None # Ensure it's None before breaking
                             break
 
