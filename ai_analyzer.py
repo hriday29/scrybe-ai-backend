@@ -94,6 +94,7 @@ class AIAnalyzer:
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
         }
 
+        # --- This is the "After" code ---
         model = genai.GenerativeModel(
             config.PRO_MODEL, 
             system_instruction=system_instruction, 
@@ -101,13 +102,25 @@ class AIAnalyzer:
             safety_settings=safety_settings 
         )
 
+        # --- NEW: Format the context into a readable string ---
+        formatted_context = "\n## Today's Full Data Packet ##\n"
+        for layer, data in full_context.items():
+            layer_name = layer.replace('_', ' ').title()
+            formatted_context += f"--- {layer_name} ---\n"
+            if isinstance(data, dict):
+                for key, value in data.items():
+                    key_name = key.replace('_', ' ').title()
+                    formatted_context += f"- {key_name}: {value}\n"
+            else:
+                formatted_context += f"- {data}\n"
+        # ---------------------------------------------------
+
         prompt_parts = [
             "## Omni-Context Performance Review ##",
             f"30-Day Strategic Review:\n{strategic_review}",
             f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history}",
             f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback}",
-            "\n## Today's Full Data Packet ##",
-            json.dumps(full_context)
+            formatted_context  # Use the new formatted string instead of the raw json
         ]
 
         response = model.generate_content(prompt_parts, request_options={"timeout": 300})
