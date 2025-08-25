@@ -19,7 +19,7 @@ class AIAnalyzer:
         genai.configure(api_key=api_key)
         log.info("AIAnalyzer initialized and Gemini API key configured.")
 
-    def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str) -> dict:
+    def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str, model_name: str) -> dict:
         """
         Generates a definitive, institutional-grade analysis using the "Apex" multi-layered model.
         """
@@ -123,7 +123,7 @@ class AIAnalyzer:
 
         # --- This is the "After" code ---
         model = genai.GenerativeModel(
-            config.PRO_MODEL, 
+            model_name, 
             system_instruction=system_instruction, 
             generation_config=generation_config,
             safety_settings=safety_settings 
