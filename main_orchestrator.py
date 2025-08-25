@@ -150,7 +150,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
             potential_trades_today = []
             for ticker in stocks_for_today:
                 # --- START: RETRY LOGIC ---
-                max_retries = len(config.GEMINI_API_KEY_POOL)
+                max_retries = 3
                 retries = 0
                 final_analysis = None
                 
