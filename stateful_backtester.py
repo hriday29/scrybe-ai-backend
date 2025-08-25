@@ -6,6 +6,7 @@ import database_manager
 import data_retriever
 import config
 import argparse
+from config import PORTFOLIO_CONSTRAINTS
 
 def _calculate_closed_trade(position: dict, closing_price: float, closing_reason: str, close_date: pd.Timestamp):
     """
@@ -107,6 +108,11 @@ def run_stateful_backtest(batch_id: str):
             new_signals_for_today = all_signals_df[all_signals_df['prediction_date'].dt.date == day.date()]
             if not new_signals_for_today.empty:
                 for index, signal in new_signals_for_today.iterrows():
+                    # --- PORTFOLIO-LEVEL CHECK ---
+                    if len(portfolio['open_positions']) >= PORTFOLIO_CONSTRAINTS['max_concurrent_trades']:
+                        log.warning(f"SKIPPING SIGNAL for {signal['ticker']}: Max concurrent trade limit ({PORTFOLIO_CONSTRAINTS['max_concurrent_trades']}) reached.")
+                        continue
+
                     risk_amount = portfolio['equity'] * (config.BACKTEST_PORTFOLIO_CONFIG['risk_per_trade_pct'] / 100.0)
                     trade_plan = signal.get('tradePlan', {})
                     entry_price, stop_loss_price = trade_plan.get('entryPrice'), trade_plan.get('stopLoss')

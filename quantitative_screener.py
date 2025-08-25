@@ -147,8 +147,8 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
             log.warning(f"    - Skipping {ticker}: Fails trend check (Price {latest_close:.2f} is too far below 50-EMA {ema_50:.2f}).")
             continue
         
-        if rsi_14 < 45:
-             log.warning(f"    - Skipping {ticker}: Fails momentum check.")
+        if rsi_14 < 50:
+             log.warning(f"    - Skipping {ticker}: Fails momentum check (RSI {rsi_14:.2f} is below 50).")
              continue
 
         log.info(f"    - ✅ PASS: {ticker} passed all technical checks.")

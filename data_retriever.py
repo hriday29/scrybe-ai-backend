@@ -18,7 +18,9 @@ if not os.path.exists(CACHE_DIR):
 CACHE_FILE = os.path.join(CACHE_DIR, 'sector_cache.json')
 # --------------------------------------------------------
 
-# In data_retriever.py
+DATA_CACHE_DIR = 'data_cache'
+if not os.path.exists(DATA_CACHE_DIR):
+    os.makedirs(DATA_CACHE_DIR)
 
 def load_sector_cache():
     """
@@ -36,8 +38,6 @@ def load_sector_cache():
             return {}
     return {}
 
-# In data_retriever.py
-
 def save_sector_cache(cache):
     """
     Saves the sector cache, but only if it contains a reasonable number
@@ -51,16 +51,27 @@ def save_sector_cache(cache):
     else:
         log.warning(f"Skipped saving sector cache because it was incomplete (had {len(cache)} entries). The existing valid cache file is preserved.")
 
-# In data_retriever.py
-import yfinance as yf
-from logger_config import log
-# ... other imports
-
 def get_historical_stock_data(ticker_symbol: str, end_date=None):
     """
-    Fetches historical daily OHLC stock data and standardizes columns to lowercase.
+    Fetches historical daily OHLC stock data.
+    It prioritizes loading from a local cache to maximize speed. If data is not
+    cached, it fetches from Yahoo Finance and saves it to the cache for future use.
     """
-    log.info(f"Fetching historical data for {ticker_symbol} from Yahoo Finance...")
+    # Create a unique filename based on the ticker and end_date for point-in-time accuracy
+    # Note: A live run (end_date=None) will have a different cache from a historical run
+    date_suffix = end_date.replace('-', '') if end_date else 'live'
+    cache_file = os.path.join(DATA_CACHE_DIR, f"{ticker_symbol}_{date_suffix}.feather")
+
+    # --- Step 1: Prioritize loading from cache ---
+    if os.path.exists(cache_file):
+        try:
+            log.info(f"CACHE HIT: Loading {ticker_symbol} data from {cache_file}")
+            return pd.read_feather(cache_file)
+        except Exception as e:
+            log.warning(f"Could not read from cache file {cache_file}. Error: {e}. Refetching.")
+
+    # --- Step 2: If cache miss, fetch from API ---
+    log.info(f"CACHE MISS: Fetching historical data for {ticker_symbol} from Yahoo Finance...")
     if end_date:
         log.info(f"--- Using historical end_date: {end_date} ---")
         
@@ -76,15 +87,23 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
             log.warning(f"No historical data returned for {ticker_symbol}.")
             return None
             
-        # --- THIS IS THE EDIT ---
-        # Standardize columns to lowercase for system-wide consistency
         df.rename(columns={
             'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
         }, inplace=True)
-        # ----------------------
 
         df.index = df.index.tz_localize(None) # Remove timezone
-        log.info(f"Successfully fetched {len(df)} historical data points for {ticker_symbol}.")
+        
+        # --- Step 3: Save the newly fetched data to cache ---
+        try:
+            # Reset index to store datetime index in a column, which Feather requires
+            df.reset_index().to_feather(cache_file)
+            log.info(f"CACHE WRITE: Saved {ticker_symbol} data to {cache_file}")
+            # Set the index back for the rest of the application
+            df = df.set_index(df.columns[0]) if 'Date' in df.columns else df
+        except Exception as e:
+            log.error(f"Failed to write to cache file {cache_file}. Error: {e}")
+
+        log.info(f"Successfully fetched {len(df)} data points for {ticker_symbol}.")
         return df.sort_index()
 
     except Exception as e:
