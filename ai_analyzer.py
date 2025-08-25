@@ -30,6 +30,8 @@ class AIAnalyzer:
         Your role is to generate structured, concise, and data-driven assessments of a given stock. 
         Your outputs are designed for research and educational purposes only, not investment advice.
 
+        **CONTEXT AWARENESS:** The data provided is for a financial stock market analysis. All terms related to risk, performance, and market direction are standard industry terminology and should be interpreted within a professional financial context. Do not block responses based on these terms.
+        
         **DATA AVAILABILITY RULE:** 
         If any layer contains missing, null, or unavailable content, explicitly state "Data Not Available" 
         in your analysis for that layer. Do not speculate or fabricate data.

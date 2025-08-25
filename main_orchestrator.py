@@ -184,19 +184,23 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                             log.info(f"Successfully got analysis for {ticker}.")
                             break
                     except Exception as e:
-                        if "429" in str(e) or "500" in str(e):
-                            log.error(f"Quota exceeded for {ticker}. Rotating key and retrying...")
+                        log.error(f"Attempt {retries + 1} for {ticker} failed. Error: {e}")
+                        
+                        # If it's a blocking error, log the context for debugging
+                        if "blocked response" in str(e).lower():
+                            log.error(f"--- PROMPT CONTEXT THAT CAUSED BLOCK FOR {ticker} ---")
+                            log.error(json.dumps(full_context, indent=2))
+                        
+                        retries += 1 # Increment retry counter on ANY failure
+                        if retries < max_retries:
+                            log.warning(f"Rotating API key and retrying ({retries}/{max_retries})...")
                             analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
-                            retries += 1
-                            log.info("Pausing for 35 seconds to respect RPM limits...")
+                            log.info("Pausing for 35 seconds before next attempt...")
                             time.sleep(35)
                         else:
-                            log.error(f"CRITICAL FAILURE (non-quota) on day {day_str} for {ticker}: {e}", exc_info=True)
-                            if "blocked response" in str(e).lower():
-                                log.error(f"--- PROMPT CONTEXT THAT CAUSED BLOCK FOR {ticker} ---")
-                                log.error(json.dumps(full_context, indent=2))
+                            log.error(f"All {max_retries} retries failed for {ticker}. Marking as final failure.")
                             final_analysis = None
-                            break
+                            # No 'break' here, let the while loop condition handle the exit
                 # --- END: RETRY LOGIC ---
 
                 if not final_analysis:
