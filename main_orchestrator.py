@@ -225,23 +225,49 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     continue
                 # --- END: NEW MULTI-MODEL FALLBACK LOGIC ---
                 
+                # --- START: ENHANCED VETO LOGIC & INSTRUMENTATION ---
                 original_signal = final_analysis.get('signal')
                 scrybe_score = final_analysis.get('scrybeScore', 0)
                 final_signal = original_signal
                 veto_reason = None
                 
+                # Always log the raw AI output for debugging
+                log.info(f"  -> Raw AI Output for {ticker}: Signal={original_signal}, Score={scrybe_score}")
+
                 if original_signal in ['BUY', 'SELL']:
+                    # --- Veto Condition Checks ---
                     is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
                     is_regime_ok = (original_signal == 'BUY' and market_regime != 'Bearish') or (original_signal == 'SELL' and market_regime != 'Bullish')
+                    
                     entry_price = latest_row['close']
                     potential_risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr_at_prediction
                     potential_reward_per_share = potential_risk_per_share * active_strategy['profit_target_rr_multiple']
                     risk_reward_ratio = potential_reward_per_share / potential_risk_per_share if potential_risk_per_share > 0 else 0
                     is_rr_ok = risk_reward_ratio >= 1.5
-                    if original_signal == 'BUY' and market_is_high_risk: final_signal, veto_reason = 'HOLD', f"VETOED BUY: High market VIX ({latest_vix:.2f})"
-                    elif not is_regime_ok: final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Signal contradicts Market Regime ({market_regime})"
-                    elif not is_conviction_ok: final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Conviction Score ({scrybe_score}) is below threshold of {active_strategy['min_conviction_score']}"
-                    elif not is_rr_ok: final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Poor Risk/Reward Ratio ({risk_reward_ratio:.2f}R)"
+
+                    # --- Log the results of each check ---
+                    log.info(f"    - Veto Check | Market Regime: {market_regime}, Signal OK? {is_regime_ok}")
+                    log.info(f"    - Veto Check | Conviction Score: {scrybe_score} >= {active_strategy['min_conviction_score']}? {is_conviction_ok}")
+                    log.info(f"    - Veto Check | Risk/Reward Ratio: {risk_reward_ratio:.2f} >= 1.5? {is_rr_ok}")
+                    if original_signal == 'BUY':
+                         log.info(f"    - Veto Check | High VIX active? {market_is_high_risk} (VIX: {latest_vix:.2f})")
+
+                    # --- Apply Veto Logic ---
+                    if original_signal == 'BUY' and market_is_high_risk:
+                        final_signal, veto_reason = 'HOLD', f"VETOED BUY: High market VIX ({latest_vix:.2f})"
+                    elif not is_regime_ok:
+                        final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Signal contradicts Market Regime ({market_regime})"
+                    elif not is_conviction_ok:
+                        final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Conviction Score ({scrybe_score}) is below threshold of {active_strategy['min_conviction_score']}"
+                    elif not is_rr_ok:
+                        final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Poor Risk/Reward Ratio ({risk_reward_ratio:.2f}R)"
+                    
+                    if veto_reason:
+                        log.warning(f"  -> VETO APPLIED for {ticker}: {veto_reason}")
+                    else:
+                        log.info(f"  -> ✅ SIGNAL APPROVED for {ticker}")
+
+                # --- END: ENHANCED VETO LOGIC & INSTRUMENTATION ---
 
                 prediction_doc = final_analysis.copy()
                 prediction_doc['signal'] = final_signal

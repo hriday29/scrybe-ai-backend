@@ -93,9 +93,9 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
     
     target_sectors = {SECTOR_NAME_MAPPING[name] for name in strong_sectors if name in SECTOR_NAME_MAPPING}
     if not target_sectors:
-        log.warning("No target sectors found after mapping. Aborting screen.")
+        log.warning("Screener Funnel: No target sectors found after mapping. Watchlist will be empty.")
         return []
-    log.info(f"Screening for stocks in these strong sectors: {target_sectors}")
+    log.info(f"Screener Funnel: Screening for stocks in these strong sectors: {target_sectors}")
 
     universe = list(full_data_cache.keys())
     stock_sector_map = _get_stock_sector_map(universe)
@@ -103,31 +103,33 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
     sector_filtered_stocks = [
         ticker for ticker, sector in stock_sector_map.items() if sector in target_sectors
     ]
-    log.info(f"Initial Universe: {len(universe)} stocks -> Sector Filter: {len(sector_filtered_stocks)} stocks")
-    if not sector_filtered_stocks: return []
+    # --- NEW SUMMARY LOG (Gemini style) ---
+    log.info(f"Screener Funnel | Sector Filter Result: {len(universe)} stocks -> {len(sector_filtered_stocks)} stocks")
+    if not sector_filtered_stocks: 
+        return []
 
     final_watchlist = []
     for i, ticker in enumerate(sector_filtered_stocks):
         log.info(f"  -> Applying V2 technical screen for {ticker} ({i+1}/{len(sector_filtered_stocks)})...")
         
-        # --- DEBUGGING: Use the full data cache first, then slice ---
+        # Use the full data cache first, then slice
         full_historical_data = full_data_cache.get(ticker)
         if full_historical_data is None or len(full_historical_data) < TREND_CHECK_EMA + 20:
-            log.warning(f"    - Skipping {ticker}: Insufficient full historical data.")
+            log.warning(f"    - VETO (Data): Skipping {ticker} due to insufficient full historical data.")
             continue
         
-        # Correctly slice the data to the point_in_time for the backtest
+        # Slice correctly to the point_in_time
         data = full_historical_data.loc[:point_in_time].copy()
         if data.empty or len(data) < TREND_CHECK_EMA + 20:
-             log.warning(f"    - Skipping {ticker}: Insufficient point-in-time data after slicing.")
-             continue
+            log.warning(f"    - VETO (Data): Skipping {ticker} due to insufficient point-in-time data.")
+            continue
 
         avg_volume = data['volume'].tail(20).mean()
         if avg_volume < MIN_AVG_VOLUME:
-            log.warning(f"    - Skipping {ticker}: Fails volume check (Avg Vol: {int(avg_volume)})")
+            log.warning(f"    - VETO (Volume): Skipping {ticker} (Avg Vol: {int(avg_volume)} < {MIN_AVG_VOLUME})")
             continue
 
-        # Calculate indicators on the correct point-in-time slice
+        # Indicators
         data.ta.ema(length=50, append=True)
         data.ta.rsi(length=14, append=True)
         data.dropna(inplace=True)
@@ -136,24 +138,26 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
         ema_50 = data['EMA_50'].iloc[-1]
         rsi_14 = data['RSI_14'].iloc[-1]
 
-        # --- NEW DEBUG LOGGING ---
         log.info(f"    - DEBUG DATA for {ticker}: Close={latest_close:.2f}, 50-EMA={ema_50:.2f}, RSI={rsi_14:.2f}")
 
-        # --- Our V3.0 Filters (More Flexible) ---
-        proximity_threshold = 0.04  # Allow price to be within 4% of the EMA
-        is_in_uptrend_or_testing_support = latest_close >= (ema_50 * (1 - proximity_threshold))
+        # --- Filters ---
+        proximity_threshold = 0.04  # Stock must be within 4% of 50-EMA
 
-        if not is_in_uptrend_or_testing_support:
-            log.warning(f"    - Skipping {ticker}: Fails trend check (Price {latest_close:.2f} is too far below 50-EMA {ema_50:.2f}).")
-            continue
+        # Condition A: "Stable Trend-Follower"
+        is_stable_trend = (latest_close >= (ema_50 * (1 - proximity_threshold))) and (rsi_14 >= 40)
         
-        if rsi_14 < 45:
-             log.warning(f"    - Skipping {ticker}: Fails momentum check (RSI {rsi_14:.2f} is below 50).")
-             continue
+        # Condition B: "Strong Momentum Breakout/Pullback"
+        is_strong_momentum = rsi_14 > 65
 
-        log.info(f"    - ✅ PASS: {ticker} passed all technical checks.")
-        final_watchlist.append(ticker)
+        if is_stable_trend or is_strong_momentum:
+            log.info(f"    - ✅ PASS: {ticker} passed all technical checks (Stable Trend: {is_stable_trend}, Strong Momentum: {is_strong_momentum}).")
+            final_watchlist.append(ticker)
+        else:
+            log.warning(f"    - VETO (Trend/Momentum): Skipping {ticker} (Stable Trend={is_stable_trend}, Strong Momentum={is_strong_momentum})")
+            continue
 
-    log.info(f"✅ V2 Pre-screening complete. Final dynamic watchlist contains {len(final_watchlist)} stocks.")
-    if final_watchlist: log.info(f"Final Watchlist: {final_watchlist}")
+    # --- NEW FINAL SUMMARY LOG (Gemini style) ---
+    log.info(f"✅ Screener Funnel | Final Result: {len(final_watchlist)} stocks passed all technical checks.")
+    if final_watchlist: 
+        log.info(f"Final Watchlist: {final_watchlist}")
     return final_watchlist
