@@ -140,14 +140,14 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
         log.info(f"    - DEBUG DATA for {ticker}: Close={latest_close:.2f}, 50-EMA={ema_50:.2f}, RSI={rsi_14:.2f}")
 
         # --- Our V3.0 Filters (More Flexible) ---
-        proximity_threshold = 0.02  # Allow price to be within 2% of the EMA
+        proximity_threshold = 0.04  # Allow price to be within 4% of the EMA
         is_in_uptrend_or_testing_support = latest_close >= (ema_50 * (1 - proximity_threshold))
 
         if not is_in_uptrend_or_testing_support:
             log.warning(f"    - Skipping {ticker}: Fails trend check (Price {latest_close:.2f} is too far below 50-EMA {ema_50:.2f}).")
             continue
         
-        if rsi_14 < 50:
+        if rsi_14 < 45:
              log.warning(f"    - Skipping {ticker}: Fails momentum check (RSI {rsi_14:.2f} is below 50).")
              continue
 
