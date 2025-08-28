@@ -123,6 +123,12 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
     current_equity = portfolio_config['initial_capital']
     active_strategy = config.APEX_SWING_STRATEGY
 
+    total_stocks_processed_by_screener = 0
+    total_stocks_passed_screener = 0
+    total_ai_buy_sell_signals = 0
+    total_signals_vetoed = 0
+    total_trades_executed = 0
+
     if not simulation_days.empty:
         log.info(f"\n--- Starting simulation for {len(simulation_days)} trading days ---")
         for i, current_day in enumerate(simulation_days):
@@ -141,6 +147,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
             strong_sectors = sector_analyzer.get_top_performing_sectors()
             approved_stock_data_cache = {ticker: full_historical_data_cache[ticker] for ticker in fundamentally_approved_stocks if ticker in full_historical_data_cache}
             stocks_for_today = generate_dynamic_watchlist(strong_sectors, approved_stock_data_cache, current_day)
+            total_stocks_processed_by_screener += len(fundamentally_approved_stocks) # Or whatever list goes into the screener
+            total_stocks_passed_screener += len(stocks_for_today)
             
             if not stocks_for_today:
                 log.warning("The dynamic funnel returned no stocks for today. Proceeding to next day.")
@@ -235,6 +243,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 log.info(f"  -> Raw AI Output for {ticker}: Signal={original_signal}, Score={scrybe_score}")
 
                 if original_signal in ['BUY', 'SELL']:
+                    total_ai_buy_sell_signals += 1
                     # --- Veto Condition Checks ---
                     is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
                     is_regime_ok = (original_signal == 'BUY' and market_regime != 'Bearish') or (original_signal == 'SELL' and market_regime != 'Bullish')
@@ -264,6 +273,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     
                     if veto_reason:
                         log.warning(f"  -> VETO APPLIED for {ticker}: {veto_reason}")
+                        total_signals_vetoed += 1
                     else:
                         log.info(f"  -> ✅ SIGNAL APPROVED for {ticker}")
 
@@ -296,6 +306,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 sorted_trades = sorted(potential_trades_today, key=lambda x: x.get('scrybeScore', 0), reverse=True)
                 
                 trades_to_execute = sorted_trades[:PORTFOLIO_CONSTRAINTS['max_concurrent_trades']]
+                total_trades_executed += len(trades_to_execute)
                 
                 log.info(f"Selecting top {len(trades_to_execute)} trades to execute and saving to database.")
                 for trade_doc in trades_to_execute:
@@ -303,6 +314,14 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     database_manager.save_prediction_for_backtesting(trade_doc, batch_id)
             
     log.info("\n--- ✅ APEX Dynamic Simulation Finished! ---")
+    log.info("\n" + "="*50)
+    log.info("### FUNNEL ANALYSIS REPORT ###")
+    log.info(f"Total Stocks Processed by Screener: {total_stocks_processed_by_screener}")
+    log.info(f"Total Stocks that Passed Screener: {total_stocks_passed_screener} ({ (total_stocks_passed_screener/total_stocks_processed_by_screener*100) if total_stocks_processed_by_screener > 0 else 0 :.2f}%)")
+    log.info(f"Total Raw BUY/SELL Signals from AI: {total_ai_buy_sell_signals}")
+    log.info(f"Total Signals Vetoed by Rules: {total_signals_vetoed}")
+    log.info(f"Total Trades Executed & Saved: {total_trades_executed}")
+    log.info("="*50)
     database_manager.close_db_connection()
 
 if __name__ == "__main__":

@@ -144,16 +144,14 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
         proximity_threshold = 0.04  # Stock must be within 4% of 50-EMA
 
         # Condition A: "Stable Trend-Follower"
-        is_stable_trend = (latest_close >= (ema_50 * (1 - proximity_threshold))) and (rsi_14 >= 40)
-        
-        # Condition B: "Strong Momentum Breakout/Pullback"
-        is_strong_momentum = rsi_14 > 65
+        is_uptrending = latest_close > ema_50
+        has_some_momentum = rsi_14 > 45
 
-        if is_stable_trend or is_strong_momentum:
-            log.info(f"    - ✅ PASS: {ticker} passed all technical checks (Stable Trend: {is_stable_trend}, Strong Momentum: {is_strong_momentum}).")
+        if is_uptrending and has_some_momentum:
+            log.info(f"    - ✅ PASS: {ticker} is in an uptrend with healthy momentum.")
             final_watchlist.append(ticker)
         else:
-            log.warning(f"    - VETO (Trend/Momentum): Skipping {ticker} (Stable Trend={is_stable_trend}, Strong Momentum={is_strong_momentum})")
+            log.warning(f"    - VETO (Trend/Momentum): Skipping {ticker} (Is Uptrending={is_uptrending}, Has Momentum={has_some_momentum})")
             continue
 
     # --- NEW FINAL SUMMARY LOG (Gemini style) ---

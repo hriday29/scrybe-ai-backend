@@ -52,11 +52,9 @@ def get_top_performing_sectors() -> list[str]:
     benchmark_performance = performance.pop(BENCHMARK_INDEX)
     log.info(f"Benchmark ({BENCHMARK_INDEX}) {LOOKBACK_PERIOD_DAYS}-day performance: {benchmark_performance:.2f}%")
 
-    outperforming_sectors = {
-        ticker: perf for ticker, perf in performance.items() if perf > benchmark_performance
-    }
-
-    sorted_sectors = sorted(outperforming_sectors.items(), key=lambda item: item[1], reverse=True)
+    # We now consider all sectors and just sort them by performance
+    log.info(f"Ranking all sectors by performance (Top {TOP_N_SECTORS} will be selected)...")
+    sorted_sectors = sorted(performance.items(), key=lambda item: item[1], reverse=True)
     
     top_sector_names = []
     for ticker, perf in sorted_sectors[:TOP_N_SECTORS]:
