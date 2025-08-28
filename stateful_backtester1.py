@@ -48,7 +48,9 @@ def _calculate_closed_trade(position: dict, closing_price: float, closing_reason
 def run_stateful_backtest(batch_id: str):
     log.info(f"--- 🚀 Starting Stateful Backtest for Batch: '{batch_id}' ---")
 
-    strategies_to_test = config.STRATEGIES_TO_TEST
+    strategies_to_test = [
+        {"name": "Flash Model Baseline (Hold: 10d, SL: 1.5x ATR)", "holding_period": 10}
+    ]
 
     database_manager.init_db(purpose='scheduler')
     # We query for actual trade signals, not HOLDs or VETOED signals.
