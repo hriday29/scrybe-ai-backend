@@ -48,9 +48,9 @@ FLASH_MODEL = "gemini-2.5-flash"
 APEX_SWING_STRATEGY = {
     "name": "ApexSwing",
     "holding_period": 10,
-    "stop_loss_atr_multiplier": 1.5,  # CHANGED from 2.5 to 1.5
+    "stop_loss_atr_multiplier": 2.0,
     "profit_target_rr_multiple": 2.0, # CHANGED from 1.8 to 2.0 for a clean 2:1 R/R
-    "min_conviction_score": 0,
+    "min_conviction_score": 30,
     "use_trailing_stop": True,
     "trailing_stop_atr_multiplier": 1.5,
 }
