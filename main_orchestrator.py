@@ -285,8 +285,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     prediction_doc.update({'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),'price_at_prediction': latest_row['close'], 'status': 'vetoed' if veto_reason else 'hold', 'strategy': "ApexSwing_v5_HighConviction", 'atr_at_prediction': atr_at_prediction, 'veto_reason': veto_reason})
                     database_manager.save_prediction_for_backtesting(prediction_doc, batch_id) # SAVE NON-TRADES IMMEDIATELY
                 
-                log.info("Pausing for 35 seconds to respect API rate limits...")
-                time.sleep(35)
+                log.info("Pausing for 20 seconds to respect API rate limits...")
+                time.sleep(20)
             # --- END OF LOOP FOR EACH TICKER ---
 
             # --- PHASE 2 & 3: RANK AND SELECT THE BEST TRADES ---
