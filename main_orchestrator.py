@@ -163,20 +163,6 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
             # --- PHASE 1: COLLECT ALL POTENTIAL TRADES FOR THE DAY ---
             potential_trades_today = []
             for ticker in stocks_for_today:
-                # --- START: CORRECTLY PLACED INTELLIGENT THROTTLING ---
-                current_time = time.time()
-                
-                # Remove any timestamps from our tracker that are older than 60 seconds
-                while api_call_timestamps and api_call_timestamps[0] <= current_time - 60:
-                    api_call_timestamps.popleft()
-                    
-                # Check if we are at the limit. If so, wait for the oldest call to expire.
-                if len(api_call_timestamps) >= RPM_LIMIT:
-                    time_to_wait = (api_call_timestamps[0] + 60) - current_time
-                    if time_to_wait > 0:
-                        log.warning(f"RPM limit approaching. Throttling for {time_to_wait:.2f} seconds...")
-                        time.sleep(time_to_wait)
-                # --- END: THROTTLING LOGIC ---
 
                 final_analysis = None
                 # --- Prepare context once, outside the retry loops ---
@@ -233,6 +219,11 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                         log.error(f"CRITICAL FAILURE: Fallback model also failed for {ticker}. Error: {e}")
                         final_analysis = None
 
+                # --- Pacing Delay ---
+                log.info("Pacing API calls with a 35-second delay to respect rate limits.")
+                time.sleep(35)
+
+                # If all attempts failed, skip this ticker
                 if not final_analysis:
                     log.warning(f"Skipping {ticker} for day {day_str} after all attempts failed.")
                     continue
