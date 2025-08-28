@@ -30,11 +30,17 @@ def _calculate_closed_trade(position: dict, closing_price: float, closing_reason
     total_transaction_costs = brokerage + stt + other_charges
     net_pnl = gross_pnl - total_transaction_costs
     
+    # Calculate net_return_pct based on the initial capital risked for this trade
+    initial_investment = entry_price * num_shares
+    net_return_pct = (net_pnl / initial_investment) * 100 if initial_investment != 0 else 0
+
     performance_doc = {
         "prediction_id": position['prediction_id'], "ticker": position['ticker'], 
         "strategy": position['strategy'], "signal": signal, "status": "Closed", 
         "open_date": position['open_date'], "close_date": close_date.to_pydatetime(), 
-        "closing_reason": closing_reason, "net_pnl": round(net_pnl, 2),
+        "closing_reason": closing_reason, 
+        "net_pnl": round(net_pnl, 2),
+        "net_return_pct": round(net_return_pct, 2), # Add this for better reporting
         "batch_id": position['batch_id']
     }
     return performance_doc, net_pnl
@@ -42,9 +48,7 @@ def _calculate_closed_trade(position: dict, closing_price: float, closing_reason
 def run_stateful_backtest(batch_id: str):
     log.info(f"--- 🚀 Starting Stateful Backtest for Batch: '{batch_id}' ---")
 
-    strategies_to_test = [
-        {"name": "Flash Model Baseline (Hold: 10d, SL: 1.5x ATR)", "holding_period": 10}
-    ]
+    strategies_to_test = config.STRATEGIES_TO_TEST
 
     database_manager.init_db(purpose='scheduler')
     # We query for actual trade signals, not HOLDs or VETOED signals.
@@ -62,12 +66,18 @@ def run_stateful_backtest(batch_id: str):
     unique_tickers = all_signals_df['ticker'].unique().tolist()
     last_signal_date = all_signals_df['prediction_date'].max()
     max_holding_days = max(s['holding_period'] for s in strategies_to_test)
-    simulation_end_date = last_signal_date + pd.Timedelta(days=max_holding_days + 5)
+    simulation_end_date = last_signal_date + pd.Timedelta(days=max_holding_days + 15) # Increased buffer
+    
     data_cache = {}
+    log.info(f"Pre-loading historical data for {len(unique_tickers)} ticker(s)...")
     for ticker in unique_tickers:
         data = data_retriever.get_historical_stock_data(ticker, end_date=simulation_end_date.strftime('%Y-%m-%d'))
-        if data is not None and not data.empty: data_cache[ticker] = data
-        else: all_signals_df = all_signals_df[all_signals_df['ticker'] != ticker]
+        if data is not None and not data.empty:
+            data_cache[ticker] = data
+        else:
+            log.warning(f"Could not load data for {ticker}. Signals for this ticker will be skipped.")
+            all_signals_df = all_signals_df[all_signals_df['ticker'] != ticker]
+            
     log.info("✅ Setup complete.")
 
     all_results_for_db = []
@@ -82,17 +92,25 @@ def run_stateful_backtest(batch_id: str):
         simulation_days = pd.bdate_range(start=simulation_start_date, end=simulation_end_date)
 
         for day in simulation_days:
+            # First, check for exits on open positions
             for position in portfolio['open_positions'][:]:
                 ticker = position['ticker']
-                try: day_data = data_cache[ticker].loc[day]
-                except KeyError: continue
+                try:
+                    day_data = data_cache[ticker].loc[day]
+                except KeyError:
+                    continue # Skip if market is closed for this stock on this day
+                
                 close_reason, closing_price = None, None
+                
+                # Check for Stop-Loss or Target Hit
                 if position['signal'] == 'BUY':
                     if day_data.low <= position['stop_loss']: close_reason, closing_price = "Stop-Loss Hit", position['stop_loss']
                     elif day_data.high >= position['target']: close_reason, closing_price = "Target Hit", position['target']
                 elif position['signal'] == 'SELL':
                     if day_data.high >= position['stop_loss']: close_reason, closing_price = "Stop-Loss Hit", position['stop_loss']
                     elif day_data.low <= position['target']: close_reason, closing_price = "Target Hit", position['target']
+                
+                # Check for Time-Based Exit
                 days_held = (day.date() - position['open_date'].date()).days
                 if not close_reason and days_held >= strategy['holding_period']:
                     close_reason, closing_price = "Time Exit", day_data.close
@@ -100,10 +118,11 @@ def run_stateful_backtest(batch_id: str):
                 if close_reason:
                     closed_trade_doc, net_pnl = _calculate_closed_trade(position, closing_price, close_reason, day)
                     log.info(f"CLOSING TRADE: {position['ticker']} for {close_reason}. Net P&L: ₹{net_pnl:.2f}")
-                    portfolio['equity'] += net_pnl
+                    portfolio['equity'] += net_pnl # Adjust equity by the P&L of the trade value, not the full trade value
                     portfolio['closed_trades_for_report'].append(closed_trade_doc)
                     portfolio['open_positions'].remove(position)
             
+            # Second, check for new signals to enter
             new_signals_for_today = all_signals_df[all_signals_df['prediction_date'].dt.date == day.date()]
             if not new_signals_for_today.empty:
                 for index, signal in new_signals_for_today.iterrows():
@@ -111,15 +130,30 @@ def run_stateful_backtest(batch_id: str):
                     if len(portfolio['open_positions']) >= PORTFOLIO_CONSTRAINTS['max_concurrent_trades']:
                         log.warning(f"SKIPPING SIGNAL for {signal['ticker']}: Max concurrent trade limit ({PORTFOLIO_CONSTRAINTS['max_concurrent_trades']}) reached.")
                         continue
+                    
+                    # Check if a position for this ticker is already open
+                    if any(p['ticker'] == signal['ticker'] for p in portfolio['open_positions']):
+                        log.warning(f"SKIPPING SIGNAL for {signal['ticker']}: A position for this ticker is already open.")
+                        continue
 
                     risk_amount = portfolio['equity'] * (config.BACKTEST_PORTFOLIO_CONFIG['risk_per_trade_pct'] / 100.0)
                     trade_plan = signal.get('tradePlan', {})
                     entry_price, stop_loss_price = trade_plan.get('entryPrice'), trade_plan.get('stopLoss')
-                    if not all([entry_price, stop_loss_price]): continue
+                    
+                    if not all([entry_price, stop_loss_price]):
+                        log.error(f"Signal for {signal['ticker']} on {day.date()} is missing a tradePlan. Cannot execute.")
+                        continue
+                        
                     risk_per_share = abs(entry_price - stop_loss_price)
-                    if risk_per_share <= 0: continue
+                    if risk_per_share <= 0:
+                        log.warning(f"SKIPPING SIGNAL for {signal['ticker']}: Risk per share is zero or negative.")
+                        continue
+                        
                     num_shares = int(risk_amount / risk_per_share)
-                    if num_shares == 0: continue
+                    if num_shares == 0:
+                        log.warning(f"SKIPPING SIGNAL for {signal['ticker']}: Calculated shares to trade is zero.")
+                        continue
+
                     new_position = {
                         'prediction_id': signal['_id'], 'ticker': signal['ticker'], 'signal': signal['signal'],
                         'entry_price': entry_price, 'num_shares': num_shares, 'stop_loss': stop_loss_price,
@@ -128,34 +162,44 @@ def run_stateful_backtest(batch_id: str):
                     }
                     portfolio['open_positions'].append(new_position)
                     log.info(f"ENTERING TRADE: {signal['signal']} {num_shares} shares of {signal['ticker']} @ {entry_price:.2f}")
+
+            # Log daily equity at the end of the day
             portfolio['daily_equity_log'].append({'date': day, 'equity': portfolio['equity']})
         
         all_results_for_db.extend(portfolio['closed_trades_for_report'])
         
         # --- FINAL REPORTING FOR THIS STRATEGY ---
+        if not portfolio['daily_equity_log']:
+            log.warning(f"No equity data logged for strategy '{strategy['name']}'. Skipping report.")
+            continue
+            
         equity_df = pd.DataFrame(portfolio['daily_equity_log']).set_index('date')
         closed_trades_df = pd.DataFrame(portfolio['closed_trades_for_report'])
         
         initial_capital = config.BACKTEST_PORTFOLIO_CONFIG['initial_capital']
         final_equity = equity_df['equity'].iloc[-1]
         total_return_pct = ((final_equity - initial_capital) / initial_capital) * 100
+        
         equity_df['peak'] = equity_df['equity'].cummax()
         equity_df['drawdown_pct'] = ((equity_df['peak'] - equity_df['equity']) / equity_df['peak']) * 100
         max_drawdown_pct = equity_df['drawdown_pct'].max() if not equity_df['drawdown_pct'].empty else 0
         total_trades = len(closed_trades_df)
+
         if total_trades > 0:
             win_rate = (closed_trades_df['net_pnl'] > 0).mean() * 100
             gross_profit = closed_trades_df[closed_trades_df['net_pnl'] > 0]['net_pnl'].sum()
             gross_loss = abs(closed_trades_df[closed_trades_df['net_pnl'] < 0]['net_pnl'].sum())
             profit_factor = gross_profit / gross_loss if gross_loss > 0 else float('inf')
+            
             equity_df['daily_return'] = equity_df['equity'].pct_change().fillna(0)
-            sharpe_ratio = (equity_df['daily_return'].mean() / equity_df['daily_return'].std()) * (252**0.5) if equity_df['daily_return'].std() != 0 else 0
-            downside_std = equity_df[equity_df['daily_return'] < 0]['daily_return'].std()
+            sharpe_ratio = (equity_df['daily_return'].mean() / equity_df['daily_return'].std()) * (252**0.5) if equity_df['daily_return'].std() > 0 else 0
+            downside_std = equity_df[equity_df['daily_return'] < 0]['daily_return'].std(ddof=0)
             sortino_ratio = (equity_df['daily_return'].mean() / downside_std) * (252**0.5) if downside_std > 0 else 0
-            annualized_return = total_return_pct * (252 / len(equity_df))
+            annualized_return = total_return_pct * (252 / len(equity_df)) if len(equity_df) > 0 else 0
             calmar_ratio = annualized_return / max_drawdown_pct if max_drawdown_pct > 0 else 0
         else:
             win_rate, profit_factor, sharpe_ratio, sortino_ratio, calmar_ratio = 0, 0, 0, 0, 0
+            
         print("\n" + "="*80)
         print(f"### Backtest Performance Summary: '{strategy['name']}' on Batch '{batch_id}' ###")
         print("="*80)

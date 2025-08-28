@@ -187,7 +187,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 while retries < max_retries:
                     try:
                         analysis_from_api = analyzer.get_apex_analysis(
-                            ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.PRO_MODEL
+                        ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.FLASH_MODEL
                         )
                         if analysis_from_api:
                             final_analysis = analysis_from_api
