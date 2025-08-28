@@ -16,6 +16,7 @@ import market_regime_analyzer
 import sector_analyzer
 from quantitative_screener import generate_dynamic_watchlist, _passes_fundamental_health_check
 from config import PORTFOLIO_CONSTRAINTS
+from collections import deque
 
 STATE_FILE = 'simulation_state.json'
 
@@ -123,6 +124,11 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
     current_equity = portfolio_config['initial_capital']
     active_strategy = config.APEX_SWING_STRATEGY
 
+    api_call_timestamps = deque()
+    # The official RPM for Flash is 10. We'll use a slightly lower number to be safe.
+    RPM_LIMIT = 8
+
+
     total_stocks_processed_by_screener = 0
     total_stocks_passed_screener = 0
     total_ai_buy_sell_signals = 0
@@ -157,13 +163,28 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
             # --- PHASE 1: COLLECT ALL POTENTIAL TRADES FOR THE DAY ---
             potential_trades_today = []
             for ticker in stocks_for_today:
+                # --- START: CORRECTLY PLACED INTELLIGENT THROTTLING ---
+                current_time = time.time()
+                
+                # Remove any timestamps from our tracker that are older than 60 seconds
+                while api_call_timestamps and api_call_timestamps[0] <= current_time - 60:
+                    api_call_timestamps.popleft()
+                    
+                # Check if we are at the limit. If so, wait for the oldest call to expire.
+                if len(api_call_timestamps) >= RPM_LIMIT:
+                    time_to_wait = (api_call_timestamps[0] + 60) - current_time
+                    if time_to_wait > 0:
+                        log.warning(f"RPM limit approaching. Throttling for {time_to_wait:.2f} seconds...")
+                        time.sleep(time_to_wait)
+                # --- END: THROTTLING LOGIC ---
                 # --- START: NEW MULTI-MODEL FALLBACK LOGIC ---
                 final_analysis = None
 
-                # --- Attempt 1: Try the PRIMARY (Pro) model with retries ---
-                log.info(f"--- Analyzing Ticker: {ticker} with Primary Model ({config.PRO_MODEL}) ---")
+                # --- Attempt 1: Analyze with the designated model for this backtest phase ---
+                model_to_use = config.FLASH_MODEL # We define the model here
+                log.info(f"--- Analyzing Ticker: {ticker} with Model: {model_to_use} ---")
                 retries = 0
-                max_retries = 3 
+                max_retries = 3
 
                 # Prepare the context once before the retry loop
                 point_in_time_data = full_historical_data_cache.get(ticker).loc[:day_str].copy()
@@ -179,6 +200,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 latest_row = point_in_time_data.iloc[-1]
                 point_in_time_data.ta.atr(length=14, append=True)
                 atr_at_prediction = point_in_time_data['ATRr_14'].iloc[-1]
+                point_in_time_data.ta.adx(length=14, append=True)
+                adx_at_prediction = point_in_time_data['ADX_14'].iloc[-1]
                 nifty_5d_change = (nifty_data.loc[:day_str]['close'].iloc[-1] / nifty_data.loc[:day_str]['close'].iloc[-6] - 1) * 100
                 stock_5d_change = (latest_row['close'] / point_in_time_data['close'].iloc[-6] - 1) * 100
 
@@ -186,7 +209,10 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     "layer_1_macro_context": {"nifty_50_regime": market_regime},
                     "layer_2_relative_strength": {"relative_strength_vs_nifty50": "Outperforming" if stock_5d_change > nifty_5d_change else "Underperforming"},
                     "layer_3_fundamental_moat": data_retriever.get_fundamental_proxies(point_in_time_data),
-                    "layer_4_technicals": {"daily_close": latest_row['close']},
+                    "layer_4_technicals": {
+                        "daily_close": latest_row['close'],
+                        "adx_14_trend_strength": f"{adx_at_prediction:.2f}" # ADD THIS LINE
+                    },
                     "layer_5_options_sentiment": {"sentiment": "Unavailable in backtest"},
                     "layer_6_news_catalyst": {"summary": "Unavailable in backtest"}
                 }
@@ -195,7 +221,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 while retries < max_retries:
                     try:
                         analysis_from_api = analyzer.get_apex_analysis(
-                        ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.FLASH_MODEL
+                            ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=model_to_use
                         )
                         if analysis_from_api:
                             final_analysis = analysis_from_api
@@ -294,9 +320,6 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 else:
                     prediction_doc.update({'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),'price_at_prediction': latest_row['close'], 'status': 'vetoed' if veto_reason else 'hold', 'strategy': "ApexSwing_v5_HighConviction", 'atr_at_prediction': atr_at_prediction, 'veto_reason': veto_reason})
                     database_manager.save_prediction_for_backtesting(prediction_doc, batch_id) # SAVE NON-TRADES IMMEDIATELY
-                
-                log.info("Pausing for 20 seconds to respect API rate limits...")
-                time.sleep(20)
             # --- END OF LOOP FOR EACH TICKER ---
 
             # --- PHASE 2 & 3: RANK AND SELECT THE BEST TRADES ---

@@ -132,26 +132,27 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
         # Indicators
         data.ta.ema(length=50, append=True)
         data.ta.rsi(length=14, append=True)
+        data.ta.adx(length=14, append=True) # Add ADX calculation
         data.dropna(inplace=True)
 
         latest_close = data['close'].iloc[-1]
         ema_50 = data['EMA_50'].iloc[-1]
         rsi_14 = data['RSI_14'].iloc[-1]
+        adx_14 = data['ADX_14'].iloc[-1] # Get the latest ADX value
 
-        log.info(f"    - DEBUG DATA for {ticker}: Close={latest_close:.2f}, 50-EMA={ema_50:.2f}, RSI={rsi_14:.2f}")
+        log.info(f"    - DEBUG DATA for {ticker}: Close={latest_close:.2f}, 50-EMA={ema_50:.2f}, RSI={rsi_14:.2f}, ADX={adx_14:.2f}")
 
         # --- Filters ---
-        proximity_threshold = 0.04  # Stock must be within 4% of 50-EMA
-
-        # Condition A: "Stable Trend-Follower"
         is_uptrending = latest_close > ema_50
         has_some_momentum = rsi_14 > 45
+        is_trending = adx_14 > config.ADX_THRESHOLD # Check if trend is strong (ADX > 25)
 
-        if is_uptrending and has_some_momentum:
-            log.info(f"    - ✅ PASS: {ticker} is in an uptrend with healthy momentum.")
+        # The final check now includes the ADX condition
+        if is_uptrending and has_some_momentum and is_trending:
+            log.info(f"    - ✅ PASS: {ticker} has strong, trending momentum.")
             final_watchlist.append(ticker)
         else:
-            log.warning(f"    - VETO (Trend/Momentum): Skipping {ticker} (Is Uptrending={is_uptrending}, Has Momentum={has_some_momentum})")
+            log.warning(f"    - VETO: Skipping {ticker} (Uptrend={is_uptrending}, Momentum={has_some_momentum}, Trending={is_trending})")
             continue
 
     # --- NEW FINAL SUMMARY LOG (Gemini style) ---
