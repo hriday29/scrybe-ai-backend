@@ -177,26 +177,17 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                         log.warning(f"RPM limit approaching. Throttling for {time_to_wait:.2f} seconds...")
                         time.sleep(time_to_wait)
                 # --- END: THROTTLING LOGIC ---
-                # --- START: NEW MULTI-MODEL FALLBACK LOGIC ---
+
                 final_analysis = None
-
-                # --- Attempt 1: Analyze with the designated model for this backtest phase ---
-                model_to_use = config.FLASH_MODEL # We define the model here
-                log.info(f"--- Analyzing Ticker: {ticker} with Model: {model_to_use} ---")
-                retries = 0
-                max_retries = 3
-
-                # Prepare the context once before the retry loop
+                # --- Prepare context once, outside the retry loops ---
                 point_in_time_data = full_historical_data_cache.get(ticker).loc[:day_str].copy()
                 if len(point_in_time_data) < 252:
                     log.warning(f"Skipping {ticker} due to insufficient historical data on {day_str}.")
-                    final_analysis = None
                     continue
 
                 strategic_review = _get_30_day_performance_review(current_day, batch_id)
                 tactical_lookback = _get_1_day_tactical_lookback(current_day, ticker, batch_id)
                 per_stock_history = _get_per_stock_trade_history(ticker, batch_id, current_day)
-
                 latest_row = point_in_time_data.iloc[-1]
                 point_in_time_data.ta.atr(length=14, append=True)
                 atr_at_prediction = point_in_time_data['ATRr_14'].iloc[-1]
@@ -204,43 +195,33 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 adx_at_prediction = point_in_time_data['ADX_14'].iloc[-1]
                 nifty_5d_change = (nifty_data.loc[:day_str]['close'].iloc[-1] / nifty_data.loc[:day_str]['close'].iloc[-6] - 1) * 100
                 stock_5d_change = (latest_row['close'] / point_in_time_data['close'].iloc[-6] - 1) * 100
-
                 full_context = {
                     "layer_1_macro_context": {"nifty_50_regime": market_regime},
                     "layer_2_relative_strength": {"relative_strength_vs_nifty50": "Outperforming" if stock_5d_change > nifty_5d_change else "Underperforming"},
                     "layer_3_fundamental_moat": data_retriever.get_fundamental_proxies(point_in_time_data),
-                    "layer_4_technicals": {
-                        "daily_close": latest_row['close'],
-                        "adx_14_trend_strength": f"{adx_at_prediction:.2f}" # ADD THIS LINE
-                    },
+                    "layer_4_technicals": {"daily_close": latest_row['close'], "adx_14_trend_strength": f"{adx_at_prediction:.2f}"},
                     "layer_5_options_sentiment": {"sentiment": "Unavailable in backtest"},
                     "layer_6_news_catalyst": {"summary": "Unavailable in backtest"}
                 }
                 sanitized_full_context = sanitize_context(full_context)
+                # --- End of context preparation ---
 
-                while retries < max_retries:
-                    try:
-                        analysis_from_api = analyzer.get_apex_analysis(
-                            ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=model_to_use
-                        )
-                        if analysis_from_api:
-                            final_analysis = analysis_from_api
-                            log.info(f"✅ Successfully got analysis for {ticker} using PRIMARY model.")
-                            break
-                    except Exception as e:
-                        log.error(f"Primary model attempt {retries + 1} for {ticker} failed. Error: {e}")
-                        if "blocked response" in str(e).lower():
-                            log.error(f"--- PROMPT CONTEXT THAT CAUSED BLOCK FOR {ticker} ---")
-                            log.error(json.dumps(full_context, indent=2))
-                        retries += 1
-                        if retries < max_retries:
-                            log.warning(f"Rotating API key and retrying with primary model ({retries}/{max_retries})...")
-                            analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
-                            time.sleep(35)
+                # --- Attempt 1: Try the PRIMARY (Pro) model ---
+                log.info(f"--- Analyzing Ticker: {ticker} with Primary Model ({config.PRO_MODEL}) ---")
+                try:
+                    final_analysis = analyzer.get_apex_analysis(
+                        ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.PRO_MODEL
+                    )
+                    if final_analysis:
+                        log.info(f"✅ Successfully got analysis for {ticker} using PRIMARY model.")
+                        final_analysis['modelUsed'] = 'pro'
+                except Exception as e:
+                    log.error(f"Primary model attempt for {ticker} failed. Error: {e}. Switching to fallback...")
+                    final_analysis = None # Ensure it's None before fallback
 
                 # --- Attempt 2: If PRIMARY failed, use the FALLBACK (Flash) model ---
                 if not final_analysis:
-                    log.warning(f"All primary attempts for {ticker} failed. Switching to FALLBACK model ({config.FLASH_MODEL}).")
+                    log.warning(f"Switching to FALLBACK model ({config.FLASH_MODEL}) for {ticker}.")
                     try:
                         final_analysis = analyzer.get_apex_analysis(
                             ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.FLASH_MODEL
@@ -251,13 +232,10 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     except Exception as e:
                         log.error(f"CRITICAL FAILURE: Fallback model also failed for {ticker}. Error: {e}")
                         final_analysis = None
-                else:
-                    final_analysis['modelUsed'] = 'pro'
 
                 if not final_analysis:
-                    log.warning(f"Skipping {ticker} for day {day_str} after all primary and fallback attempts failed.")
+                    log.warning(f"Skipping {ticker} for day {day_str} after all attempts failed.")
                     continue
-                # --- END: NEW MULTI-MODEL FALLBACK LOGIC ---
                 
                 # --- START: ENHANCED VETO LOGIC & INSTRUMENTATION ---
                 original_signal = final_analysis.get('signal')

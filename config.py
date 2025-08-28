@@ -57,12 +57,12 @@ FLASH_MODEL = "gemini-2.5-flash"
 
 APEX_SWING_STRATEGY = {
     "name": "ApexSwing",
-    "holding_period": 10, # This will no longer be used for exits
-    "stop_loss_atr_multiplier": 2.0,  # We'll keep the wider initial stop
+    "holding_period": 10, # This won't be used, but we can leave it
+    "stop_loss_atr_multiplier": 2.0,
     "profit_target_rr_multiple": 2.0,
     "min_conviction_score": 30,
-    "use_trailing_stop": True, # ADD THIS
-    "trailing_stop_atr_multiplier": 1.5, # ADD THIS (tighter than initial stop)
+    "use_trailing_stop": False, # CHANGE THIS TO FALSE
+    "trailing_stop_atr_multiplier": 1.5,
 }
 
 # --- ADD THIS NEW CONFIGURATION ---

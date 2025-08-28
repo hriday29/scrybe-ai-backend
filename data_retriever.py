@@ -66,7 +66,10 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
     if os.path.exists(cache_file):
         try:
             log.info(f"CACHE HIT: Loading {ticker_symbol} data from {cache_file}")
-            return pd.read_feather(cache_file)
+            df = pd.read_feather(cache_file)
+            # THIS IS THE CRUCIAL FIX: Set the 'Date' column back to the index
+            df.set_index('Date', inplace=True) 
+            return df
         except Exception as e:
             log.warning(f"Could not read from cache file {cache_file}. Error: {e}. Refetching.")
 

@@ -103,34 +103,18 @@ def run_stateful_backtest(batch_id: str):
                     continue # Skip if market is closed for this stock on this day
 
                 close_reason, closing_price = None, None
-                use_trailing_stop = config.APEX_SWING_STRATEGY.get('use_trailing_stop', False)
 
-                # --- NEW: Trailing Stop-Loss Logic ---
-                if use_trailing_stop and position['signal'] == 'BUY':
-                    # Calculate the new potential stop-loss based on today's high
-                    trailing_atr_multiplier = config.APEX_SWING_STRATEGY['trailing_stop_atr_multiplier']
-                    # We need ATR for today, let's calculate it if not present
-                    if 'ATRr_14' not in data_cache[ticker].columns:
-                        data_cache[ticker].ta.atr(length=14, append=True)
-                    
-                    current_atr = data_cache[ticker].loc[day]['ATRr_14']
-                    new_trailing_stop = day_data.high - (current_atr * trailing_atr_multiplier)
-                    
-                    # If the new trailing stop is higher than the old one, update it
-                    if new_trailing_stop > position['stop_loss']:
-                        log.info(f"TRAIL STOP for {ticker}: Stop moved UP from {position['stop_loss']:.2f} to {new_trailing_stop:.2f}")
-                        position['stop_loss'] = new_trailing_stop
-
-                # --- Standard Exit Condition Checks ---
+                # --- Pure Stop-Loss / Target-Hit Exit Logic ---
                 if position['signal'] == 'BUY':
                     if day_data.low <= position['stop_loss']:
                         close_reason, closing_price = "Stop-Loss Hit", position['stop_loss']
                     elif day_data.high >= position['target']:
                         close_reason, closing_price = "Target Hit", position['target']
                 elif position['signal'] == 'SELL':
-                    # ... (sell logic remains the same for now) ...
-                    if day_data.high >= position['stop_loss']: close_reason, closing_price = "Stop-Loss Hit", position['stop_loss']
-                    elif day_data.low <= position['target']: close_reason, closing_price = "Target Hit", position['target']
+                    if day_data.high >= position['stop_loss']:
+                        close_reason, closing_price = "Stop-Loss Hit", position['stop_loss']
+                    elif day_data.low <= position['target']:
+                        close_reason, closing_price = "Target Hit", position['target']
 
                 # --- REMOVED Time-Based Exit ---
                 # The trailing stop-loss has replaced the need for a fixed holding period exit.
