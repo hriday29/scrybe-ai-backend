@@ -165,6 +165,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
             for ticker, screener_reason in stocks_for_today:
 
                 final_analysis = None
+                max_attempts = len(config.GEMINI_API_KEY_POOL)
+                current_attempt = 0
                 # --- Prepare context once, outside the retry loops ---
                 point_in_time_data = full_historical_data_cache.get(ticker).loc[:day_str].copy()
                 if len(point_in_time_data) < 252:
@@ -192,23 +194,36 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 sanitized_full_context = sanitize_context(full_context)
                 # --- End of context preparation ---
 
-                # --- Attempt 1: Try the PRIMARY (Pro) model ---
+                # --- Primary Model Loop (Pro with Key Rotation) ---
                 log.info(f"--- Analyzing Ticker: {ticker} with Primary Model ({config.PRO_MODEL}) ---")
-                try:
-                    final_analysis = analyzer.get_apex_analysis(
-                        ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.PRO_MODEL, screener_reason=screener_reason
-                    )
-                    if final_analysis:
-                        log.info(f"✅ Successfully got analysis for {ticker} using PRIMARY model.")
-                        final_analysis['modelUsed'] = 'pro'
-                except Exception as e:
-                    log.error(f"Primary model attempt for {ticker} failed. Error: {e}. Switching to fallback...")
-                    final_analysis = None # Ensure it's None before fallback
-
-                # --- Attempt 2: If PRIMARY failed, use the FALLBACK (Flash) model ---
-                if not final_analysis:
-                    log.warning(f"Switching to FALLBACK model ({config.FLASH_MODEL}) for {ticker}.")
+                while current_attempt < max_attempts:
                     try:
+                        final_analysis = analyzer.get_apex_analysis(
+                            ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.PRO_MODEL, screener_reason=screener_reason
+                        )
+                        if final_analysis:
+                            log.info(f"✅ Successfully got analysis for {ticker} using PRIMARY model on key #{key_manager.current_index + 1}.")
+                            final_analysis['modelUsed'] = 'pro'
+                            break # Success, exit the loop
+                            
+                    except Exception as e:
+                        log.error(f"Primary model attempt #{current_attempt + 1} for {ticker} failed. Error: {e}")
+                        # Check for specific, recoverable errors
+                        error_str = str(e).lower()
+                        if "429" in error_str or "quota" in error_str or "500" in error_str or isinstance(e, ValueError):
+                            log.warning("Error is recoverable, rotating API key and retrying...")
+                            analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
+                            current_attempt += 1
+                            time.sleep(5) # A small delay before retrying with new key
+                        else:
+                            log.error("Encountered a non-recoverable error. Breaking loop.")
+                            break # Break on unrecoverable errors
+
+                # --- Fallback Model (Flash) if all Primary attempts failed ---
+                if not final_analysis:
+                    log.warning(f"All primary model attempts failed. Switching to FALLBACK model ({config.FLASH_MODEL}) for {ticker}.")
+                    try:
+                        # We can try the fallback with the current key
                         final_analysis = analyzer.get_apex_analysis(
                             ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.FLASH_MODEL, screener_reason=screener_reason
                         )
@@ -219,7 +234,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                         log.error(f"CRITICAL FAILURE: Fallback model also failed for {ticker}. Error: {e}")
                         final_analysis = None
 
-                # --- Pacing Delay ---
+                # --- Pacing Delay (remains the same) ---
                 log.info("Pacing API calls with a 35-second delay to respect rate limits.")
                 time.sleep(35)
 
