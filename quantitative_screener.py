@@ -85,10 +85,8 @@ def _get_stock_sector_map(tickers: list[str]) -> dict:
     log.info("✅ Stock-to-sector map complete.")
     return stock_sector_map
 
-def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict, point_in_time: str) -> list[str]:
-    """
-    V2 Screener: Upgraded with stricter trend and new momentum filters.
-    """
+def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[tuple[str, str]]:
+
     log.info("--- [Funnel Step 3] Running V2 Quantitative Pre-Screener ---")
     
     target_sectors = {SECTOR_NAME_MAPPING[name] for name in strong_sectors if name in SECTOR_NAME_MAPPING}
@@ -131,29 +129,43 @@ def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict,
 
         # Indicators
         data.ta.ema(length=50, append=True)
+        data.ta.ema(length=200, append=True) # ADD 200-day EMA for long-term trend
         data.ta.rsi(length=14, append=True)
-        data.ta.adx(length=14, append=True) # Add ADX calculation
+        data.ta.adx(length=14, append=True)
         data.dropna(inplace=True)
 
         latest_close = data['close'].iloc[-1]
         ema_50 = data['EMA_50'].iloc[-1]
+        ema_200 = data['EMA_200'].iloc[-1]
         rsi_14 = data['RSI_14'].iloc[-1]
-        adx_14 = data['ADX_14'].iloc[-1] # Get the latest ADX value
+        adx_14 = data['ADX_14'].iloc[-1]
 
-        log.info(f"    - DEBUG DATA for {ticker}: Close={latest_close:.2f}, 50-EMA={ema_50:.2f}, RSI={rsi_14:.2f}, ADX={adx_14:.2f}")
+        screener_reason = None # This will tell the AI what kind of setup it is
 
-        # --- Filters ---
+        # --- Condition 1: Momentum Check (Our existing logic) ---
+        is_strong_trend = adx_14 > config.ADX_THRESHOLD
         is_uptrending = latest_close > ema_50
-        has_some_momentum = rsi_14 > 45
-        is_trending = adx_14 > config.ADX_THRESHOLD # Check if trend is strong (ADX > 25)
+        has_momentum = rsi_14 > 45
 
-        # The final check now includes the ADX condition
-        if is_uptrending and has_some_momentum and is_trending:
-            log.info(f"    - ✅ PASS: {ticker} has strong, trending momentum.")
-            final_watchlist.append(ticker)
-        else:
-            log.warning(f"    - VETO: Skipping {ticker} (Uptrend={is_uptrending}, Momentum={has_some_momentum}, Trending={is_trending})")
+        if is_strong_trend and is_uptrending and has_momentum:
+            screener_reason = "Momentum"
+            final_watchlist.append((ticker, screener_reason)) # Return a tuple with the reason
+            log.info(f"    - ✅ PASS (Momentum): {ticker} has strong, trending momentum.")
             continue
+
+        # --- Condition 2: Mean-Reversion Check (NEW LOGIC) ---
+        is_long_term_uptrend = latest_close > ema_200
+        is_oversold = rsi_14 < 35 # Look for dips
+        is_not_trending = adx_14 < 22 # Look for consolidating trends
+
+        if is_long_term_uptrend and is_oversold and is_not_trending:
+            screener_reason = "Mean Reversion"
+            final_watchlist.append((ticker, screener_reason)) # Return a tuple with the reason
+            log.info(f"    - ✅ PASS (Mean Reversion): {ticker} is oversold in a long-term uptrend.")
+            continue
+
+        # If neither condition is met, veto the stock
+        log.warning(f"    - VETO: {ticker} did not meet Momentum or Mean Reversion criteria.")
 
     # --- NEW FINAL SUMMARY LOG (Gemini style) ---
     log.info(f"✅ Screener Funnel | Final Result: {len(final_watchlist)} stocks passed all technical checks.")

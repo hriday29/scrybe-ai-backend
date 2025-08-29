@@ -162,7 +162,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
 
             # --- PHASE 1: COLLECT ALL POTENTIAL TRADES FOR THE DAY ---
             potential_trades_today = []
-            for ticker in stocks_for_today:
+            for ticker, screener_reason in stocks_for_today:
 
                 final_analysis = None
                 # --- Prepare context once, outside the retry loops ---
@@ -196,7 +196,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 log.info(f"--- Analyzing Ticker: {ticker} with Primary Model ({config.PRO_MODEL}) ---")
                 try:
                     final_analysis = analyzer.get_apex_analysis(
-                        ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.PRO_MODEL
+                        ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.PRO_MODEL, screener_reason=screener_reason
                     )
                     if final_analysis:
                         log.info(f"✅ Successfully got analysis for {ticker} using PRIMARY model.")
@@ -210,7 +210,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                     log.warning(f"Switching to FALLBACK model ({config.FLASH_MODEL}) for {ticker}.")
                     try:
                         final_analysis = analyzer.get_apex_analysis(
-                            ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.FLASH_MODEL
+                            ticker, sanitized_full_context, strategic_review, tactical_lookback, per_stock_history, model_name=config.FLASH_MODEL, screener_reason=screener_reason
                         )
                         if final_analysis:
                             log.info(f"✅ Successfully got analysis for {ticker} using FALLBACK model.")

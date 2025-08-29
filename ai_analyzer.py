@@ -19,7 +19,7 @@ class AIAnalyzer:
         genai.configure(api_key=api_key)
         log.info("AIAnalyzer initialized and Gemini API key configured.")
 
-    def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str, model_name: str) -> dict:
+    def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str, model_name: str, screener_reason: str) -> dict:
         """
         Generates a definitive, institutional-grade analysis using the "Apex" multi-layered model.
         """
@@ -35,6 +35,12 @@ class AIAnalyzer:
         
         **DATA AVAILABILITY RULE:**
         If any data layer contains missing, null, or unavailable content, you must explicitly state "Data Not Available" in your analysis for that layer and weigh your final decision accordingly. Do not speculate on missing data.
+
+        **STRATEGY CONTEXT (NEW):**
+        You will be provided with a `screener_reason` that explains why this stock was selected for analysis. This context is critical.
+        - If `screener_reason` is **"Momentum"**: The stock is already in a strong, established trend. Your analysis should focus on the probability of **trend continuation**.
+        - If `screener_reason` is **"Mean Reversion"**: The stock is in a long-term uptrend but has recently pulled back and is oversold. Your analysis should focus on the probability of a **bounce or reversal** back to the mean.
+        Weigh your analysis heavily based on this strategic context.
 
         **ANALYTICAL PROTOCOL - STEP 1: MULTI-LAYERED SCENARIO FORMATION.**
         Synthesize the following six layers of intelligence into a single, cohesive research thesis. Each layer must be weighed according to its specified importance.
@@ -114,6 +120,7 @@ class AIAnalyzer:
             # f"30-Day Strategic Review:\n{strategic_review or 'Data Not Available'}",
             # f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history or 'Data Not Available'}",
             # f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback or 'Data Not Available'}",
+            f"Screener Reason for selecting {ticker}: **{screener_reason}**",
             formatted_context
         ]
 
