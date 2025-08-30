@@ -18,8 +18,6 @@ from quantitative_screener import generate_dynamic_watchlist, _passes_fundamenta
 from config import PORTFOLIO_CONSTRAINTS
 from collections import deque
 
-STATE_FILE = 'simulation_state.json'
-
 def sanitize_context(context: dict) -> dict:
     """Sanitizes the context dictionary to replace null-like values."""
     sanitized_context = {}
@@ -71,25 +69,34 @@ def _get_per_stock_trade_history(ticker: str, batch_id: str, current_day: pd.Tim
     history_lines = [f"{i+1}. Signal: {t.get('signal')}, Outcome: {t.get('net_return_pct'):.2f}% ({t.get('closing_reason')})" for i, t in enumerate(recent_trades)]
     return "\n".join(history_lines)
 
-def save_state(next_day_to_run):
-    with open(STATE_FILE, 'w') as f: json.dump({'next_start_date': next_day_to_run.strftime('%Y-%m-%d')}, f)
-
-def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, 'r') as f:
-            state = json.load(f)
-            log.warning(f"Resuming from saved state. Next day to run: {state['next_start_date']}")
-            return state['next_start_date']
-    return None
-
 def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe: list, is_fresh_run: bool = False):
     log.info(f"### STARTING APEX SIMULATION FOR BATCH: {batch_id} ###")
-    log.info(f"Period: {start_date} to {end_date}")
+    log.info(f"Original Period Requested: {start_date} to {end_date}")
     database_manager.init_db(purpose='scheduler')
+
+    effective_start_date = start_date
+
     if is_fresh_run:
         log.warning("FRESH RUN ENABLED: Deleting all previous data.")
         database_manager.clear_scheduler_data()
-    
+    else:
+        # --- NEW: AUTOMATIC RESUME LOGIC ---
+        log.info("Checking for previous progress for this batch (Fresh Run is OFF)...")
+        last_prediction = database_manager.predictions_collection.find_one(
+            {"batch_id": batch_id},
+            sort=[("prediction_date", -1)]
+        )
+
+        if last_prediction:
+            last_date = pd.to_datetime(last_prediction['prediction_date'])
+            # Start from the day AFTER the last saved date
+            next_day_to_run = last_date + pd.Timedelta(days=1)
+            effective_start_date = next_day_to_run.strftime('%Y-%m-%d')
+            log.warning(f"✅ Previous progress found. Resuming simulation from {effective_start_date}")
+        else:
+            log.info("No previous progress found for this batch. Starting from the beginning.")
+        # --- END OF NEW LOGIC ---
+
     try:
         key_manager = APIKeyManager(api_keys=config.GEMINI_API_KEY_POOL)
         analyzer = AIAnalyzer(api_key=key_manager.get_key())
@@ -101,12 +108,12 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
 
         # --- START: NEW FUNDAMENTAL PRE-FLIGHT CHECK ---
         log.info("--- Running Fundamental Pre-Flight Check on Full Universe ---")
-        fundamentally_approved_stocks = []
+        fundamentally_approved_stocks = {} # CHANGE: Use a dictionary to store data
         for ticker in stock_universe:
             log.info(f"  -> Checking fundamentals for {ticker}...")
-            # Note: We are now calling the function we imported at the top of the file
-            if _passes_fundamental_health_check(ticker):
-                fundamentally_approved_stocks.append(ticker)
+            is_approved, fundamentals = _passes_fundamental_health_check(ticker)
+            if is_approved:
+                fundamentally_approved_stocks[ticker] = fundamentals # Store the metrics
                 log.info(f"    - ✅ PASS: {ticker} is fundamentally approved.")
 
         log.info(f"✅ Fundamental Pre-Flight Check complete. {len(fundamentally_approved_stocks)}/{len(stock_universe)} stocks passed.")
@@ -118,21 +125,12 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
     except Exception as e:
         log.fatal(f"Failed during pre-run initialization. Error: {e}")
         return
-
-    simulation_days = pd.bdate_range(start=start_date, end=end_date)
-    portfolio_config = config.BACKTEST_PORTFOLIO_CONFIG
-    current_equity = portfolio_config['initial_capital']
-    active_strategy = config.APEX_SWING_STRATEGY
-
-    api_call_timestamps = deque()
-    # The official RPM for Flash is 10. We'll use a slightly lower number to be safe.
-    RPM_LIMIT = 8
-
+    
+    simulation_days = pd.bdate_range(start=effective_start_date, end=end_date)
 
     total_stocks_processed_by_screener = 0
     total_stocks_passed_screener = 0
     total_ai_buy_sell_signals = 0
-    total_signals_vetoed = 0
     total_trades_executed = 0
 
     if not simulation_days.empty:
@@ -145,12 +143,12 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 latest_vix = vix_data.loc[:day_str].iloc[-1]['close']
                 market_is_high_risk = latest_vix > config.HIGH_RISK_VIX_THRESHOLD
                 if market_is_high_risk:
-                    log.warning(f"!! MASTER RISK OVERLAY ENGAGED !! VIX is at {latest_vix:.2f}. No new BUY signals will be processed today.")
+                    log.warning(f"!! MASTER RISK OVERLAY ENGAGED !! VIX is at {latest_vix:.2f}. No new BUY or SELL signals will be processed today.")
             except (KeyError, IndexError):
                 market_is_high_risk = False
             
             market_regime = data_retriever.calculate_regime_from_data(nifty_data.loc[:day_str])
-            strong_sectors = sector_analyzer.get_top_performing_sectors()
+            strong_sectors = sector_analyzer.get_top_performing_sectors(point_in_time=current_day)
             approved_stock_data_cache = {ticker: full_historical_data_cache[ticker] for ticker in fundamentally_approved_stocks if ticker in full_historical_data_cache}
             stocks_for_today = generate_dynamic_watchlist(strong_sectors, approved_stock_data_cache, current_day)
             total_stocks_processed_by_screener += len(fundamentally_approved_stocks) # Or whatever list goes into the screener
@@ -183,14 +181,63 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 adx_at_prediction = point_in_time_data['ADX_14'].iloc[-1]
                 nifty_5d_change = (nifty_data.loc[:day_str]['close'].iloc[-1] / nifty_data.loc[:day_str]['close'].iloc[-6] - 1) * 100
                 stock_5d_change = (latest_row['close'] / point_in_time_data['close'].iloc[-6] - 1) * 100
+                point_in_time_data.ta.ema(length=20, append=True)
+                point_in_time_data.ta.rsi(length=14, append=True)
+                point_in_time_data.ta.bbands(length=20, append=True)
+                point_in_time_data.ta.macd(append=True)
+                point_in_time_data.ta.supertrend(append=True) # Using default settings
+                point_in_time_data.dropna(inplace=True)
+                latest_row = point_in_time_data.iloc[-1] # Refresh latest_row after ALL calculations
+                rsi_value = latest_row.get('RSI_14', 50)
+                macd_histogram = latest_row.get('MACDh_12_26_9', 0)
+                # Trend and Volatility
+                ema_20 = latest_row.get('EMA_20')
+                bbp_value = latest_row.get('BBP_20_2.0', 0.5)
+                price_vs_ema20_pct = ((latest_row['close'] - ema_20) / ema_20) * 100 if ema_20 else 0
+                supertrend_direction = "Uptrend" if latest_row.get('SUPERTd_7_3.0') == 1 else "Downtrend"
+                                
+                technical_health_metrics = data_retriever.get_technical_health_metrics(point_in_time_data)
+
+                fundamental_metrics = fundamentally_approved_stocks.get(ticker, {})
+                roe_val = fundamental_metrics.get('returnOnEquity')
+                roe_str = f"{roe_val:.2%}" if isinstance(roe_val, (int, float)) else "N/A"
+
+                # Define the fundamental summary string
+                fundamental_summary = (
+                    f"Trailing P/E: {fundamental_metrics.get('trailingPE', 'N/A')}, "
+                    f"Debt/Equity: {fundamental_metrics.get('debtToEquity', 'N/A')}, "
+                    f"Return on Equity: {roe_str}"
+                )
+
                 full_context = {
                     "layer_1_macro_context": {"nifty_50_regime": market_regime},
                     "layer_2_relative_strength": {"relative_strength_vs_nifty50": "Outperforming" if stock_5d_change > nifty_5d_change else "Underperforming"},
-                    "layer_3_fundamental_moat": data_retriever.get_fundamental_proxies(point_in_time_data),
-                    "layer_4_technicals": {"daily_close": latest_row['close'], "adx_14_trend_strength": f"{adx_at_prediction:.2f}"},
+                    "layer_3_fundamental_moat": {"summary": fundamental_summary},
+                    "layer_4_technicals": {
+                        # Section 1: High-level health and stability metrics
+                        "overview_and_health": technical_health_metrics,
+
+                        # Section 2: Primary, longer-term trend and momentum signals
+                        "primary_trend_and_momentum": {
+                            "adx_14_trend_strength": f"{adx_at_prediction:.2f}",
+                            "supertrend_7_3_direction": supertrend_direction,
+                            "macd_histogram_momentum": f"{macd_histogram:.2f}"
+                        },
+                        
+                        # Section 3: Short-term price action, oscillators, and volatility
+                        "short_term_oscillators_and_volatility": {
+                            "daily_close": latest_row['close'],
+                            "rsi_14": f"{rsi_value:.2f}",
+                            "price_position_vs_20ema_pct": f"{price_vs_ema20_pct:.2f}%",
+                            "bollinger_band_percentage": f"{bbp_value:.2f}"
+                        }
+                    },
                     "layer_5_options_sentiment": {"sentiment": "Unavailable in backtest"},
                     "layer_6_news_catalyst": {"summary": "Unavailable in backtest"}
                 }
+                
+                full_context["layer_4_technicals"].update(technical_health_metrics)
+
                 sanitized_full_context = sanitize_context(full_context)
                 # --- End of context preparation ---
 
@@ -242,68 +289,70 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
                 if not final_analysis:
                     log.warning(f"Skipping {ticker} for day {day_str} after all attempts failed.")
                     continue
-                
-                # --- START: ENHANCED VETO LOGIC & INSTRUMENTATION ---
-                original_signal = final_analysis.get('signal')
-                scrybe_score = final_analysis.get('scrybeScore', 0)
-                final_signal = original_signal
-                veto_reason = None
-                
-                # Always log the raw AI output for debugging
-                log.info(f"  -> Raw AI Output for {ticker}: Signal={original_signal}, Score={scrybe_score}")
 
+                original_signal = final_analysis.get('signal')
                 if original_signal in ['BUY', 'SELL']:
                     total_ai_buy_sell_signals += 1
-                    # --- Veto Condition Checks ---
-                    is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
-                    is_regime_ok = (original_signal == 'BUY' and market_regime != 'Bearish') or (original_signal == 'SELL' and market_regime != 'Bullish')
-                    
+                    # --- VETO BLOCK ---
+                    # If the market is in a high-risk state, veto ALL new signals (BUY or SELL).
+                    if original_signal in ['BUY', 'SELL'] and market_is_high_risk:
+                        log.warning(
+                            f"VETOED SIGNAL for {ticker}: A '{original_signal}' signal was generated, "
+                            f"but the Master Risk Overlay (VIX) is engaged. Skipping."
+                        )
+                        continue # Skip the rest of the logic for this ticker
+                    # --- END OF VETO BLOCK ---
+                    # This section remains largely the same, calculating all possible SL/TP levels
                     entry_price = latest_row['close']
-                    potential_risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr_at_prediction
-                    potential_reward_per_share = potential_risk_per_share * active_strategy['profit_target_rr_multiple']
-                    risk_reward_ratio = potential_reward_per_share / potential_risk_per_share if potential_risk_per_share > 0 else 0
-                    is_rr_ok = risk_reward_ratio >= 1.5
+                    ai_predicted_gain = final_analysis.get('predicted_gain_pct', 5.0)
+                    ai_target_price = entry_price * (1 + (ai_predicted_gain / 100.0))
+                    atr_risk_per_share_A = config.STRATEGY_ATR_3R['stop_loss_atr_multiplier'] * atr_at_prediction
+                    atr_stop_loss_A = entry_price - atr_risk_per_share_A
+                    atr_target_A = entry_price + (atr_risk_per_share_A * config.STRATEGY_ATR_3R['profit_target_rr_multiple'])
+                    atr_risk_per_share_B = config.STRATEGY_AI_ATR['stop_loss_atr_multiplier'] * atr_at_prediction
+                    atr_stop_loss_B = entry_price - atr_risk_per_share_B
+                    lookback = config.STRATEGY_AI_STRUCTURE['swing_low_lookback_period']
+                    buffer_mult = 1 - (config.STRATEGY_AI_STRUCTURE['structure_stop_buffer_pct'] / 100.0)
+                    recent_low = data_retriever.get_recent_swing_low(point_in_time_data, lookback)
+                    structure_stop_loss_C = recent_low * buffer_mult if recent_low > 0 else 0
 
-                    # --- Log the results of each check ---
-                    log.info(f"    - Veto Check | Market Regime: {market_regime}, Signal OK? {is_regime_ok}")
-                    log.info(f"    - Veto Check | Conviction Score: {scrybe_score} >= {active_strategy['min_conviction_score']}? {is_conviction_ok}")
-                    log.info(f"    - Veto Check | Risk/Reward Ratio: {risk_reward_ratio:.2f} >= 1.5? {is_rr_ok}")
-                    if original_signal == 'BUY':
-                         log.info(f"    - Veto Check | High VIX active? {market_is_high_risk} (VIX: {latest_vix:.2f})")
+                    # Create the base prediction document from the AI analysis
+                    prediction_doc = final_analysis.copy()
 
-                    # --- Apply Veto Logic ---
-                    if original_signal == 'BUY' and market_is_high_risk:
-                        final_signal, veto_reason = 'HOLD', f"VETOED BUY: High market VIX ({latest_vix:.2f})"
-                    elif not is_regime_ok:
-                        final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Signal contradicts Market Regime ({market_regime})"
-                    elif not is_conviction_ok:
-                        final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Conviction Score ({scrybe_score}) is below threshold of {active_strategy['min_conviction_score']}"
-                    elif not is_rr_ok:
-                        final_signal, veto_reason = 'HOLD', f"VETOED {original_signal}: Poor Risk/Reward Ratio ({risk_reward_ratio:.2f}R)"
-                    
-                    if veto_reason:
-                        log.warning(f"  -> VETO APPLIED for {ticker}: {veto_reason}")
-                        total_signals_vetoed += 1
-                    else:
-                        log.info(f"  -> ✅ SIGNAL APPROVED for {ticker}")
+                    # Save ALL calculated data points to the trade plan
+                    prediction_doc['tradePlan'] = {
+                        "entryPrice": round(entry_price, 2),
+                        "ai_target": round(ai_target_price, 2),
+                        "atr_target_A": round(atr_target_A, 2),
+                        "atr_stop_loss_A": round(atr_stop_loss_A, 2),
+                        "atr_stop_loss_B": round(atr_stop_loss_B, 2),
+                        "structure_stop_loss_C": round(structure_stop_loss_C, 2),
+                        "halfway_profit_price": entry_price + (ai_target_price - entry_price) * 0.5
+                    }
 
-                # --- END: ENHANCED VETO LOGIC & INSTRUMENTATION ---
+                    # Add all necessary context for the backtester's veto logic
+                    prediction_doc.update({
+                        'ticker': ticker,
+                        'prediction_date': current_day.to_pydatetime(),
+                        'price_at_prediction': entry_price,
+                        'status': 'open', # Status is always open now
+                        'strategy': 'ApexPredator_Multi_v2',
+                        # --- CRITICAL ADDITION ---
+                        'market_regime_at_prediction': market_regime 
+                    })
+                    potential_trades_today.append(prediction_doc)
 
-                prediction_doc = final_analysis.copy()
-                prediction_doc['signal'] = final_signal
-
-                if final_signal in ['BUY', 'SELL']:
-                    num_shares_to_trade = int((current_equity * (portfolio_config['risk_per_trade_pct'] / 100.0)) / potential_risk_per_share) if potential_risk_per_share > 0 else 0
-                    position_size_pct = (num_shares_to_trade * entry_price / current_equity) * 100
-                    stop_loss_price = (entry_price - potential_risk_per_share) if final_signal == 'BUY' else (entry_price + potential_risk_per_share)
-                    target_price = (entry_price + potential_reward_per_share) if final_signal == 'BUY' else (entry_price - potential_reward_per_share)
-                    
-                    prediction_doc['tradePlan'] = {"entryPrice": round(entry_price, 2), "target": round(target_price, 2), "stopLoss": round(stop_loss_price, 2)}
-                    prediction_doc.update({'ticker': ticker, 'prediction_date': current_day.to_pydatetime(), 'price_at_prediction': entry_price, 'status': 'open', 'strategy': "ApexSwing_v5_HighConviction", 'atr_at_prediction': atr_at_prediction, 'position_size_pct': position_size_pct})
-                    potential_trades_today.append(prediction_doc) # ADD TO LIST, DO NOT SAVE
-                else:
-                    prediction_doc.update({'ticker': ticker, 'prediction_date': current_day.to_pydatetime(),'price_at_prediction': latest_row['close'], 'status': 'vetoed' if veto_reason else 'hold', 'strategy': "ApexSwing_v5_HighConviction", 'atr_at_prediction': atr_at_prediction, 'veto_reason': veto_reason})
-                    database_manager.save_prediction_for_backtesting(prediction_doc, batch_id) # SAVE NON-TRADES IMMEDIATELY
+                else: # This handles 'HOLD' signals from the AI
+                    prediction_doc = final_analysis.copy()
+                    prediction_doc.update({
+                        'ticker': ticker, 
+                        'prediction_date': current_day.to_pydatetime(),
+                        'price_at_prediction': latest_row['close'], 
+                        'status': 'hold', # Status is now just 'hold'
+                        'strategy': 'ApexPredator_Multi', 
+                        'veto_reason': None # Veto reason is no longer applicable here
+                    })
+                    database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
             # --- END OF LOOP FOR EACH TICKER ---
 
             # --- PHASE 2 & 3: RANK AND SELECT THE BEST TRADES ---
@@ -326,7 +375,6 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, stock_universe
     log.info(f"Total Stocks Processed by Screener: {total_stocks_processed_by_screener}")
     log.info(f"Total Stocks that Passed Screener: {total_stocks_passed_screener} ({ (total_stocks_passed_screener/total_stocks_processed_by_screener*100) if total_stocks_processed_by_screener > 0 else 0 :.2f}%)")
     log.info(f"Total Raw BUY/SELL Signals from AI: {total_ai_buy_sell_signals}")
-    log.info(f"Total Signals Vetoed by Rules: {total_signals_vetoed}")
     log.info(f"Total Trades Executed & Saved: {total_trades_executed}")
     log.info("="*50)
     database_manager.close_db_connection()
@@ -335,16 +383,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run the APEX Dynamic Funnel historical backtest.")
     parser.add_argument('--batch_id', required=True)
     parser.add_argument('--start_date', required=True)
-    parser.add_argument('--resume_date', required=False, default=None)
     parser.add_argument('--end_date', required=True)
     parser.add_argument('--stock_universe', required=True, help="Comma-separated list defining the total stock UNIVERSE to screen from")
     parser.add_argument('--fresh_run', type=lambda x: (str(x).lower() == 'true'))
     args = parser.parse_args()
     
-    effective_start_date = args.start_date
-    if args.resume_date and not args.fresh_run:
-        log.warning(f"RESUME DATE PROVIDED. Overriding start date. The simulation will resume from: {args.resume_date}")
-        effective_start_date = args.resume_date
-    
     stocks_list = [stock.strip() for stock in args.stock_universe.split(',')]
-    run_simulation(batch_id=args.batch_id, start_date=effective_start_date, end_date=args.end_date, stock_universe=stocks_list, is_fresh_run=args.fresh_run)
+    run_simulation(batch_id=args.batch_id, start_date=args.start_date, end_date=args.end_date, stock_universe=stocks_list, is_fresh_run=args.fresh_run)

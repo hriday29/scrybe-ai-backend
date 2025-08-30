@@ -102,13 +102,35 @@ def close_live_trade(ticker: str, trade_object: dict, close_reason: str, close_p
     """Closes a live trade, logs performance, and clears the active_trade state."""
     log.info(f"Closing trade for {ticker} and logging performance.")
     entry_price = trade_object['entry_price']
+
+    # Gross Return Calculation
     gross_return_pct = ((close_price - entry_price) / entry_price) * 100 if trade_object['signal'] == 'BUY' else ((entry_price - close_price) / entry_price) * 100
-    
-    # 3. Calculate net return by subtracting estimated costs from config
+
+    # --- START OF CORRECTED COST MODEL ---
+    # Calculate net return using the SAME robust cost model as the backtester
     costs = config.BACKTEST_CONFIG
-    total_costs_pct = (costs['brokerage_pct'] * 2) + (costs['slippage_pct'] * 2) + costs['stt_pct']
+    brokerage_cost_pct = costs['brokerage_pct'] * 2 # Brokerage for entry and exit
+    stt_cost_pct = costs['stt_pct'] # STT is on total turnover
+
+    # Fetch historical data to get ATR for slippage calculation
+    historical_data = data_retriever.get_historical_stock_data(ticker)
+    slippage_cost_pct = 0
+    if historical_data is not None and not historical_data.empty:
+        if 'ATRr_14' not in historical_data.columns:
+            historical_data.ta.atr(length=14, append=True)
+
+        # Use .get() for safety in case ATR calculation fails on sparse data
+        latest_atr = historical_data['ATRr_14'].iloc[-1] if 'ATRr_14' in historical_data.columns and not historical_data['ATRr_14'].empty else 0
+
+        # Slippage cost as a percentage of entry price for both entry and exit
+        slippage_per_share_in_out = (latest_atr * costs['slippage_atr_fraction']) * 2
+        slippage_cost_pct = (slippage_per_share_in_out / entry_price) * 100 if entry_price > 0 else 0
+
+    total_costs_pct = brokerage_cost_pct + stt_cost_pct + slippage_cost_pct
+    # --- END OF CORRECTED COST MODEL ---
+
     net_return_pct = gross_return_pct - total_costs_pct
-    
+
     performance_doc = {
         "ticker": ticker, "strategy": trade_object.get('strategy', 'unknown'),
         "signal": trade_object['signal'], "status": "Closed",

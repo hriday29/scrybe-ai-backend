@@ -115,12 +115,29 @@ class AIAnalyzer:
 
         formatted_context = "\n## Today's Full Data Packet ##\n" + json.dumps(full_context, indent=2)
 
+        if screener_reason == "Momentum":
+            strategy_directive = (
+                f"**CRITICAL STRATEGY DIRECTIVE FOR {ticker}:** The screener has identified this as a "
+                f"**Momentum** setup. Your primary task is to analyze the strength of the existing trend "
+                f"and the probability of **trend continuation**. A high score is only justified if the "
+                f"evidence for continuation is overwhelming."
+            )
+        elif screener_reason == "Mean Reversion":
+            strategy_directive = (
+                f"**CRITICAL STRATEGY DIRECTIVE FOR {ticker}:** The screener has identified this as a "
+                f"**Mean Reversion** setup. Your primary task is to analyze the evidence of seller exhaustion "
+                f"and the probability of a **bounce from a support level**. A high score is only justified if "
+                f"the stock is in a long-term uptrend and shows clear signs of a potential reversal."
+            )
+        else:
+            strategy_directive = "" # No special directive if the reason is unknown
+
         prompt_parts = [
             # "## Omni-Context Performance Review ##",
             # f"30-Day Strategic Review:\n{strategic_review or 'Data Not Available'}",
             # f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history or 'Data Not Available'}",
             # f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback or 'Data Not Available'}",
-            f"Screener Reason for selecting {ticker}: **{screener_reason}**",
+            strategy_directive,
             formatted_context
         ]
 

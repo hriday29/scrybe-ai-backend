@@ -227,20 +227,13 @@ def get_nifty50_performance():
 
 def get_upcoming_events(ticker_symbol: str):
     """
-    Fetches upcoming events from a more robust, manually curated list of
-    recurring market-wide events.
+    !! THIS FEATURE IS DISABLED PENDING A DYNAMIC DATA SOURCE !!
+    The previous implementation used a static, hardcoded list which becomes outdated.
+    This placeholder prevents stale data from being displayed or used.
     """
-    log.info(f"Compiling upcoming events for {ticker_symbol}...")
-    all_events = []
-    today = pd.Timestamp.now()
-    major_economic_events = config.MAJOR_ECONOMIC_EVENTS
-    for evt in major_economic_events:
-        event_date = pd.to_datetime(evt['date'])
-        # The logic to check if the event is in the future remains the same
-        if today <= event_date < today + pd.DateOffset(months=3):
-            all_events.append(evt)
+    log.warning("get_upcoming_events is currently disabled as its static data source is unreliable.")
 
-    # The yfinance part for company-specific events remains
+    # We can still attempt to get company-specific events like earnings.
     try:
         ticker = yf.Ticker(ticker_symbol)
         calendar_data = ticker.calendar
@@ -249,17 +242,11 @@ def get_upcoming_events(ticker_symbol: str):
                 earnings_date_start = calendar_data.loc['Earnings Date', 0]
                 if pd.notna(earnings_date_start):
                     event_text = f"Next Earnings Announcement around {earnings_date_start.strftime('%b %d, %Y')}"
-                    all_events.append({"date": earnings_date_start.strftime('%Y-%m-%d'), "event": event_text})
+                    return [{"date": earnings_date_start.strftime('%Y-%m-%d'), "event": event_text}]
     except Exception as e:
         log.warning(f"Could not fetch company-specific calendar events for {ticker_symbol}. Error: {e}")
 
-    if all_events:
-        all_events.sort(key=lambda x: x['date'])
-        log.info(f"Successfully compiled a total of {len(all_events)} upcoming events.")
-    else:
-        log.warning(f"No upcoming events found for {ticker_symbol}.")
-    
-    return all_events
+    return [{"date": "N/A", "event": "Dynamic event calendar data is currently unavailable."}]
 
 def get_benchmarks_data(period: str = "1y", end_date=None):
     """
@@ -505,47 +492,63 @@ def get_market_regime() -> str:
         log.error(f"Failed to determine market regime: {e}")
         # Default to Neutral in case of any error
         return "Neutral"
-    
+
 def calculate_regime_from_data(historical_data: pd.DataFrame) -> str:
     """
-    Calculates the market regime from a given DataFrame of historical index data.
+    Calculates a more responsive market regime from historical index data.
     Returns 'Bullish', 'Bearish', or 'Neutral'.
     """
-    if historical_data is None or len(historical_data) < 100:
-        return "Neutral" # Not enough data to determine
+    if historical_data is None or len(historical_data) < 55: # Need ~50 days for the EMA
+        return "Neutral"
 
     try:
-        # Use a copy to avoid SettingWithCopyWarning
         data = historical_data.copy()
         data.ta.ema(length=20, append=True)
         data.ta.ema(length=50, append=True)
-        data.ta.ema(length=100, append=True)
         data.dropna(inplace=True)
 
-        latest_emas = data.iloc[-1]
-        ema_20 = latest_emas['EMA_20']
-        ema_50 = latest_emas['EMA_50']
-        ema_100 = latest_emas['EMA_100']
+        latest_close = data['close'].iloc[-1]
+        ema_20 = data['EMA_20'].iloc[-1]
+        ema_50 = data['EMA_50'].iloc[-1]
 
-        if ema_20 > ema_50 > ema_100:
+        # Condition 1: Severe Downturn (High-Risk / Bearish)
+        # Check for a significant drop from a recent peak (in the last 2 months / ~42 trading days)
+        peak_in_last_2m = data['high'].iloc[-42:].max()
+        drawdown_pct = ((latest_close - peak_in_last_2m) / peak_in_last_2m) * 100
+        if drawdown_pct < -8.0: # If Nifty is down more than 8% from a recent peak, conditions are bearish.
+             return "Bearish"
+
+        # Condition 2: Strong Uptrend (Bullish)
+        # Price must be above its short-term moving average, which is also trending up.
+        if latest_close > ema_20 and ema_20 > ema_50:
             return "Bullish"
-        elif ema_20 < ema_50 < ema_100:
-            return "Bearish"
-        else:
+
+        # Condition 3: Weakening Trend or Early Downtrend (Neutral)
+        # Price has fallen below its key short-term MA, signaling caution.
+        if latest_close < ema_20 and latest_close > ema_50:
             return "Neutral"
-    except Exception:
-        return "Neutral" # Default to Neutral on any error
+        
+        # Condition 4: Confirmed Downtrend (Bearish)
+        # Price is below the medium-term MA.
+        if latest_close < ema_50:
+            return "Bearish"
+            
+        return "Neutral" # Default case if none of the above fit
+        
+    except Exception as e:
+        log.error(f"Error calculating market regime: {e}")
+        return "Neutral"
     
-def get_fundamental_proxies(data_slice: pd.DataFrame) -> dict:
+def get_technical_health_metrics(data_slice: pd.DataFrame) -> dict:
     """
     Calculates fundamental proxy metrics using point-in-time historical price data.
     This version correctly uses UPPERCASE column names.
     """
     if data_slice is None or len(data_slice) < 252:
         return {
-            "valuation_proxy": "N/A",
-            "quality_proxy_volatility": "N/A",
-            "quality_score": 50 # Return a neutral default score
+            "range_position_pct": "N/A",
+            "annualized_volatility_pct": "N/A",
+            "stability_score": 50 # Return a neutral default score
         }
 
     # --- Proxy 1: Valuation (52-Week Range Position) ---
@@ -566,10 +569,10 @@ def get_fundamental_proxies(data_slice: pd.DataFrame) -> dict:
     quality_score = (1 - (capped_vol / 0.50)) * 100
     
     return {
-        "valuation_proxy": f"{valuation_range_score:.1f}% of 52-Week Range",
-        "quality_proxy_volatility": f"{realized_volatility_90d:.2%}",
-        "quality_score": int(quality_score)
-    }
+            "range_position_pct": f"{valuation_range_score:.1f}%",
+            "annualized_volatility_pct": f"{realized_volatility_90d:.2%}",
+            "stability_score": int(quality_score)
+        }
 
 
 def get_volatility_regime(historical_vix_data: pd.DataFrame) -> str:
@@ -597,3 +600,16 @@ def get_volatility_regime(historical_vix_data: pd.DataFrame) -> str:
 
     except Exception:
         return "Normal" # Default to Normal on any error
+
+def get_recent_swing_low(data_slice: pd.DataFrame, lookback_period: int = 15) -> float:
+    """
+    Finds the lowest low price over a given lookback period, excluding the most recent bar.
+    This serves as a proxy for the most recent support level.
+    """
+    if data_slice is None or len(data_slice) < lookback_period + 1:
+        return 0.0 # Return 0 if not enough data, so we can handle it later
+
+    # Look at the period *before* the entry bar
+    relevant_period = data_slice.iloc[-(lookback_period + 1):-1]
+    
+    return relevant_period['low'].min()

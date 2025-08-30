@@ -45,14 +45,54 @@ PRO_MODEL = "gemini-2.5-pro"
 FLASH_MODEL = "gemini-2.5-flash"
 
 # --- Strategy Profile ---
-APEX_SWING_STRATEGY = {
-    "name": "ApexSwing",
-    "holding_period": 10, # This won't be used, but we can leave it
+# APEX_SWING_STRATEGY = {
+#     "name": "ApexSwing",
+#     "holding_period": 10, # This won't be used, but we can leave it
+#     "stop_loss_atr_multiplier": 2.0,
+#     "profit_target_rr_multiple": 3.0,
+#     "min_conviction_score": 30,
+#     "use_trailing_stop": False,
+#     "trailing_stop_atr_multiplier": 1.5,
+# }
+
+# --- STRATEGY PROFILES ---
+
+# Strategy A: Mechanical Benchmark
+STRATEGY_ATR_3R = {
+    "name": "ApexPredator_ATR_3R",
+    "holding_period": 15,
+    "min_conviction_score": 30,
     "stop_loss_atr_multiplier": 2.0,
     "profit_target_rr_multiple": 3.0,
+    "use_ai_dynamic_target": False,
+    "use_adaptive_profit_take": False,
+}
+
+# Strategy B: AI Target + Volatility Stop
+STRATEGY_AI_ATR = {
+    "name": "ApexPredator_AI_ATR_Stop",
+    "holding_period": 15,
     "min_conviction_score": 30,
-    "use_trailing_stop": False,
-    "trailing_stop_atr_multiplier": 1.5,
+    "stop_loss_atr_multiplier": 2.5,
+    "stop_loss_method": "atr",
+    "use_ai_dynamic_target": True,
+    "use_adaptive_profit_take": True,
+    "adaptive_threshold_pct": 50.0,
+    "adaptive_trail_atr_multiplier": 1.0
+}
+
+# Strategy C: AI Target + Structure Stop
+STRATEGY_AI_STRUCTURE = {
+    "name": "ApexPredator_AI_Structure_Stop",
+    "holding_period": 15,
+    "min_conviction_score": 30,
+    "stop_loss_method": "structure",
+    "swing_low_lookback_period": 15,
+    "structure_stop_buffer_pct": 1.0,
+    "use_ai_dynamic_target": True,
+    "use_adaptive_profit_take": True,
+    "adaptive_threshold_pct": 50.0,
+    "adaptive_trail_atr_multiplier": 1.0
 }
 
 # --- ADD THIS NEW CONFIGURATION ---
@@ -97,13 +137,8 @@ ADX_THRESHOLD = 25
 
 BACKTEST_CONFIG = {
     "brokerage_pct": 0.05,
-    "slippage_pct": 0.02,
+    "slippage_atr_fraction": 0.10,
     "stt_pct": 0.1,
-}
-
-BACKTEST_PORTFOLIO_CONFIG = {
-    "initial_capital": 100000.0,
-    "position_size_pct_of_capital": 10.0,
 }
 
 NIFTY_50_TICKERS = [

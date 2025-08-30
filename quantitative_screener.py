@@ -21,38 +21,44 @@ SECTOR_NAME_MAPPING = {
 MIN_AVG_VOLUME = 500000
 TREND_CHECK_EMA = 50
 
-def _passes_fundamental_health_check(ticker: str) -> bool:
+def _passes_fundamental_health_check(ticker: str) -> tuple[bool, dict]:
     """
     Performs a basic check on key fundamental metrics using yfinance.
-    Returns True if the stock is considered healthy, False otherwise.
+    Returns a tuple: (True/False for health, dictionary of the metrics).
     """
     try:
         info = yf.Ticker(ticker).info
-        
+
         pe_ratio = info.get('trailingPE')
         debt_to_equity = info.get('debtToEquity')
         return_on_equity = info.get('returnOnEquity')
 
-        # Rule 1: Must be profitable (positive P/E) and not absurdly valued
-        if pe_ratio is None or pe_ratio < 0 or pe_ratio > 100:
-            log.warning(f"    - Skipping {ticker}: Fails P/E check (P/E: {pe_ratio}).")
-            return False
-        
-        # Rule 2: Debt must be manageable (for non-financials, typically < 1.5 or 150)
-        # We use a high threshold to only filter out extreme cases.
-        if debt_to_equity is not None and debt_to_equity > 200:
-             log.warning(f"    - Skipping {ticker}: Fails Debt/Equity check (D/E: {debt_to_equity}).")
-             return False
+        # Store the fetched data
+        fundamental_data = {
+            "trailingPE": pe_ratio,
+            "debtToEquity": debt_to_equity,
+            "returnOnEquity": return_on_equity
+        }
 
-        # Rule 3: Must be generating good returns for shareholders
-        if return_on_equity is not None and return_on_equity < 0.10: # (ROE < 10%)
-            log.warning(f"    - Skipping {ticker}: Fails ROE check (ROE: {return_on_equity:.2f}).")
-            return False
-            
-        return True
+        # Rule 1: Must be profitable and reasonably valued. We will screen out negative P/E and those > 50.
+        if pe_ratio is None or not (0 < pe_ratio <= 50):
+            log.warning(f"    - Skipping {ticker}: Fails P/E check (P/E: {pe_ratio}). Must be between 0 and 50.")
+            return False, fundamental_data
+
+        # Rule 2: Debt must be manageable. A D/E ratio > 2 is a common red flag for non-financial firms.
+        if debt_to_equity is not None and debt_to_equity > 2: # Changed from 200 to 2
+            log.warning(f"    - Skipping {ticker}: Fails Debt/Equity check (D/E: {debt_to_equity}). Must be < 2.")
+            return False, fundamental_data
+
+        # Rule 3: Must be generating strong returns. We look for ROE > 15%.
+        if return_on_equity is not None and return_on_equity < 0.15: # Changed from 0.10 to 0.15
+            log.warning(f"    - Skipping {ticker}: Fails ROE check (ROE: {return_on_equity:.2f}). Must be > 15%.")
+            return False, fundamental_data
+
+        return True, fundamental_data
     except Exception as e:
         log.warning(f"    - Could not perform fundamental check for {ticker}. Error: {e}. Skipping.")
-        return False
+        return False, {"error": str(e)}
     
 def _get_stock_sector_map(tickers: list[str]) -> dict:
     """

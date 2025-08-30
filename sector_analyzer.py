@@ -22,7 +22,7 @@ BENCHMARK_INDEX = "^NSEI"
 LOOKBACK_PERIOD_DAYS = 21
 TOP_N_SECTORS = 5
 
-def get_top_performing_sectors() -> list[str]:
+def get_top_performing_sectors(point_in_time: pd.Timestamp) -> list[str]:
     """
     Calculates the performance of core sectors relative to the Nifty 50 benchmark
     over a defined lookback period.
@@ -33,7 +33,7 @@ def get_top_performing_sectors() -> list[str]:
     all_historical_data = {}
 
     for ticker in all_tickers:
-        data = data_retriever.get_historical_stock_data(ticker)
+        data = data_retriever.get_historical_stock_data(ticker, end_date=point_in_time.strftime('%Y-%m-%d'))
         if data is None or len(data) < LOOKBACK_PERIOD_DAYS + 5:
             log.warning(f"Could not fetch sufficient historical data for {ticker}. Skipping it.")
             continue
