@@ -10,7 +10,7 @@ from datetime import datetime
 from datetime import datetime, timezone, timedelta
 import pandas_ta as ta
 
-# --- Ensure the cache directory exists on startup ---
+# --- the cache directory exists on startup ---
 CACHE_DIR = 'cache'
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
@@ -57,8 +57,6 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
     It prioritizes loading from a local cache to maximize speed. If data is not
     cached, it fetches from Yahoo Finance and saves it to the cache for future use.
     """
-    # Create a unique filename based on the ticker and end_date for point-in-time accuracy
-    # Note: A live run (end_date=None) will have a different cache from a historical run
     date_suffix = end_date.replace('-', '') if end_date else 'live'
     cache_file = os.path.join(DATA_CACHE_DIR, f"{ticker_symbol}_{date_suffix}.feather")
 
@@ -67,7 +65,6 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
         try:
             log.info(f"CACHE HIT: Loading {ticker_symbol} data from {cache_file}")
             df = pd.read_feather(cache_file)
-            # THIS IS THE CRUCIAL FIX: Set the 'Date' column back to the index
             df.set_index('Date', inplace=True) 
             return df
         except Exception as e:
@@ -94,14 +91,13 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
             'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
         }, inplace=True)
 
-        df.index = df.index.tz_localize(None) # Remove timezone
+        df.index = df.index.tz_localize(None)
         
         # --- Step 3: Save the newly fetched data to cache ---
         try:
             # Reset index to store datetime index in a column, which Feather requires
             df.reset_index().to_feather(cache_file)
             log.info(f"CACHE WRITE: Saved {ticker_symbol} data to {cache_file}")
-            # Set the index back for the rest of the application
             df = df.set_index(df.columns[0]) if 'Date' in df.columns else df
         except Exception as e:
             log.error(f"Failed to write to cache file {cache_file}. Error: {e}")

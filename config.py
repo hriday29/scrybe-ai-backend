@@ -44,17 +44,6 @@ if not EMAIL_RECIPIENTS:
 PRO_MODEL = "gemini-2.5-pro"
 FLASH_MODEL = "gemini-2.5-flash"
 
-# --- Strategy Profile ---
-# APEX_SWING_STRATEGY = {
-#     "name": "ApexSwing",
-#     "holding_period": 10, # This won't be used, but we can leave it
-#     "stop_loss_atr_multiplier": 2.0,
-#     "profit_target_rr_multiple": 3.0,
-#     "min_conviction_score": 30,
-#     "use_trailing_stop": False,
-#     "trailing_stop_atr_multiplier": 1.5,
-# }
-
 # --- STRATEGY PROFILES ---
 
 # Strategy A: Mechanical Benchmark
