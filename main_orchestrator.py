@@ -396,6 +396,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                 prediction_doc = final_analysis.copy()
                 prediction_doc['signal'] = final_signal
 
+                entry_price = point_in_time_data['close'].iloc[-1]
                 if final_signal in ['BUY', 'SELL']:
                     num_shares_to_trade = int((current_equity * (portfolio_config['risk_per_trade_pct'] / 100.0)) / potential_risk_per_share) if potential_risk_per_share > 0 else 0
                     position_size_pct = (num_shares_to_trade * entry_price / current_equity) * 100

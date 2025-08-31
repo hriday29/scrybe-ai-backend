@@ -112,7 +112,7 @@ def _prepare_filtered_universe(strong_sectors: list[str], full_data_cache: dict,
         if data is None or len(data) < TREND_CHECK_EMA + 20:
             continue
         df = data.loc[:point_in_time].copy()
-        if df.empty or len(df) < TREND_CHECK_EMA + 20:
+        if df.empty or len(df) < 252:
             continue
         if df['volume'].tail(20).mean() < MIN_AVG_VOLUME:
             continue
