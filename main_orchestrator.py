@@ -259,8 +259,12 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
             stocks_for_today = []
             if market_regime == "Bearish":
-                log.warning("Market regime is Bearish. Avoiding new long trades today.")
-
+                log.warning("Market regime is Bearish. Screening for high-probability Mean Reversion setups only.")
+                # Allow the agent to look for oversold opportunities even in a downtrend
+                stocks_for_today = quantitative_screener.screen_for_mean_reversion( #
+                    strong_sectors, approved_stock_data_cache, current_day
+                )
+                
             elif market_regime == "Bullish":
                 if volatility_regime == "High-Risk":
                     # In volatile uptrends, buying dips is safer.

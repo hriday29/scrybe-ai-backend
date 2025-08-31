@@ -167,7 +167,7 @@ DYNAMIC_RISK_CONFIG = {
     'red_mode_position_size_pct': 0.0,    # The "Circuit Breaker" - no new trades
     'cooldown_period_days': 5             # Days a stock stays in Red Mode
 }
-HIGH_RISK_VIX_THRESHOLD = 20.0
+HIGH_RISK_VIX_THRESHOLD = 28.0
 
 BACKTEST_PORTFOLIO_CONFIG = {
     "initial_capital": 100000.0,

@@ -24,7 +24,7 @@ TREND_CHECK_EMA = 50
 
 
 # --- Fundamental Health Check ---
-def _passes_fundamental_health_check(ticker: str) -> bool:
+def _passes_fundamental_health_check(ticker: str, sector: str) -> bool: #
     """
     Performs a basic check on key fundamental metrics using yfinance.
     Returns True if the stock is considered healthy, False otherwise.
@@ -36,26 +36,26 @@ def _passes_fundamental_health_check(ticker: str) -> bool:
         debt_to_equity = info.get('debtToEquity')
         return_on_equity = info.get('returnOnEquity')
 
-        # Rule 1: Must be profitable (positive P/E) and not absurdly valued
-        if pe_ratio is None or pe_ratio < 0 or pe_ratio > 100:
+        # Rule 1 (RELAXED): Allow for higher valuation growth stocks.
+        if pe_ratio is None or pe_ratio < 0 or pe_ratio > 150: # Increased from 100 to 150
             log.warning(f"    - Skipping {ticker}: Fails P/E check (P/E: {pe_ratio}).")
             return False
         
-        # Rule 2: Debt must be manageable (for non-financials, typically < 1.5 or 150)
-        if debt_to_equity is not None and debt_to_equity > 200:
-            log.warning(f"    - Skipping {ticker}: Fails Debt/Equity check (D/E: {debt_to_equity}).")
+        # Rule 2 (SECTOR-AWARE): Apply D/E check ONLY to non-financials.
+        if sector != "Financial Services" and debt_to_equity is not None and debt_to_equity > 200:
+            log.warning(f"    - Skipping {ticker}: Fails Debt/Equity check for non-financial sector (D/E: {debt_to_equity}).")
             return False
 
-        # Rule 3: Must be generating good returns for shareholders
+        # Rule 3 (UNCHANGED): ROE check remains a good quality filter.
         if return_on_equity is not None and return_on_equity < 0.10:  # (ROE < 10%)
             log.warning(f"    - Skipping {ticker}: Fails ROE check (ROE: {return_on_equity:.2f}).")
             return False
 
-        # Rule 4: Fundamental quality proxy
+        # Rule 4 (RELAXED): Lower the quality score requirement to be less sensitive to normal volatility.
         hist = yf.Ticker(ticker).history(period="1y")
         if hist is not None and not hist.empty:
-            proxies = data_retriever.get_fundamental_proxies(hist)
-            if proxies and proxies.get("quality_score", 50) < 60:
+            proxies = data_retriever.get_fundamental_proxies(hist) #
+            if proxies and proxies.get("quality_score", 50) < 40: # Lowered threshold from 60 to 40
                 log.warning(f"    - Skipping {ticker}: Poor quality score ({proxies['quality_score']})")
                 return False
 
@@ -116,7 +116,7 @@ def _prepare_filtered_universe(strong_sectors: list[str], full_data_cache: dict,
             continue
         if df['volume'].tail(20).mean() < MIN_AVG_VOLUME:
             continue
-        if not _passes_fundamental_health_check(ticker):
+        if not _passes_fundamental_health_check(ticker, stock_sector_map.get(ticker)):
             continue
         qualified.append(ticker)
 
