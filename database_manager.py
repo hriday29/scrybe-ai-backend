@@ -160,17 +160,33 @@ def get_precomputed_analysis(ticker: str) -> dict | None:
         log.error(f"Failed to fetch pre-computed analysis for {ticker}: {e}")
         return None
 
-# --- Functions for HISTORICAL Backtesting ---
-
 def save_prediction_for_backtesting(prediction_doc: dict, batch_id: str):
-    """Saves a pre-formatted prediction document to the scheduler database."""
+    """Saves a pre-formatted prediction document to the scheduler database without duplicates."""
     if predictions_collection is None:
         log.error("Cannot save prediction, 'scheduler' database not initialized.")
         return
     try:
         prediction_doc['batch_id'] = batch_id
-        predictions_collection.insert_one(prediction_doc)
-        log.info(f"Saved new backtest prediction for {prediction_doc['ticker']} on {prediction_doc['prediction_date'].strftime('%Y-%m-%d')}.")
+
+        # Use a unique filter: ticker + prediction_date + batch_id
+        filter_query = {
+            "ticker": prediction_doc["ticker"],
+            "prediction_date": prediction_doc["prediction_date"],
+            "batch_id": batch_id
+        }
+
+        # Upsert instead of blind insert
+        result = predictions_collection.update_one(
+            filter_query,
+            {"$set": prediction_doc},
+            upsert=True
+        )
+
+        if result.matched_count > 0:
+            log.info(f"Updated existing backtest prediction for {prediction_doc['ticker']} on {prediction_doc['prediction_date'].strftime('%Y-%m-%d')}.")
+        else:
+            log.info(f"Inserted new backtest prediction for {prediction_doc['ticker']} on {prediction_doc['prediction_date'].strftime('%Y-%m-%d')}.")
+
     except Exception as e:
         log.error(f"Failed to save prediction doc for {prediction_doc.get('ticker')}. Error: {e}")
 
