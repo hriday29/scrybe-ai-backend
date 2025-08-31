@@ -1,53 +1,43 @@
-name: APEX Dynamic Backtest Runner
+name: Run Apex AI Backtest
 
 on:
   workflow_dispatch:
     inputs:
       batch_id:
-        description: 'Unique ID for this APEX backtest (e.g., apex_july_2025)'
+        description: 'Unique ID for the backtest batch'
         required: true
+        default: 'APEX-V2-MANUAL-RUN'
       start_date:
         description: 'Start date (YYYY-MM-DD)'
         required: true
         default: '2025-07-01'
-      resume_date:
-        description: 'OPTIONAL: Resume from this date (YYYY-MM-DD). Overrides start_date.'
-        required: false
       end_date:
         description: 'End date (YYYY-MM-DD)'
         required: true
-        default: '2025-07-31'
-      stock_universe:
-        description: 'Comma-separated list of ALL stocks for the screener (e.g., all Nifty 50)'
-        required: true
-      fresh_run:
-        description: 'Delete all previous backtest data before starting?'
-        type: boolean
-        required: true
-        default: true
+        default: '2025-08-29'
 
 jobs:
-  run-apex-backtest:
+  run-backtest:
     runs-on: ubuntu-latest
-    timeout-minutes: 2160 # 36 hours for long runs
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v3
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: '3.11'
+          python-version: '3.10'
 
       - name: Install dependencies
-        run: pip install -r requirements.txt
-
-      - name: Run the APEX orchestrator script
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run Orchestrator
+        run: python main_orchestrator.py --batch_id ${{ github.event.inputs.batch_id }} --start_date ${{ github.event.inputs.start_date }} --end_date ${{ github.event.inputs.end_date }} --fresh_run True
         env:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
-          GOOGLE_API_KEY: ${{ secrets.GOOGLE_API_KEY }}
           GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
@@ -58,11 +48,12 @@ jobs:
           GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
           GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
           GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
-        run: |
-          python main_orchestrator.py \
-            --batch_id "${{ github.event.inputs.batch_id }}" \
-            --start_date "${{ github.event.inputs.start_date }}" \
-            --resume_date "${{ github.event.inputs.resume_date }}" \
-            --end_date "${{ github.event.inputs.end_date }}" \
-            --stock_universe "${{ github.event.inputs.stock_universe }}" \
-            --fresh_run "${{ github.event.inputs.fresh_run }}"
+          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          
+      - name: Run Stateful Backtester
+        run: python stateful_backtester.py --batch_id ${{ github.event.inputs.batch_id }}
+        env:
+          SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
+          ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
