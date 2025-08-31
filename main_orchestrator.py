@@ -14,7 +14,6 @@ from utils import APIKeyManager
 import argparse
 import market_regime_analyzer
 import sector_analyzer
-from quantitative_screener import generate_dynamic_watchlist, _passes_fundamental_health_check
 import quantitative_screener
 from config import PORTFOLIO_CONSTRAINTS
 from collections import deque
