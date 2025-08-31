@@ -10,22 +10,9 @@ CORE_SECTOR_INDICES = {
     "NIFTY Pharma": "^CNXPHARMA",
     "NIFTY FMCG": "^CNXFMCG",
     "NIFTY Metal": "^CNXMETAL",
-    "NIFTY PSU Bank": "^CNXPSUBANK",
-    "NIFTY Oil & Gas": "^CNXENERGY",
-    "NIFTY India Consumption": "^CNXCONSUM",
+    "NIFTY Energy": "^CNXENERGY",
     "NIFTY Realty": "^CNXREALTY",
-    "NIFTY Media": "^CNXMEDIA",
-    "NIFTY Private Bank": "NIFTY_PRIVATEBANK.NS", # Corrected
-    "NIFTY Financial Services": "NIFTY_FIN_SERVICE.NS", # Corrected
-    "NIFTY Healthcare": "NIFTY_HEALTHCARE.NS", # Corrected
-    "NIFTY Services Sector": "^CNXSERVICE",
-    "NIFTY Commodities": "NIFTY_COMMODITIES.NS", # Corrected
     "NIFTY Infrastructure": "^CNXINFRA",
-    "NIFTY MNC": "^CNXMNC",
-    # "NIFTY Energy": "^CNXENERGY", # Removed as it's a duplicate of Oil & Gas
-    "NIFTY CPSE": "NIFTY_CPSE.NS", # Corrected
-    "NIFTY PSE": "^CNXPSE",
-    "NIFTY100 ESG": "NIFTY100_ESG.NS", # Corrected
 }
 
 BENCHMARK_INDEX = "^NSEI"
