@@ -18,6 +18,7 @@ from quantitative_screener import generate_dynamic_watchlist, _passes_fundamenta
 from config import PORTFOLIO_CONSTRAINTS
 from collections import deque
 from sector_analyzer import CORE_SECTOR_INDICES, BENCHMARK_INDEX
+import random
 
 STATE_FILE = 'simulation_state.json'
 
@@ -256,10 +257,12 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                 point_in_time_data.ta.atr(length=14, append=True)
                 atr_at_prediction = point_in_time_data['ATRr_14'].iloc[-1]
 
-                # --- AI Analysis with retry + fallback ---
+                # --- AI Analysis with retry + exponential backoff + fallback ---
                 final_analysis = None
                 max_attempts = len(config.GEMINI_API_KEY_POOL)
                 current_attempt = 0
+                delay = 5  # initial backoff delay
+
                 log.info(f"--- Analyzing {ticker} with Primary Model ({config.PRO_MODEL}) ---")
 
                 while current_attempt < max_attempts:
@@ -275,15 +278,18 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                     except Exception as e:
                         log.error(f"Primary attempt #{current_attempt + 1} for {ticker} failed. Error: {e}")
                         if any(x in str(e).lower() for x in ["429", "quota", "500"]) or isinstance(e, ValueError):
-                            log.warning("Recoverable error. Rotating API key and retrying...")
+                            log.warning("Recoverable error. Rotating API key and retrying with exponential backoff...")
                             analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
                             current_attempt += 1
-                            time.sleep(5)
+                            log.info(f"Backing off for {delay:.2f} seconds...")
+                            time.sleep(delay)
+                            delay = min(delay * 2, 60) + random.uniform(0, 1)  # exponential + jitter
                         else:
                             break
 
+                # --- Fallback to Flash model ---
                 if not final_analysis:
-                    log.warning(f"Fallback model ({config.FLASH_MODEL}) for {ticker}.")
+                    log.warning(f"⚡ Fallback model ({config.FLASH_MODEL}) for {ticker}.")
                     try:
                         final_analysis = analyzer.get_apex_analysis(
                             ticker, sanitized_full_context, strategic_review, tactical_lookback,
@@ -312,7 +318,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                     total_ai_buy_sell_signals += 1
                     is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
                     is_regime_ok = (original_signal == 'BUY' and market_regime != 'Bearish') or \
-                                   (original_signal == 'SELL' and market_regime != 'Bullish')
+                                (original_signal == 'SELL' and market_regime != 'Bullish')
 
                     entry_price = point_in_time_data['close'].iloc[-1]
                     potential_risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr_at_prediction
@@ -377,6 +383,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                 for trade_doc in trades_to_execute:
                     trade_doc['analysis_id'] = str(uuid.uuid4())
                     database_manager.save_prediction_for_backtesting(trade_doc, batch_id)
+
 
     log.info("\n--- ✅ APEX Dynamic Simulation Finished! ---")
     log.info("="*50)
