@@ -41,7 +41,7 @@ if not EMAIL_RECIPIENTS:
     EMAIL_RECIPIENTS = BETA_TESTER_EMAILS
 
 # --- Models ---
-PRO_MODEL = "gemini-2.5-pro"
+PRO_MODEL = "gemini-2.5-flash"
 FLASH_MODEL = "gemini-2.5-flash"
 
 # --- Strategy Profile ---
