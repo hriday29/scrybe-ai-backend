@@ -1,4 +1,4 @@
-name: Run Apex AI Backtest
+name: Run Scrybe AI Backtest
 
 on:
   workflow_dispatch:
@@ -53,7 +53,7 @@ jobs:
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           
       - name: Run Stateful Backtester
-        run: python stateful_backtester.py --batch_id ${{ github.event.inputs.batch_id }}
+        run: python stateful_backtester1.py --batch_id ${{ github.event.inputs.batch_id }}
         env:
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}

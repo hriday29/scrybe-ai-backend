@@ -15,6 +15,7 @@ import argparse
 import market_regime_analyzer
 import sector_analyzer
 from quantitative_screener import generate_dynamic_watchlist, _passes_fundamental_health_check
+import quantitative_screener
 from config import PORTFOLIO_CONSTRAINTS
 from collections import deque
 from sector_analyzer import CORE_SECTOR_INDICES, BENCHMARK_INDEX
@@ -25,43 +26,68 @@ STATE_FILE = 'simulation_state.json'
 def _build_backtest_context(ticker: str, point_in_time_data: pd.DataFrame, market_regime: str, nifty_data: pd.DataFrame) -> dict:
     """
     Constructs the complete, point-in-time context dictionary for the AI,
-    using ONLY data available during the backtest.
+    now with a RICH set of technical indicators.
     """
-    latest_row = point_in_time_data.iloc[-1]
-    
-    # Calculate relative strength
+    # --- Step 1: Calculate all required indicators ---
     try:
-        # Ensure the nifty_data slice is also point-in-time for this calculation
+        # Use a copy to avoid SettingWithCopyWarning
+        data = point_in_time_data.copy()
+        
+        # Standard indicators
+        data.ta.macd(append=True)
+        data.ta.bbands(append=True)
+        data.ta.supertrend(append=True)
+        data.ta.rsi(length=14, append=True) # Keep RSI as it's very useful context
+        data.ta.adx(length=14, append=True)
+        
+        # Get the latest row AFTER all calculations
+        latest_row = data.iloc[-1]
+        
+        # --- Step 2: Create a rich, descriptive technical summary ---
+        # Provide not just the value, but a simple interpretation to help the AI.
+        technicals = {
+            "daily_close": latest_row['close'],
+            "RSI_14": f"{latest_row['RSI_14']:.2f}",
+            "ADX_14_trend_strength": f"{latest_row['ADX_14']:.2f}",
+            "MACD_status": {
+                "value": f"{latest_row['MACD_12_26_9']:.2f}",
+                "signal_line": f"{latest_row['MACDs_12_26_9']:.2f}",
+                "interpretation": "Bullish Crossover" if latest_row['MACD_12_26_9'] > latest_row['MACDs_12_26_9'] else "Bearish Crossover"
+            },
+            "bollinger_bands": {
+                "price_position": "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0'] else \
+                                  "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0'] else "Inside Bands",
+                "upper_band": f"{latest_row['BBU_20_2.0']:.2f}",
+                "lower_band": f"{latest_row['BBL_20_2.0']:.2f}",
+                "band_width_pct": f"{((latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0'])*100:.2f}%"
+            },
+            "supertrend_7_3": {
+                "trend": "Uptrend" if latest_row['SUPERTd_7_3.0'] == 1 else "Downtrend",
+                "value": f"{latest_row['SUPERT_7_3.0']:.2f}"
+            }
+        }
+    except Exception as e:
+        log.error(f"Indicator calculation failed for {ticker} on {point_in_time_data.index[-1].strftime('%Y-%m-%d')}: {e}")
+        # Return a fallback context if calculation fails
+        technicals = {"error": "Indicator calculation failed."}
+
+    # --- Step 3: Calculate Relative Strength (no changes here) ---
+    try:
         nifty_slice = nifty_data.loc[:point_in_time_data.index[-1]]
         nifty_5d_change = (nifty_slice['close'].iloc[-1] / nifty_slice['close'].iloc[-6] - 1) * 100
-        stock_5d_change = (latest_row['close'] / point_in_time_data['close'].iloc[-6] - 1) * 100
+        stock_5d_change = (point_in_time_data['close'].iloc[-1] / point_in_time_data['close'].iloc[-6] - 1) * 100
         relative_strength = "Outperforming" if stock_5d_change > nifty_5d_change else "Underperforming"
     except (IndexError, KeyError):
         relative_strength = "Data Not Available"
 
-    # Calculate technicals
-    point_in_time_data.ta.adx(length=14, append=True)
-    adx_at_prediction = point_in_time_data['ADX_14'].iloc[-1]
-
-    # Assemble the final context dictionary, explicitly defining what is and isn't available
+    # --- Step 4: Assemble the final, enriched context dictionary ---
     context = {
-        "layer_1_macro_context": {
-            "nifty_50_regime": market_regime
-        },
-        "layer_2_relative_strength": {
-            "relative_strength_vs_nifty50": relative_strength
-        },
+        "layer_1_macro_context": {"nifty_50_regime": market_regime},
+        "layer_2_relative_strength": {"relative_strength_vs_nifty50": relative_strength},
         "layer_3_fundamental_moat": data_retriever.get_fundamental_proxies(point_in_time_data),
-        "layer_4_technicals": {
-            "daily_close": latest_row['close'], 
-            "adx_14_trend_strength": f"{adx_at_prediction:.2f}"
-        },
-        "layer_5_options_sentiment": {
-            "sentiment": "Unavailable in backtest"
-        },
-        "layer_6_news_catalyst": {
-            "summary": "Unavailable in backtest"
-        }
+        "layer_4_technicals": technicals, # Use our new rich technicals packet
+        "layer_5_options_sentiment": {"sentiment": "Unavailable in backtest"},
+        "layer_6_news_catalyst": {"summary": "Unavailable in backtest"}
     }
     return context
 
@@ -223,10 +249,36 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
             # --- STEP 6: Market regime + sector analysis ---
             nifty_data_slice = full_context_data_cache.get(BENCHMARK_INDEX)
-            market_regime = data_retriever.calculate_regime_from_data(nifty_data_slice.loc[:current_day]) if nifty_data_slice is not None else "Neutral"
+            market_regime = data_retriever.calculate_regime_from_data(
+                nifty_data_slice.loc[:current_day]
+            ) if nifty_data_slice is not None else "Neutral"
 
             strong_sectors = sector_analyzer.get_top_performing_sectors(full_context_data_cache, current_day)
-            stocks_for_today = generate_dynamic_watchlist(strong_sectors, approved_stock_data_cache, current_day)
+            vix_slice = vix_data.loc[:current_day] if vix_data is not None else None
+            volatility_regime = data_retriever.get_volatility_regime(vix_slice)
+            log.info(f"Market State Diagnosis | Trend: {market_regime}, Volatility: {volatility_regime}")
+
+            stocks_for_today = []
+            if market_regime == "Bearish":
+                log.warning("Market regime is Bearish. Avoiding new long trades today.")
+
+            elif market_regime == "Bullish":
+                if volatility_regime == "High-Risk":
+                    # In volatile uptrends, buying dips is safer.
+                    stocks_for_today = quantitative_screener.screen_for_pullbacks(
+                        strong_sectors, approved_stock_data_cache, current_day
+                    )
+                else:  # Low or Normal Volatility
+                    # In calm, grinding uptrends, momentum breakouts work well.
+                    stocks_for_today = quantitative_screener.screen_for_momentum(
+                        strong_sectors, approved_stock_data_cache, current_day
+                    )
+
+            elif market_regime == "Neutral":
+                # In sideways markets, mean reversion plays are safer.
+                stocks_for_today = quantitative_screener.screen_for_mean_reversion(
+                    strong_sectors, approved_stock_data_cache, current_day
+                )
 
             total_stocks_processed_by_screener += len(fundamentally_approved_stocks)
             total_stocks_passed_screener += len(stocks_for_today)

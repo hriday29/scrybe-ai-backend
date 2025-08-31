@@ -1,4 +1,4 @@
-# quantitative_screener.py (FINAL, CORRECTED VERSION 3.0)
+# quantitative_screener.py (v4.2 - Regime-Adaptive Funnel with 3 Modules)
 import pandas as pd
 import config
 import data_retriever
@@ -6,6 +6,7 @@ from logger_config import log
 import pandas_ta as ta
 import yfinance as yf
 
+# --- Sector Mapping ---
 SECTOR_NAME_MAPPING = {
     "NIFTY Bank": "Financial Services",
     "NIFTY IT": "Technology",
@@ -21,6 +22,8 @@ SECTOR_NAME_MAPPING = {
 MIN_AVG_VOLUME = 500000
 TREND_CHECK_EMA = 50
 
+
+# --- Fundamental Health Check ---
 def _passes_fundamental_health_check(ticker: str) -> bool:
     """
     Performs a basic check on key fundamental metrics using yfinance.
@@ -39,45 +42,49 @@ def _passes_fundamental_health_check(ticker: str) -> bool:
             return False
         
         # Rule 2: Debt must be manageable (for non-financials, typically < 1.5 or 150)
-        # We use a high threshold to only filter out extreme cases.
         if debt_to_equity is not None and debt_to_equity > 200:
-             log.warning(f"    - Skipping {ticker}: Fails Debt/Equity check (D/E: {debt_to_equity}).")
-             return False
+            log.warning(f"    - Skipping {ticker}: Fails Debt/Equity check (D/E: {debt_to_equity}).")
+            return False
 
         # Rule 3: Must be generating good returns for shareholders
-        if return_on_equity is not None and return_on_equity < 0.10: # (ROE < 10%)
+        if return_on_equity is not None and return_on_equity < 0.10:  # (ROE < 10%)
             log.warning(f"    - Skipping {ticker}: Fails ROE check (ROE: {return_on_equity:.2f}).")
             return False
-            
+
+        # Rule 4: Fundamental quality proxy
+        hist = yf.Ticker(ticker).history(period="1y")
+        if hist is not None and not hist.empty:
+            proxies = data_retriever.get_fundamental_proxies(hist)
+            if proxies and proxies.get("quality_score", 50) < 60:
+                log.warning(f"    - Skipping {ticker}: Poor quality score ({proxies['quality_score']})")
+                return False
+
         return True
+
     except Exception as e:
         log.warning(f"    - Could not perform fundamental check for {ticker}. Error: {e}. Skipping.")
         return False
-    
+
+# --- Sector Map ---
 def _get_stock_sector_map(tickers: list[str]) -> dict:
-    """
-    Builds a dictionary mapping each stock ticker to its sector.
-    Leverages the sector cache in data_retriever for efficiency.
-    """
     log.info("Building stock-to-sector map...")
     sector_cache = data_retriever.load_sector_cache()
     stock_sector_map = {}
-    tickers_to_fetch = [ticker for ticker in tickers if ticker not in sector_cache or sector_cache[ticker] == 'Other']
+    tickers_to_fetch = [t for t in tickers if t not in sector_cache or sector_cache[t] == 'Other']
 
     if tickers_to_fetch:
-        log.info(f"Fetching sector info for {len(tickers_to_fetch)} new or uncategorized tickers...")
+        log.info(f"Fetching sector info for {len(tickers_to_fetch)} new/uncategorized tickers...")
         for i, ticker in enumerate(tickers_to_fetch):
             try:
                 info = yf.Ticker(ticker).info
                 sector = info.get('sector', 'Other')
                 stock_sector_map[ticker] = sector
                 sector_cache[ticker] = sector
-                log.info(f"({i+1}/{len(tickers_to_fetch)}) Fetched sector for {ticker}: {sector}")
+                log.info(f"({i+1}/{len(tickers_to_fetch)}) {ticker}: {sector}")
             except Exception:
                 stock_sector_map[ticker] = 'Other'
         data_retriever.save_sector_cache(sector_cache)
-    
-    # Populate map from cache for tickers that were not re-fetched
+
     for ticker in tickers:
         if ticker not in stock_sector_map:
             stock_sector_map[ticker] = sector_cache.get(ticker, 'Other')
@@ -85,90 +92,112 @@ def _get_stock_sector_map(tickers: list[str]) -> dict:
     log.info("✅ Stock-to-sector map complete.")
     return stock_sector_map
 
-def generate_dynamic_watchlist(strong_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[tuple[str, str]]:
 
-    log.info("--- [Funnel Step 3] Running V2 Quantitative Pre-Screener ---")
-    
+# --- Core Screener Utility ---
+def _prepare_filtered_universe(strong_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[str]:
     target_sectors = {SECTOR_NAME_MAPPING[name] for name in strong_sectors if name in SECTOR_NAME_MAPPING}
     if not target_sectors:
-        log.warning("Screener Funnel: No target sectors found after mapping. Watchlist will be empty.")
+        log.warning("Screener Funnel: No target sectors found after mapping. Returning empty universe.")
         return []
-    log.info(f"Screener Funnel: Screening for stocks in these strong sectors: {target_sectors}")
 
     universe = list(full_data_cache.keys())
     stock_sector_map = _get_stock_sector_map(universe)
 
-    sector_filtered_stocks = [
-        ticker for ticker, sector in stock_sector_map.items() if sector in target_sectors
-    ]
-    # --- NEW SUMMARY LOG (Gemini style) ---
-    log.info(f"Screener Funnel | Sector Filter Result: {len(universe)} stocks -> {len(sector_filtered_stocks)} stocks")
-    if not sector_filtered_stocks: 
-        return []
+    sector_filtered = [t for t, s in stock_sector_map.items() if s in target_sectors]
+    log.info(f"Screener Funnel | Sector Filter Result: {len(universe)} -> {len(sector_filtered)} stocks")
 
-    final_watchlist = []
-    for i, ticker in enumerate(sector_filtered_stocks):
-        log.info(f"  -> Applying V2 technical screen for {ticker} ({i+1}/{len(sector_filtered_stocks)})...")
-        
-        # Use the full data cache first, then slice
-        full_historical_data = full_data_cache.get(ticker)
-        if full_historical_data is None or len(full_historical_data) < TREND_CHECK_EMA + 20:
-            log.warning(f"    - VETO (Data): Skipping {ticker} due to insufficient full historical data.")
+    qualified = []
+    for ticker in sector_filtered:
+        data = full_data_cache.get(ticker)
+        if data is None or len(data) < TREND_CHECK_EMA + 20:
             continue
-        
-        # Slice correctly to the point_in_time
-        data = full_historical_data.loc[:point_in_time].copy()
-        if data.empty or len(data) < TREND_CHECK_EMA + 20:
-            log.warning(f"    - VETO (Data): Skipping {ticker} due to insufficient point-in-time data.")
+        df = data.loc[:point_in_time].copy()
+        if df.empty or len(df) < TREND_CHECK_EMA + 20:
             continue
-
-        avg_volume = data['volume'].tail(20).mean()
-        if avg_volume < MIN_AVG_VOLUME:
-            log.warning(f"    - VETO (Volume): Skipping {ticker} (Avg Vol: {int(avg_volume)} < {MIN_AVG_VOLUME})")
+        if df['volume'].tail(20).mean() < MIN_AVG_VOLUME:
             continue
-
-        # Indicators
-        data.ta.ema(length=50, append=True)
-        data.ta.ema(length=200, append=True) # ADD 200-day EMA for long-term trend
-        data.ta.rsi(length=14, append=True)
-        data.ta.adx(length=14, append=True)
-        data.dropna(inplace=True)
-
-        latest_close = data['close'].iloc[-1]
-        ema_50 = data['EMA_50'].iloc[-1]
-        ema_200 = data['EMA_200'].iloc[-1]
-        rsi_14 = data['RSI_14'].iloc[-1]
-        adx_14 = data['ADX_14'].iloc[-1]
-
-        screener_reason = None # This will tell the AI what kind of setup it is
-
-        # --- Condition 1: Momentum Check (Our existing logic) ---
-        is_strong_trend = adx_14 > config.ADX_THRESHOLD
-        is_uptrending = latest_close > ema_50
-        has_momentum = rsi_14 > 45
-
-        if is_strong_trend and is_uptrending and has_momentum:
-            screener_reason = "Momentum"
-            final_watchlist.append((ticker, screener_reason)) # Return a tuple with the reason
-            log.info(f"    - ✅ PASS (Momentum): {ticker} has strong, trending momentum.")
+        if not _passes_fundamental_health_check(ticker):
             continue
+        qualified.append(ticker)
 
-        # --- Condition 2: Mean-Reversion Check (NEW LOGIC) ---
-        is_long_term_uptrend = latest_close > ema_200
-        is_oversold = rsi_14 < 35 # Look for dips
-        is_not_trending = adx_14 < 22 # Look for consolidating trends
+    log.info(f"Screener Funnel | Pre-flight checks passed: {len(qualified)} stocks")
+    return qualified
 
-        if is_long_term_uptrend and is_oversold and is_not_trending:
-            screener_reason = "Mean Reversion"
-            final_watchlist.append((ticker, screener_reason)) # Return a tuple with the reason
-            log.info(f"    - ✅ PASS (Mean Reversion): {ticker} is oversold in a long-term uptrend.")
-            continue
 
-        # If neither condition is met, veto the stock
-        log.warning(f"    - VETO: {ticker} did not meet Momentum or Mean Reversion criteria.")
+# --- Strategy Modules ---
+def screen_for_pullbacks(strong_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[tuple[str, str]]:
+    """Healthy short-term pullback in strong trend."""
+    log.info("--- Screening for Pullback Setups ---")
+    tickers = _prepare_filtered_universe(strong_sectors, full_data_cache, point_in_time)
+    watchlist = []
 
-    # --- NEW FINAL SUMMARY LOG (Gemini style) ---
-    log.info(f"✅ Screener Funnel | Final Result: {len(final_watchlist)} stocks passed all technical checks.")
-    if final_watchlist: 
-        log.info(f"Final Watchlist: {final_watchlist}")
-    return final_watchlist
+    for ticker in tickers:
+        df = full_data_cache[ticker].loc[:point_in_time].copy()
+        df.ta.ema(length=50, append=True)
+        df.ta.ema(length=200, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.dropna(inplace=True)
+
+        latest_close = df['close'].iloc[-1]
+        ema50 = df['EMA_50'].iloc[-1]
+        ema200 = df['EMA_200'].iloc[-1]
+        rsi = df['RSI_14'].iloc[-1]
+
+        if latest_close > ema50 > ema200 and rsi < 65:
+            watchlist.append((ticker, "Pullback"))
+            log.info(f"  -> ✅ Pullback Candidate: {ticker}")
+
+    log.info(f"✅ Pullback Screener Result: {len(watchlist)} candidates")
+    return watchlist
+
+
+def screen_for_momentum(strong_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[tuple[str, str]]:
+    """Strong, trending stocks not yet overextended."""
+    log.info("--- Screening for Momentum Setups ---")
+    tickers = _prepare_filtered_universe(strong_sectors, full_data_cache, point_in_time)
+    watchlist = []
+
+    for ticker in tickers:
+        df = full_data_cache[ticker].loc[:point_in_time].copy()
+        df.ta.ema(length=50, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.ta.adx(length=14, append=True)
+        df.dropna(inplace=True)
+
+        latest_close = df['close'].iloc[-1]
+        ema50 = df['EMA_50'].iloc[-1]
+        rsi = df['RSI_14'].iloc[-1]
+        adx = df['ADX_14'].iloc[-1]
+
+        if latest_close > ema50 and 55 < rsi < 70 and adx > config.ADX_THRESHOLD:
+            watchlist.append((ticker, "Momentum"))
+            log.info(f"  -> ✅ Momentum Candidate: {ticker}")
+
+    log.info(f"✅ Momentum Screener Result: {len(watchlist)} candidates")
+    return watchlist
+
+
+def screen_for_mean_reversion(strong_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[tuple[str, str]]:
+    """Deep oversold setups in long-term uptrend."""
+    log.info("--- Screening for Mean Reversion Setups ---")
+    tickers = _prepare_filtered_universe(strong_sectors, full_data_cache, point_in_time)
+    watchlist = []
+
+    for ticker in tickers:
+        df = full_data_cache[ticker].loc[:point_in_time].copy()
+        df.ta.ema(length=200, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.ta.adx(length=14, append=True)
+        df.dropna(inplace=True)
+
+        latest_close = df['close'].iloc[-1]
+        ema200 = df['EMA_200'].iloc[-1]
+        rsi = df['RSI_14'].iloc[-1]
+        adx = df['ADX_14'].iloc[-1]
+
+        if latest_close > ema200 and rsi < 35 and adx < 22:
+            watchlist.append((ticker, "Mean Reversion"))
+            log.info(f"  -> ✅ Mean Reversion Candidate: {ticker}")
+
+    log.info(f"✅ Mean Reversion Screener Result: {len(watchlist)} candidates")
+    return watchlist

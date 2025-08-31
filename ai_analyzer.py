@@ -38,9 +38,9 @@ class AIAnalyzer:
 
         **STRATEGY CONTEXT (NEW):**
         You will be provided with a `screener_reason` that explains why this stock was selected for analysis. This context is critical.
-        - If `screener_reason` is **"Momentum"**: The stock is already in a strong, established trend. Your analysis should focus on the probability of **trend continuation**.
-        - If `screener_reason` is **"Mean Reversion"**: The stock is in a long-term uptrend but has recently pulled back and is oversold. Your analysis should focus on the probability of a **bounce or reversal** back to the mean.
-        Weigh your analysis heavily based on this strategic context.
+        - If `screener_reason` is **"Momentum"**: The stock is in a strong, confirmed uptrend and is breaking out. Your analysis should focus on the probability of **trend continuation**.
+        - If `screener_reason` is **"Pullback"**: The stock is in a strong long-term uptrend but has recently dipped. Your analysis must focus on the probability of **trend resumption**. Distinguish a healthy pullback from the start of a new downtrend.
+        - If `screener_reason` is **"Mean Reversion"**: The stock is in a long-term uptrend but is now significantly oversold in a non-trending phase. Your analysis should focus on the probability of a **sharp bounce or reversal** back toward its mean (e.g., the 50-day EMA).
 
         **ANALYTICAL PROTOCOL - STEP 1: MULTI-LAYERED SCENARIO FORMATION.**
         Synthesize the following six layers of intelligence into a single, cohesive research thesis. Each layer must be weighed according to its specified importance.
