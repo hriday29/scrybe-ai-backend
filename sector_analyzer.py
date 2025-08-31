@@ -15,19 +15,18 @@ CORE_SECTOR_INDICES = {
     "NIFTY India Consumption": "^CNXCONSUM",
     "NIFTY Realty": "^CNXREALTY",
     "NIFTY Media": "^CNXMEDIA",
-    "NIFTY Private Bank": "^NIFTYPRBANK",
-    "NIFTY Financial Services": "^CNXFINANCE",
-    "NIFTY Healthcare": "^CNXHEALTH",
+    "NIFTY Private Bank": "NIFTY_PRIVATEBANK.NS", # Corrected
+    "NIFTY Financial Services": "NIFTY_FIN_SERVICE.NS", # Corrected
+    "NIFTY Healthcare": "NIFTY_HEALTHCARE.NS", # Corrected
     "NIFTY Services Sector": "^CNXSERVICE",
-    "NIFTY Commodities": "^CNXCOMMOD",
+    "NIFTY Commodities": "NIFTY_COMMODITIES.NS", # Corrected
     "NIFTY Infrastructure": "^CNXINFRA",
     "NIFTY MNC": "^CNXMNC",
-    "NIFTY Energy": "^CNXENERGY",
-    "NIFTY CPSE": "^CNXCPSE", 
-    "NIFTY PSE": "^CNXPSE",  
-    "NIFTY100 ESG": "^NIFTY100ESG", 
+    # "NIFTY Energy": "^CNXENERGY", # Removed as it's a duplicate of Oil & Gas
+    "NIFTY CPSE": "NIFTY_CPSE.NS", # Corrected
+    "NIFTY PSE": "^CNXPSE",
+    "NIFTY100 ESG": "NIFTY100_ESG.NS", # Corrected
 }
-
 
 BENCHMARK_INDEX = "^NSEI"
 LOOKBACK_PERIOD_DAYS = 21
