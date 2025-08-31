@@ -169,7 +169,7 @@ def screen_for_momentum(strong_sectors: list[str], full_data_cache: dict, point_
         rsi = df['RSI_14'].iloc[-1]
         adx = df['ADX_14'].iloc[-1]
 
-        if latest_close > ema50 and 55 < rsi < 70 and adx > config.ADX_THRESHOLD:
+        if latest_close > ema50 and 55 < rsi < 75 and adx > config.ADX_THRESHOLD:
             watchlist.append((ticker, "Momentum"))
             log.info(f"  -> ✅ Momentum Candidate: {ticker}")
 
@@ -195,7 +195,7 @@ def screen_for_mean_reversion(strong_sectors: list[str], full_data_cache: dict, 
         rsi = df['RSI_14'].iloc[-1]
         adx = df['ADX_14'].iloc[-1]
 
-        if latest_close > ema200 and rsi < 35 and adx < 22:
+        if latest_close > ema200 and rsi < 40 and adx < 25:
             watchlist.append((ticker, "Mean Reversion"))
             log.info(f"  -> ✅ Mean Reversion Candidate: {ticker}")
 

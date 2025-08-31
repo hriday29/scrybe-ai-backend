@@ -60,7 +60,7 @@ APEX_SWING_STRATEGY = {
     "holding_period": 10, # This won't be used, but we can leave it
     "stop_loss_atr_multiplier": 2.0,
     "profit_target_rr_multiple": 2.0,
-    "min_conviction_score": 30,
+    "min_conviction_score": 25,
     "use_trailing_stop": False, # CHANGE THIS TO FALSE
     "trailing_stop_atr_multiplier": 1.5,
 }
