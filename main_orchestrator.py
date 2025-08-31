@@ -25,52 +25,105 @@ STATE_FILE = 'simulation_state.json'
 def _build_backtest_context(ticker: str, point_in_time_data: pd.DataFrame, market_regime: str, nifty_data: pd.DataFrame) -> dict:
     """
     Constructs the complete, point-in-time context dictionary for the AI,
-    now with a RICH set of technical indicators.
+    with a rich set of technical indicators.
+    Resilient: includes partial results and reports exactly which indicators failed.
     """
-    # --- Step 1: Calculate all required indicators ---
+    failed_indicators = []
+    
     try:
-        # Use a copy to avoid SettingWithCopyWarning
         data = point_in_time_data.copy()
         
-        # Standard indicators
-        data.ta.macd(append=True)
-        data.ta.bbands(append=True)
-        data.ta.supertrend(append=True)
-        data.ta.rsi(length=14, append=True) # Keep RSI as it's very useful context
-        data.ta.adx(length=14, append=True)
+        # --- Calculate indicators individually and merge ---
+        try:
+            macd = data.ta.macd()
+            if macd is not None and not macd.empty:
+                data = data.join(macd)
+        except Exception as e:
+            failed_indicators.append("MACD")
+            log.warning(f"MACD failed for {ticker}: {e}")
         
-        # Get the latest row AFTER all calculations
+        try:
+            bbands = data.ta.bbands()
+            if bbands is not None and not bbands.empty:
+                data = data.join(bbands)
+        except Exception as e:
+            failed_indicators.append("Bollinger Bands")
+            log.warning(f"Bollinger Bands failed for {ticker}: {e}")
+        
+        try:
+            supertrend = data.ta.supertrend()
+            if supertrend is not None and not supertrend.empty:
+                data = data.join(supertrend)
+        except Exception as e:
+            failed_indicators.append("Supertrend")
+            log.warning(f"Supertrend failed for {ticker}: {e}")
+        
+        try:
+            rsi = data.ta.rsi(length=14)
+            if rsi is not None and not rsi.empty:
+                data = data.join(rsi)
+        except Exception as e:
+            failed_indicators.append("RSI")
+            log.warning(f"RSI failed for {ticker}: {e}")
+        
+        try:
+            adx = data.ta.adx(length=14)
+            if adx is not None and not adx.empty:
+                data = data.join(adx)
+        except Exception as e:
+            failed_indicators.append("ADX")
+            log.warning(f"ADX failed for {ticker}: {e}")
+        
         latest_row = data.iloc[-1]
         
-        # --- Step 2: Create a rich, descriptive technical summary ---
-        # Provide not just the value, but a simple interpretation to help the AI.
-        technicals = {
-            "daily_close": latest_row['close'],
-            "RSI_14": f"{latest_row['RSI_14']:.2f}",
-            "ADX_14_trend_strength": f"{latest_row['ADX_14']:.2f}",
-            "MACD_status": {
+        # --- Build technicals dictionary dynamically ---
+        technicals = {"daily_close": latest_row.get("close", None)}
+        
+        if "RSI_14" in data.columns:
+            technicals["RSI_14"] = f"{latest_row['RSI_14']:.2f}"
+        
+        if "ADX_14" in data.columns:
+            technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
+        
+        if "MACD_12_26_9" in data.columns and "MACDs_12_26_9" in data.columns:
+            technicals["MACD_status"] = {
                 "value": f"{latest_row['MACD_12_26_9']:.2f}",
                 "signal_line": f"{latest_row['MACDs_12_26_9']:.2f}",
-                "interpretation": "Bullish Crossover" if latest_row['MACD_12_26_9'] > latest_row['MACDs_12_26_9'] else "Bearish Crossover"
-            },
-            "bollinger_bands": {
-                "price_position": "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0'] else \
-                                  "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0'] else "Inside Bands",
+                "interpretation": (
+                    "Bullish Crossover" if latest_row['MACD_12_26_9'] > latest_row['MACDs_12_26_9'] 
+                    else "Bearish Crossover"
+                )
+            }
+        
+        if all(col in data.columns for col in ["BBU_20_2.0", "BBL_20_2.0", "BBM_20_2.0"]):
+            technicals["bollinger_bands"] = {
+                "price_position": (
+                    "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0']
+                    else "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0']
+                    else "Inside Bands"
+                ),
                 "upper_band": f"{latest_row['BBU_20_2.0']:.2f}",
                 "lower_band": f"{latest_row['BBL_20_2.0']:.2f}",
-                "band_width_pct": f"{((latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0'])*100:.2f}%"
-            },
-            "supertrend_7_3": {
+                "band_width_pct": f"{((latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0']) * 100:.2f}%"
+            }
+        
+        if "SUPERT_7_3.0" in data.columns and "SUPERTd_7_3.0" in data.columns:
+            technicals["supertrend_7_3"] = {
                 "trend": "Uptrend" if latest_row['SUPERTd_7_3.0'] == 1 else "Downtrend",
                 "value": f"{latest_row['SUPERT_7_3.0']:.2f}"
             }
-        }
+        
+        if failed_indicators:
+            technicals["errors"] = f"Failed to calculate: {', '.join(failed_indicators)}"
+        
+        if len(technicals) <= 1:  # only daily_close, nothing else
+            raise ValueError("No valid technical indicators were generated.")
+    
     except Exception as e:
         log.error(f"Indicator calculation failed for {ticker} on {point_in_time_data.index[-1].strftime('%Y-%m-%d')}: {e}")
-        # Return a fallback context if calculation fails
-        technicals = {"error": "Indicator calculation failed."}
+        technicals = {"error": f"Indicator calculation failed. Failed indicators: {', '.join(failed_indicators) if failed_indicators else 'All'}"}
 
-    # --- Step 3: Calculate Relative Strength (no changes here) ---
+    # --- Relative Strength ---
     try:
         nifty_slice = nifty_data.loc[:point_in_time_data.index[-1]]
         nifty_5d_change = (nifty_slice['close'].iloc[-1] / nifty_slice['close'].iloc[-6] - 1) * 100
@@ -79,12 +132,12 @@ def _build_backtest_context(ticker: str, point_in_time_data: pd.DataFrame, marke
     except (IndexError, KeyError):
         relative_strength = "Data Not Available"
 
-    # --- Step 4: Assemble the final, enriched context dictionary ---
+    # --- Final Context ---
     context = {
         "layer_1_macro_context": {"nifty_50_regime": market_regime},
         "layer_2_relative_strength": {"relative_strength_vs_nifty50": relative_strength},
         "layer_3_fundamental_moat": data_retriever.get_fundamental_proxies(point_in_time_data),
-        "layer_4_technicals": technicals, # Use our new rich technicals packet
+        "layer_4_technicals": technicals,
         "layer_5_options_sentiment": {"sentiment": "Unavailable in backtest"},
         "layer_6_news_catalyst": {"summary": "Unavailable in backtest"}
     }
