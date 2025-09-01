@@ -191,6 +191,18 @@ def get_indices_list():
     except Exception as e:
         log.error(f"Failed to create indices list from config: {e}", exc_info=True)
         return jsonify({"error": "Could not retrieve indices list."}), 500
+    
+@app.route('/api/config/a-list', methods=['GET'])
+@cache.cached(timeout=86400) # Cache for a full day
+def get_a_list_config():
+    log.info("API call received for /api/config/a-list")
+    try:
+        # Directly return the list from your config file
+        a_list = config.LIVE_TRADING_UNIVERSE
+        return jsonify({"a_list": a_list})
+    except Exception as e:
+        log.error(f"Failed to retrieve A-List from config: {e}", exc_info=True)
+        return jsonify({"error": "Could not retrieve A-List configuration."}), 500
 
 @app.route('/api/index-analysis/<path:index_ticker>', methods=['GET'])
 @cache.cached(timeout=3600) # Cache each index's analysis for 1 hour
