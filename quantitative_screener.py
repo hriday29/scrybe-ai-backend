@@ -24,40 +24,49 @@ TREND_CHECK_EMA = 50
 
 
 # --- Fundamental Health Check ---
-def _passes_fundamental_health_check(ticker: str, sector: str) -> bool: #
+def _passes_fundamental_health_check(ticker: str, sector: str) -> bool:
     """
-    Performs a basic check on key fundamental metrics using yfinance.
-    Returns True if the stock is considered healthy, False otherwise.
+    Performs a robust, multi-factor check on key fundamental metrics.
+    It calculates a weighted Quality Score based on profitability, efficiency, and institutional trust.
     """
     try:
         info = yf.Ticker(ticker).info
         
+        # --- Hard Filters ---
         pe_ratio = info.get('trailingPE')
-        debt_to_equity = info.get('debtToEquity')
-        return_on_equity = info.get('returnOnEquity')
-
-        # Rule 1 (RELAXED): Allow for higher valuation growth stocks.
-        if pe_ratio is None or pe_ratio < 0 or pe_ratio > 150: # Increased from 100 to 150
+        if pe_ratio is None or pe_ratio < 0 or pe_ratio > 150:
             log.warning(f"    - Skipping {ticker}: Fails P/E check (P/E: {pe_ratio}).")
             return False
         
-        # Rule 2 (SECTOR-AWARE): Apply D/E check ONLY to non-financials.
+        debt_to_equity = info.get('debtToEquity')
         if sector != "Financial Services" and debt_to_equity is not None and debt_to_equity > 200:
             log.warning(f"    - Skipping {ticker}: Fails Debt/Equity check for non-financial sector (D/E: {debt_to_equity}).")
             return False
 
-        # Rule 3 (UNCHANGED): ROE check remains a good quality filter.
-        if return_on_equity is not None and return_on_equity < 0.10:  # (ROE < 10%)
-            log.warning(f"    - Skipping {ticker}: Fails ROE check (ROE: {return_on_equity:.2f}).")
-            return False
+        # --- Multi-Factor Quality Score Calculation ---
+        quality_score = 0
+        
+        # Factor 1: Profitability (Return on Equity) - Weight: 40 points
+        return_on_equity = info.get('returnOnEquity')
+        if return_on_equity is not None and return_on_equity > 0.15: # ROE > 15% is strong
+            quality_score += 40
 
-        # Rule 4 (RELAXED): Lower the quality score requirement to be less sensitive to normal volatility.
-        hist = yf.Ticker(ticker).history(period="1y")
-        if hist is not None and not hist.empty:
-            proxies = data_retriever.get_fundamental_proxies(hist) #
-            if proxies and proxies.get("quality_score", 50) < 40: # Lowered threshold from 60 to 40
-                log.warning(f"    - Skipping {ticker}: Poor quality score ({proxies['quality_score']})")
-                return False
+        # Factor 2: Efficiency (Profit Margins) - Weight: 30 points
+        profit_margins = info.get('profitMargins')
+        if profit_margins is not None and profit_margins > 0.10: # Margin > 10% is healthy
+            quality_score += 30
+
+        # Factor 3: Institutional Trust - Weight: 30 points
+        held_percent_institutions = info.get('heldPercentInstitutions')
+        if held_percent_institutions is not None and held_percent_institutions > 0.30: # Ownership > 30% is significant
+            quality_score += 30
+            
+        # --- THE KEY CHANGE: A more lenient threshold ---
+        # A score of 40 or more is now sufficient.
+        # This allows fundamentally strong companies that excel in at least ONE key area (like high ROE) to pass the filter.
+        if quality_score < 40:
+            log.warning(f"    - Skipping {ticker}: Fails Quality Score check (Score: {quality_score}/100).")
+            return False
 
         return True
 
@@ -169,7 +178,7 @@ def screen_for_momentum(strong_sectors: list[str], full_data_cache: dict, point_
         rsi = df['RSI_14'].iloc[-1]
         adx = df['ADX_14'].iloc[-1]
 
-        if latest_close > ema50 and 55 < rsi < 75 and adx > config.ADX_THRESHOLD:
+        if latest_close > ema50 and rsi > 60 and adx > config.ADX_THRESHOLD:
             watchlist.append((ticker, "Momentum"))
             log.info(f"  -> ✅ Momentum Candidate: {ticker}")
 
@@ -185,17 +194,19 @@ def screen_for_mean_reversion(strong_sectors: list[str], full_data_cache: dict, 
 
     for ticker in tickers:
         df = full_data_cache[ticker].loc[:point_in_time].copy()
+        df.ta.ema(length=50, append=True)
         df.ta.ema(length=200, append=True)
         df.ta.rsi(length=14, append=True)
         df.ta.adx(length=14, append=True)
         df.dropna(inplace=True)
 
         latest_close = df['close'].iloc[-1]
+        ema50 = df['EMA_50'].iloc[-1]
         ema200 = df['EMA_200'].iloc[-1]
         rsi = df['RSI_14'].iloc[-1]
         adx = df['ADX_14'].iloc[-1]
 
-        if latest_close > ema200 and rsi < 40 and adx < 25:
+        if latest_close > ema200 and ema50 > ema200 and rsi < 40 and adx < 25:
             watchlist.append((ticker, "Mean Reversion"))
             log.info(f"  -> ✅ Mean Reversion Candidate: {ticker}")
 

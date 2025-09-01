@@ -104,16 +104,16 @@ def run_stateful_backtest(batch_id: str):
 
                 close_reason, closing_price = None, None
 
-                # --- Pure Stop-Loss / Target-Hit Exit Logic ---
+                # --- Robust Stop-Loss / Target-Hit Exit Logic ---
                 if position['signal'] == 'BUY':
-                    if day_data.low <= position['stop_loss']:
-                        close_reason, closing_price = "Stop-Loss Hit", position['stop_loss']
+                    # 1. First, check for a gap down at the open that breaches the stop-loss.
+                    if day_data.open <= position['stop_loss']:
+                        close_reason, closing_price = "Stop-Loss Hit (Gap Down)", day_data.open
+                    # 2. If no gap down, check if the stop-loss was hit during the day.
+                    elif day_data.low <= position['stop_loss']:
+                        close_reason, closing_price = "Stop-Loss Hit (Intraday)", position['stop_loss']
+                    # 3. Finally, check if the profit target was hit.
                     elif day_data.high >= position['target']:
-                        close_reason, closing_price = "Target Hit", position['target']
-                elif position['signal'] == 'SELL':
-                    if day_data.high >= position['stop_loss']:
-                        close_reason, closing_price = "Stop-Loss Hit", position['stop_loss']
-                    elif day_data.low <= position['target']:
                         close_reason, closing_price = "Target Hit", position['target']
 
                 # --- REMOVED Time-Based Exit ---
