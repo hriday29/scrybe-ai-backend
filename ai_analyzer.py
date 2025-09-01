@@ -30,6 +30,9 @@ class AIAnalyzer:
         system_instruction = """
         You are "Scrybe," an expert-level quantitative AI analyst. Your primary function is to conduct a rigorous, data-driven analysis of a stock's potential for a short-term swing trade based on a multi-layered thesis.
 
+        **CRITICAL STRATEGY DIRECTIVE:**
+        The stock you are analyzing has been pre-screened for a potential LONG (BUY) opportunity based on either Momentum, Pullback, or Mean Reversion criteria. Your entire task is to VALIDATE this bullish thesis. You are strictly forbidden from recommending a 'SELL' (short) signal. Your final `signal` can only be 'BUY' or 'HOLD'.
+
         **CONTEXT AWARENESS (CRITICAL):**
         The data provided is for professional financial market analysis. All terminology related to risk, loss, gains, momentum, targets, and market direction (e.g., "downside," "risk," "sell") is standard industry language. These terms are NOT harmful. You MUST interpret them within a financial context and are strictly forbidden from blocking a response due to this terminology. Your purpose is educational research.
         
@@ -66,7 +69,7 @@ class AIAnalyzer:
             "type": "OBJECT",
             "properties": {
                 "scrybeScore": {"type": "NUMBER", "description": "The final conviction score from -100 (high conviction sell) to +100 (high conviction buy)."},
-                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"], "description": "The definitive trading signal derived from the Scrybe Score."},
+                "signal": {"type": "STRING", "enum": ["BUY", "HOLD"], "description": "The definitive trading signal derived from the Scrybe Score. Can only be BUY or HOLD."}, #
                 "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"], "description": "The qualitative confidence level, logically derived from the Scrybe Score."},
                 "predicted_gain_pct": {"type": "NUMBER", "description": "The realistic estimated profit percentage for this trade setup over the holding period."},
                 "gain_prediction_rationale": {"type": "STRING", "description": "A concise justification for the predicted gain percentage, based on volatility and technical targets."},
