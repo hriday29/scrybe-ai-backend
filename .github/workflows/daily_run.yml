@@ -1,0 +1,61 @@
+name: Scrybe AI Daily Production Run
+
+on:
+  schedule:
+    # Runs at 20:30 UTC (Mon-Fri), which is 2:00 AM IST (Tue-Sat)
+    # This analyzes the previous day's market data.
+    - cron: '30 20 * * 1-5'
+  workflow_dispatch: # Allows manual triggering for testing
+
+jobs:
+  run_daily_pipeline:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+      
+      - name: 1. Check if Market was Open on Previous Trading Day
+        id: market_check
+        run: python check_market_open.py # This script will need to be modified to check the PREVIOUS day, not the current one.
+
+      - name: 2. Manage Open Trades
+        if: success()
+        run: python run_daily_jobs.py --task manage
+        env:
+          ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
+
+      - name: 3. Generate Daily Watchlist
+        if: success()
+        run: python run_daily_jobs.py --task screen
+        env:
+          ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
+      
+      - name: Upload watchlist artifact
+        if: success()
+        uses: actions/upload-artifact@v3
+        with:
+          name: daily-watchlist
+          path: watchlist.json
+
+      - name: 4. Process AI Analysis
+        if: success()
+        # This job depends on the watchlist from the previous step
+        run: python run_daily_jobs.py --task analyze
+        env:
+          ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
+          GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
+          # ... add all other secrets ...
+          
+      - name: 5. Send Daily Briefing
+        if: always() # Run this even if upstream jobs fail, to report status
+        run: python send_daily_report.py
+        env:
+          ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
