@@ -12,17 +12,21 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
+
       - name: Set up Python 3.11
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
       - name: Install dependencies
-        run: pip install -r requirements.txt
-      
-      - name: 1. Check if Market was Open on Previous Trading Day
+        run: |
+          python -m pip install --upgrade pip
+          pip install --no-cache-dir -r requirements.txt
+
+      - name: 1. Check if Market was Open on Previous Day
         id: market_check
-        run: python check_market_open.py # This script will need to be modified to check the PREVIOUS day, not the current one.
+        run: python check_market_open.py
 
       - name: 2. Manage Open Trades
         if: success()
@@ -45,12 +49,19 @@ jobs:
 
       - name: 4. Process AI Analysis
         if: success()
-        # This job depends on the watchlist from the previous step
         run: python run_daily_jobs.py --task analyze
         env:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
-          # ... add all other secrets ...
+          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
+          GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
+          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
+          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
+          GOOGLE_API_KEY_6: ${{ secrets.GOOGLE_API_KEY_6 }}
+          GOOGLE_API_KEY_7: ${{ secrets.GOOGLE_API_KEY_7 }}
+          GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
+          GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
+          GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
           
       - name: 5. Send Daily Briefing
         if: always() # Run this even if upstream jobs fail, to report status
@@ -59,3 +70,4 @@ jobs:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
