@@ -29,7 +29,7 @@ jobs:
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install --index-url https://pypi.org/simple/ pandas-ta==0.3.14b
+          pip install -v pandas-ta==0.3.14b
           pip install -r requirements.txt
 
       # This step will be SKIPPED if you force the run
