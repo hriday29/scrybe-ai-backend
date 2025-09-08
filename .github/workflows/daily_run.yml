@@ -1,9 +1,18 @@
 name: Scrybe AI - Daily Analysis and Report
 
 on:
+  # Your regular schedule remains active
   schedule:
-    - cron: '30 14 * * 1-5' # Runs at 14:30 UTC (8:00 PM IST) on weekdays
-  workflow_dispatch: # Allows manual triggering
+    - cron: '30 14 * * 1-5'
+
+  # This section enables manual runs with a special option
+  workflow_dispatch:
+    inputs:
+      force_run:
+        description: 'Force run even if market was closed'
+        required: true
+        type: boolean
+        default: false
 
 jobs:
   run_daily_pipeline:
@@ -16,37 +25,33 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
-
-      # FIX 1: Add this step to install all required libraries
+          
       - name: Install Python dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Step 1: Check if the market was open on the previous trading day
+      # This step will be SKIPPED if you force the run
       - name: Check Market Status
         id: market_status
-        run: python check_market_open.py || true 
+        if: github.event.inputs.force_run == false
+        run: python check_market_open.py
 
-      # Step 2: Run the Main Orchestrator (only if the market was open)
+      # This step runs if the market check passes OR if you force the run
       - name: Run Main Orchestrator
-        if: success() # This condition is fine, it proceeds if the market check passed
+        if: success() || github.event.inputs.force_run == true
         env:
-          # IMPORTANT: Make sure all your secrets are correctly mapped here
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
           GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
-          # ... add all other GOOGLE_API_KEY secrets
+          # Add all other required secrets
           NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
         run: python main_orchestrator.py --mode live
 
-      # FIX 2: The problematic 'git clone' step has been removed.
-      # The pandas-ta library is correctly installed from the requirements.txt file.
-
-      # Step 3: Send the daily report email (only if the orchestrator was successful)
+      # This step runs if the orchestrator passes OR if you force the run
       - name: Send Daily Report
-        if: success()
+        if: success() || github.event.inputs.force_run == true
         env:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
