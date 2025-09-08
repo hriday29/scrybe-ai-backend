@@ -38,7 +38,7 @@ jobs:
       
       - name: Upload watchlist artifact
         if: success()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: daily-watchlist
           path: watchlist.json

@@ -31,7 +31,7 @@ jobs:
         run: mongodump --uri="$DB_URI" --archive="scheduler-backup-$(date +%Y-%m-%d).gz" --gzip
 
       - name: Upload Backup Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: database-backups-${{ github.run_id }}
           path: ./*.gz
