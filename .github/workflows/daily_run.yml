@@ -26,7 +26,7 @@ jobs:
       # Step 1: Check if the market was open on the previous trading day
       - name: Check Market Status
         id: market_status
-        run: python check_market_open.py
+        run: python check_market_open.py || true 
 
       # Step 2: Run the Main Orchestrator (only if the market was open)
       - name: Run Main Orchestrator
