@@ -5,6 +5,7 @@ import data_retriever
 from logger_config import log
 import pandas_ta as ta
 import yfinance as yf
+import os
 
 # --- Sector Mapping ---
 SECTOR_NAME_MAPPING = {
