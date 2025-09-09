@@ -7,6 +7,7 @@ import io
 import base64
 from logger_config import log
 import data_retriever
+import data_retriever 
 
 def _generate_intraday_chart(data: pd.DataFrame, ticker: str, title: str):
     """Generates a specialized 1-Day chart with Price and VWAP."""
@@ -141,3 +142,29 @@ def generate_focused_charts(full_data: pd.DataFrame, ticker: str) -> dict:
         
     log.info(f"Successfully generated charts for {ticker}.")
     return charts
+
+def build_live_context(ticker: str, historical_data: pd.DataFrame, market_regime_context: dict, sector_performance_context: dict) -> dict:
+    """
+    Constructs the complete, live context dictionary for the AI by mirroring
+    the logic from the backtester's context builder.
+    """
+    technicals = get_all_technicals(historical_data)
+    relative_strength = get_relative_strength(historical_data)
+    
+    # These calls fetch live, real-time data
+    options_data = data_retriever.get_options_data(ticker)
+    news = data_retriever.get_news_articles_for_ticker(ticker)
+    
+    context = {
+        "ticker": ticker,
+        "market_regime_analysis": market_regime_context,
+        "sector_and_relative_strength": {
+            "sector_performance": sector_performance_context,
+            "relative_strength_vs_nifty50": relative_strength
+        },
+        "fundamental_proxy_analysis": data_retriever.get_fundamental_proxies(historical_data),
+        "technical_analysis": technicals,
+        "options_sentiment_analysis": options_data,
+        "news_and_events_analysis": news
+    }
+    return context

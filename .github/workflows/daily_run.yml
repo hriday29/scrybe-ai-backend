@@ -1,27 +1,29 @@
-name: Scrybe AI - Daily Analysis and Report
+# .github/workflows/daily_run.yml
+
+name: Scrybe AI - Daily Market Analysis
 
 on:
-  # Your regular schedule remains active
+  # Schedule to run at 2:00 AM IST from Tuesday to Saturday.
+  # CRON timing is in UTC. 2:00 AM IST is 8:30 PM UTC on the PREVIOUS day.
+  # So, '30 20 * * 1-5' means:
+  # - Mon 20:30 UTC -> Tue 02:00 IST (Analyzes Monday's data)
+  # - Tue 20:30 UTC -> Wed 02:00 IST (Analyzes Tuesday's data)
+  # - ...and so on, until...
+  # - Fri 20:30 UTC -> Sat 02:00 IST (Analyzes Friday's data)
   schedule:
-    - cron: '30 14 * * 1-5'
+    - cron: '30 20 * * 1-5'
 
-  # This section enables manual runs with a special option
+  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
-    inputs:
-      force_run:
-        description: 'Force run even if market was closed'
-        required: true
-        type: boolean
-        default: false
 
 jobs:
-  run_daily_pipeline:
+  run-daily-analysis:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.10
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
@@ -31,30 +33,41 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # This step will be SKIPPED if you force the run
-      - name: Check Market Status
-        id: market_status
-        if: github.event.inputs.force_run == false
+      - name: Check if the last market day was open
+        # This script correctly checks the PREVIOUS day (or Friday if it's Monday UTC).
+        # This prevents the job from running on Tuesday morning if Monday was a holiday.
         run: python check_market_open.py
 
-      # This step runs if the market check passes OR if you force the run
-      - name: Run Main Orchestrator
-        if: success() || github.event.inputs.force_run == true
+      - name: Run Daily Analysis Script
+        # This is the critical step: we run the CORRECT script now.
         env:
+          # Pass ALL required secrets from GitHub to the script
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
+          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
+          GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+          
+          # Pass the entire pool of Gemini API keys
           GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
-          # Add all other required secrets
-          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
-        run: python main_orchestrator.py --mode live
+          GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
+          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
+          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
+          GOOGLE_API_KEY_6: ${{ secrets.GOOGLE_API_KEY_6 }}
+          GOOGLE_API_KEY_7: ${{ secrets.GOOGLE_API_KEY_7 }}
+          GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
+          GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
+          GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
+        run: python run_daily_jobs.py
 
-      # This step runs if the orchestrator passes OR if you force the run
       - name: Send Daily Report
-        if: success() || github.event.inputs.force_run == true
+        # This step only runs if the analysis script above completes successfully
+        if: success()
         env:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
-          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
+          EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
         run: python send_daily_report.py
