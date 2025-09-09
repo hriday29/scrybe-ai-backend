@@ -1,22 +1,32 @@
-# Use an official Python runtime as a parent image
-FROM python:3.10-slim
+# Dockerfile (Corrected and Optimized)
 
-# Set the working directory in the container
+# SOLUTION 1: Upgrade to Python 3.12. This is the recommended fix.
+# It solves the pandas-ta issue directly and keeps your project modern.
+# The "-slim" variant is smaller and better for production.
+FROM python:3.12-slim
+
+# Set the working directory
 WORKDIR /app
 
-# Copy the requirements file first to leverage Docker's layer caching
+# Good practice: Upgrade pip to the latest version
+RUN pip install --no-cache-dir --upgrade pip
+
+# Copy ONLY the requirements file first.
+# This leverages Docker's layer caching. The packages will only be re-installed
+# if you change the requirements.txt file itself.
 COPY requirements.txt .
 
-# Install any needed packages specified in requirements.txt
-# --no-cache-dir makes the image smaller
+# Install all dependencies from the single requirements.txt file in one go.
+# This is cleaner and more efficient.
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy the rest of the application's code into the container
+# Now, copy the rest of your application code.
+# Any changes to your code from now on will use the cached layer above,
+# making builds much faster.
 COPY . .
 
-# Expose the port that Gunicorn will run on
+# Expose the port
 EXPOSE 8000
 
-# Define the command to run your application
-# It tells Gunicorn to run the 'app' object from your 'index.py' file, using our new config.
+# Define the run command
 CMD ["gunicorn", "-c", "gunicorn_config.py", "api.index:app"]
