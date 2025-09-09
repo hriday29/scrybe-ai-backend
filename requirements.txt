@@ -1,23 +1,28 @@
-# requirements.txt (Updated to resolve numpy conflict)
+# requirements.txt (Corrected and Final Version)
 
-# Server
-gunicorn==21.2.0
-Flask==3.0.0
-Flask-Cors==4.0.0
-python-dotenv==1.0.0
+# --- Web Framework & Server ---
+gunicorn
+Flask
+Flask-Cors
+Flask-Limiter
+Flask-Caching[redis]
+python-dotenv
+setuptools
 
-# Database
-pymongo==4.6.1
+# --- Database & Data Formats ---
+pymongo
+pyarrow
 
-# Data and Finance
-# UNPINNED to allow pip to find compatible versions
+# --- Financial Analysis & Data ---
+# These are left unpinned to allow pip to find a compatible
+# set of versions for the entire scientific computing stack (numpy, etc.)
 pandas
-yfinance
-pandas_market_calendars
 pandas-ta
+pandas_market_calendars
+yfinance
+matplotlib
 
-# Google AI
-google-generativeai==0.4.0
-
-# Other
-certifi==2023.11.17
+# --- External Services & SDKs ---
+google-generativeai
+firebase-admin
+sentry-sdk[flask]
