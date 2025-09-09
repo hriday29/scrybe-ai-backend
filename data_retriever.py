@@ -145,7 +145,8 @@ def get_live_financial_data(ticker_symbol: str):
 
 def get_nifty50_performance():
     """
-    Fetches Nifty 50 performance using your original resilient "Hybrid Fetch" strategy.
+    Fetches Nifty 50 performance using a resilient "Hybrid Fetch" strategy.
+    This version includes robust logging and logic to prevent count anomalies.
     """
     log.info("Fetching Nifty 50 performance with Hybrid Fetch strategy...")
     nifty50_tickers = index_manager.get_nifty50_tickers()
@@ -194,31 +195,41 @@ def get_nifty50_performance():
         performance_df = closing_prices[valid_tickers].iloc[-1].to_frame('lastPrice').copy()
         performance_df['pctChange'] = ((closing_prices[valid_tickers].iloc[-1] - closing_prices[valid_tickers].iloc[0]) / closing_prices[valid_tickers].iloc[0]) * 100
         
+        log.info(f"Successfully calculated performance for {len(performance_df)} stocks.")
+
+        # --- CORRECTED SECTOR FETCHING LOGIC ---
         sector_cache = load_sector_cache()
-        sectors = {ticker: sector_cache[ticker] for ticker in performance_df.index if ticker in sector_cache}
-        tickers_to_fetch = [ticker for ticker in performance_df.index if ticker not in sector_cache]
+        
+        # Explicitly create the list of tickers to check from the performance dataframe
+        tickers_in_scope = performance_df.index.tolist()
+        log.info(f"Cross-referencing {len(tickers_in_scope)} tickers against the sector cache.")
+
+        tickers_to_fetch = [ticker for ticker in tickers_in_scope if ticker not in sector_cache]
         
         if tickers_to_fetch:
-            log.info(f"Found {len(tickers_to_fetch)} new tickers. Fetching their sectors...")
+            log.info(f"Found {len(tickers_to_fetch)} new/uncached tickers. Fetching their sectors...")
+            
+            fetched_sectors = {}
             for ticker in tickers_to_fetch:
                 try:
                     info = yf.Ticker(ticker).info
                     sector = info.get('sector', 'Other')
-                    sectors[ticker] = sector
-                    sector_cache[ticker] = sector
+                    fetched_sectors[ticker] = sector
                 except Exception:
-                    sectors[ticker] = 'Other'
+                    fetched_sectors[ticker] = 'Other'
+            
+            sector_cache.update(fetched_sectors)
             save_sector_cache(sector_cache)
-        
-        # Ensure all tickers have a sector
-        for ticker in performance_df.index:
-            if ticker not in sectors:
-                sectors[ticker] = sector_cache.get(ticker, 'Other')
+        else:
+            log.info("All ticker sectors were found in the local cache.")
 
-        performance_df['sector'] = performance_df.index.map(sectors).fillna('Other')
+        performance_df['sector'] = performance_df.index.map(sector_cache).fillna('Other')
+        # --- END OF CORRECTION ---
+
         performance_df.dropna(inplace=True)
         sector_performance = performance_df.groupby('sector')['pctChange'].mean().to_dict()
-        log.info(f"Successfully processed performance for {len(performance_df)} stocks.")
+
+        log.info(f"Successfully processed and categorized performance for {len(performance_df)} stocks.")
         return{"stock_performance": performance_df.to_dict('index'), "sector_performance": sector_performance}
 
     except Exception as e:
