@@ -3,17 +3,8 @@
 name: Scrybe AI - Daily Market Analysis
 
 on:
-  # Schedule to run at 2:00 AM IST from Tuesday to Saturday.
-  # CRON timing is in UTC. 2:00 AM IST is 8:30 PM UTC on the PREVIOUS day.
-  # So, '30 20 * * 1-5' means:
-  # - Mon 20:30 UTC -> Tue 02:00 IST (Analyzes Monday's data)
-  # - Tue 20:30 UTC -> Wed 02:00 IST (Analyzes Tuesday's data)
-  # - ...and so on, until...
-  # - Fri 20:30 UTC -> Sat 02:00 IST (Analyzes Friday's data)
   schedule:
     - cron: '30 20 * * 1-5'
-
-  # Allows you to run this workflow manually from the Actions tab
   workflow_dispatch:
 
 jobs:
@@ -27,29 +18,35 @@ jobs:
         uses: actions/setup-python@v4
         with:
           python-version: '3.10'
-          
-      - name: Install Python dependencies
+      
+      # --- NEW ROBUST INSTALLATION PROCESS ---
+      - name: Install Dependencies with Diagnostics
         run: |
+          echo "--- 1. Upgrading pip ---"
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+
+          echo "--- 2. DEBUG: Displaying requirements.txt to check for hidden characters ---"
+          cat requirements.txt
+          
+          echo "--- 3. Forcing a clean, direct install of pandas-ta ---"
+          # This step will prove if the package is findable at all.
+          # We use --no-cache-dir to prevent any stale cache issues.
+          python -m pip install --no-cache-dir pandas-ta
+          
+          echo "--- 4. Installing all other dependencies from the file ---"
+          python -m pip install --no-cache-dir -r requirements.txt
 
       - name: Check if the last market day was open
-        # This script correctly checks the PREVIOUS day (or Friday if it's Monday UTC).
-        # This prevents the job from running on Tuesday morning if Monday was a holiday.
         run: python check_market_open.py
 
       - name: Run Daily Analysis Script
-        # This is the critical step: we run the CORRECT script now.
         env:
-          # Pass ALL required secrets from GitHub to the script
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
           NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
-          
-          # Pass the entire pool of Gemini API keys
           GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
@@ -63,7 +60,6 @@ jobs:
         run: python run_daily_jobs.py
 
       - name: Send Daily Report
-        # This step only runs if the analysis script above completes successfully
         if: success()
         env:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
