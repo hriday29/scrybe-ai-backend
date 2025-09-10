@@ -48,5 +48,15 @@
     "TITAN.NS": "Consumer Cyclical",
     "TRENT.NS": "Consumer Cyclical",
     "ULTRACEMCO.NS": "Basic Materials",
-    "WIPRO.NS": "Technology"
+    "WIPRO.NS": "Technology",
+    "^NSEBANK": "Other",
+    "^CNXIT": "Other",
+    "^CNXAUTO": "Other",
+    "^CNXPHARMA": "Other",
+    "^CNXFMCG": "Other",
+    "^CNXMETAL": "Other",
+    "^CNXENERGY": "Other",
+    "^CNXREALTY": "Other",
+    "^CNXINFRA": "Other",
+    "^NSEI": "Other"
 }

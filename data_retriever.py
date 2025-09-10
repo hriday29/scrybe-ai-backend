@@ -427,52 +427,61 @@ def get_social_sentiment(ticker_symbol: str):
 
 def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
     """
-    Fetches business news articles related to a stock ticker using NewsAPI (Free Tier).
+    Fetches news using the more powerful /everything endpoint on NewsAPI
+    and a smarter query based on the company's name.
     """
-    log.info(f"[FETCH] Running news fetch for {ticker_symbol} using NewsAPI...")
-
+    log.info(f"[FETCH] Running updated news fetch for {ticker_symbol} using /everything endpoint...")
+    
     try:
         if not config.NEWSAPI_API_KEY:
             raise ValueError("NewsAPI key not configured.")
+        
+        # --- Smarter Query Generation ---
+        # Get the company's full name from yfinance for a better search term.
+        # e.g., for "BHARTIARTL.NS", this gets "Bharti Airtel Limited"
+        info = yf.Ticker(ticker_symbol).info
+        long_name = info.get('longName', ticker_symbol.split('.')[0])
+        # Use the most significant part of the name (usually the first word).
+        query = long_name.split(' ')[0]
 
-        # Use plain ticker name for best results
-        query = ticker_symbol.split('.')[0]  # e.g. 'BHARTIARTL' from 'BHARTIARTL.NS'
+        log.info(f"Using query term '{query}' for NewsAPI search.")
 
+        # --- Build the new URL based on your successful curl command ---
         url = (
-            "https://newsapi.org/v2/top-headlines"
-            f"?q={query}&language=en&country=in&category=business&apiKey={config.NEWSAPI_API_KEY}"
+            "https://newsapi.org/v2/everything"
+            f"?q={query}"
+            "&language=en"
+            "&sortBy=publishedAt"  # Get the most recent articles
+            "&pageSize=5"          # Limit to 5 articles
+            f"&apiKey={config.NEWSAPI_API_KEY}"
         )
-
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-
-        articles = response.json().get('articles', [])
+        
+        response = requests.get(url, timeout=15)
+        response.raise_for_status() # Will error on 4xx/5xx responses
+        data = response.json()
+        articles = data.get('articles', [])
 
         if articles:
+            total_results = data.get('totalResults', len(articles))
+            log.info(f"✅ NewsAPI success: Found {total_results} total results for '{query}'. Returning top 5.")
             formatted_articles = [
                 {
-                    "title": article.get("title"),
-                    "url": article.get("url"),
-                    "source_name": article.get("source", {}).get("name"),
-                    "published_at": article.get("publishedAt"),
-                    "description": article.get("description"),
+                    "title": a.get("title"),
+                    "url": a.get("url"),
+                    "source_name": a.get("source", {}).get("name"),
+                    "published_at": a.get("publishedAt"),
+                    "description": a.get("description"),
                 }
-                for article in articles
+                for a in articles
             ]
-
-            log.info(f"✅ NewsAPI success: Found {len(formatted_articles)} articles for {query}")
-            return {"type": "Market News", "articles": formatted_articles[:5]}
-
+            return {"type": "Market News", "articles": formatted_articles}
         else:
-            log.warning(f"⚠️ No articles found for {query}")
+            log.warning(f"⚠️ NewsAPI (/everything) returned 0 articles for '{query}'.")
             return {"type": "No News Found", "articles": []}
 
-    except requests.exceptions.HTTPError as http_err:
-        log.error(f"❌ HTTP error: {http_err}")
     except Exception as e:
         log.error(f"❌ NewsAPI fetch failed for {ticker_symbol}: {e}")
-
-    return {"type": "NewsAPI Error", "articles": []}
+        return {"type": "NewsAPI Error", "articles": []}
 
 def get_market_regime() -> str:
     """

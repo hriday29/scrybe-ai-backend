@@ -56,26 +56,24 @@ def init_db(purpose: str):
 
 # --- Functions for LIVE Application ---
 
-def save_vst_analysis(ticker: str, analysis_doc: dict):
-    """Saves the complete VST analysis document for a ticker."""
+def save_vst_analysis(ticker: str, ai_result: dict, full_context: dict):
+    """Saves the complete VST analysis, merging AI results and the context data."""
     if analysis_results_collection is None:
         log.error("Cannot save analysis, 'analysis' db not initialized.")
         return
     try:
-        # The new structure is simpler: the analysis doc becomes the root
-        payload = analysis_doc.copy()
-        payload.pop('_id', None)
-        payload['last_updated'] = datetime.now(timezone.utc)
+        # Combine the AI's verdict WITH the evidence it used
+        combined_document = {**full_context, **ai_result}
         
-        # We perform an update, but preserve the existing active_trade fields
+        combined_document.pop('_id', None)
+        combined_document['last_updated'] = datetime.now(timezone.utc)
+        
         analysis_results_collection.update_one(
             {"ticker": ticker},
-            {
-                "$set": payload,
-            },
+            {"$set": combined_document},
             upsert=True
         )
-        log.info(f"Successfully saved VST analysis state for {ticker}.")
+        log.info(f"Successfully saved MERGED analysis and context for {ticker}.")
     except Exception as e:
         log.error(f"Failed to save VST analysis for {ticker}. Error: {e}")
 
