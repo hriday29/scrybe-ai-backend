@@ -81,6 +81,14 @@ def run_unified_daily_analysis():
             try:
                 historical_data = full_data_cache.get(ticker)
                 stock_sector = stock_sector_map.get(ticker, "Other")
+
+                import yfinance as yf
+                try:
+                    info = yf.Ticker(ticker).info
+                    company_name = info.get('longName', ticker)
+                except Exception:
+                    company_name = ticker
+
                 if historical_data is None:
                     log.warning(f"No cached data for {ticker}, skipping analysis.")
                     continue
@@ -96,6 +104,7 @@ def run_unified_daily_analysis():
                 log.info(f"AI analysis reason for {ticker}: {analysis_reason}")
 
                 full_context = technical_analyzer.build_live_context(ticker, historical_data, market_regime_context, sector_performance_context)
+                full_context['companyName'] = company_name
                 sanitized_context = sanitize_context(full_context)
                 
                 ai_analysis_result = ai_analyzer.get_apex_analysis(
