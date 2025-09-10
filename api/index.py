@@ -81,9 +81,14 @@ def token_required(f):
             
     return decorated_function
 
-frontend_url = os.getenv('FRONTEND_URL', 'http://localhost:3000') 
-# Initialize CORS with the frontend URL
-CORS(app, resources={r"/api/*": {"origins": frontend_url}})
+# Explicitly allow your deployed frontend and localhost for development
+frontend_urls = [
+    os.getenv('FRONTEND_URL', 'http://localhost:3000'),
+    'https://scrybe-ai-frontend.onrender.com'
+]
+# Use list(set(...)) to avoid duplicates if the env var is the same
+CORS(app, resources={r"/api/*": {"origins": list(set(frontend_urls))}})
+log.info(f"CORS configured for origins: {list(set(frontend_urls))}")
 
 limiter = Limiter(
     get_remote_address,
@@ -163,7 +168,7 @@ def get_open_trades_endpoint(current_user):
         log.error(f"Failed to fetch open trades: {e}", exc_info=True)
         return jsonify({"error": "An internal error occurred while fetching open trades."}), 500
 
-@app.route('/api/analyze/<string:ticker>', methods=['GET'])
+@app.route('/api/analysis/<string:ticker>', methods=['GET'])
 @cache.cached(timeout=3600) # Cache each ticker's analysis for 1 hour
 def get_analysis(ticker):
     log.info(f"API call received for /api/analyze/{ticker} - Running DB query.")
@@ -273,34 +278,32 @@ def get_news_for_ticker_endpoint(ticker):
         log.error(f"Failed to fetch news for {ticker}: {e}", exc_info=True)
         return jsonify({"error": "An internal error occurred while fetching news."}), 500
 
-@app.route('/api/analysis/ask', methods=['POST'])
+@app.route('/api/ask', methods=['POST']) # Standardized Route
 @token_required
-@limiter.limit("25 per day") # Allow more queries per day than heavy analysis
 def ask_conversational_question(current_user):
-    log.info("API call received for /api/analysis/ask")
-    
+    log.info("API call: /api/ask")
     if not ai_analyzer_instance:
         return jsonify({"error": "AI Analyzer is not available."}), 503
 
-    request_data = request.json
-    question = request_data.get('question')
-    analysis_context = request_data.get('context')
+    data = request.json
+    question = data.get('question')
+    ticker = data.get('ticker')
 
-    if not question or not analysis_context:
-        return jsonify({"error": "A question and analysis context are required."}), 400
+    if not question or not ticker:
+        return jsonify({"error": "A question and ticker are required."}), 400
 
-    try:
-        result = ai_analyzer_instance.get_conversational_answer(question, analysis_context)
-        if result:
-            return jsonify(result)
-        else:
-            return jsonify({"error": "The AI failed to generate an answer."}), 500
-    except Exception as e:
-        log.error(f"Error during conversational Q&A: {e}", exc_info=True)
-        return jsonify({"error": "An internal server error occurred."}), 500
-    
-# in index.py
-@app.route('/api/trades/log', methods=['POST'])
+    # Fetch the context from the DB instead of receiving it from the frontend
+    analysis_context = database_manager.get_precomputed_analysis(ticker)
+    if not analysis_context:
+        return jsonify({"error": "Analysis context not found for the given ticker."}), 404
+
+    result = ai_analyzer_instance.get_conversational_answer(question, analysis_context)
+    if result:
+        return jsonify(result)
+    else:
+        return jsonify({"error": "The AI failed to generate an answer."}), 500
+ 
+@app.route('/api/log-trade', methods=['POST'])
 @token_required
 def log_user_trade(current_user): # Add the decorator and current_user
     log.info(f"API call to log trade for user: {current_user['uid']}")
@@ -321,7 +324,7 @@ def log_user_trade(current_user): # Add the decorator and current_user
         log.error(f"Error logging user trade: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred."}), 500
 
-@app.route('/api/analysis/vote', methods=['POST'])
+@app.route('/api/vote', methods=['POST'])
 @token_required
 @limiter.limit("50 per day")
 def record_analysis_vote(current_user):

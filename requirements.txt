@@ -26,3 +26,4 @@ matplotlib
 google-generativeai
 firebase-admin
 sentry-sdk[flask]
+Flask-CORS
