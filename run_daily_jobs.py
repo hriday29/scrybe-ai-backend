@@ -140,7 +140,22 @@ def run_unified_daily_analysis():
                         strategy_signal_obj = {"type": screener_reason, "signal": "HOLD", "veto_reason": veto_reason}
                     else:
                         log.info(f"✅ {ticker} PASSED all checks. Flagging as actionable BUY.")
-                        strategy_signal_obj = {"type": screener_reason, "signal": "BUY", "scrybe_score": scrybe_score}
+                        entry_price = historical_data['close'].iloc[-1]
+                        risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr
+                        reward_per_share = risk_per_share * active_strategy['profit_target_rr_multiple']
+
+                        strategy_signal_obj = {
+                            "type": screener_reason, 
+                            "signal": "BUY", 
+                            "scrybe_score": scrybe_score,
+                            "trade_plan": {
+                                "entry_price": round(entry_price, 2),
+                                "stop_loss": round(entry_price - risk_per_share, 2),
+                                "target_price": round(entry_price + reward_per_share, 2),
+                                "risk_reward_ratio": round(active_strategy['profit_target_rr_multiple'], 1),
+                                "holding_period_days": active_strategy['holding_period']
+                            }
+                        }
                 
                 # STEP 4: SAVE THE UNIFIED DOCUMENT
                 ai_analysis_result['strategy_signal'] = strategy_signal_obj

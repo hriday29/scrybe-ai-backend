@@ -168,7 +168,7 @@ def get_open_trades_endpoint(current_user):
         log.error(f"Failed to fetch open trades: {e}", exc_info=True)
         return jsonify({"error": "An internal error occurred while fetching open trades."}), 500
 
-@app.route('/api/analysis/<string:ticker>', methods=['GET'])
+@app.route('/api/analysis/<path:ticker>', methods=['GET'])
 @cache.cached(timeout=3600) # Cache each ticker's analysis for 1 hour
 def get_analysis(ticker):
     log.info(f"API call received for /api/analyze/{ticker} - Running DB query.")

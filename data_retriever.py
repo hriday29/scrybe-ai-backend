@@ -427,27 +427,28 @@ def get_social_sentiment(ticker_symbol: str):
 
 def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
     """
-    Fetches news with a robust fallback system.
-    1. Tries NewsAPI with a smarter query using the /everything endpoint.
-    2. If that fails or returns no articles, it falls back to yfinance.news.
+    Fetches news with a more precise query and a robust fallback system.
     """
-    log.info(f"[FETCH] Running resilient news fetch for {ticker_symbol}...")
+    log.info(f"[FETCH] Running FOCUSED news fetch for {ticker_symbol}...")
     
-    # --- Attempt 1: NewsAPI (with the better /everything endpoint) ---
+    # --- Attempt 1: NewsAPI (with a precise, quoted query) ---
     try:
         if not config.NEWSAPI_API_KEY:
             raise ValueError("NewsAPI key not configured.")
         
-        # Use yfinance to get the company's long name for a better query
         info = yf.Ticker(ticker_symbol).info
         long_name = info.get('longName', ticker_symbol.split('.')[0])
-        query = long_name.split(' ')[0] # Use the most significant part of the name
-
-        log.info(f"Using query term '{query}' for NewsAPI search.")
+        
+        # --- NEW QUERY LOGIC ---
+        # Create a more specific query, e.g., "Bharti Airtel" or "Reliance Industries"
+        # and wrap it in quotes for an exact phrase match.
+        query_parts = long_name.split(' ')[:2] # Take the first two words
+        precise_query = f'"{" ".join(query_parts)}"'
+        log.info(f"Using precise query: {precise_query} for NewsAPI search.")
         
         url = (
             "https://newsapi.org/v2/everything"
-            f"?q={query}"
+            f"?q={precise_query}" # Use the precise query
             "&language=en"
             "&sortBy=publishedAt"
             "&pageSize=5"
@@ -459,44 +460,30 @@ def get_news_articles_for_ticker(ticker_symbol: str) -> dict:
         articles = data.get('articles', [])
 
         if articles:
-            total_results = data.get('totalResults', len(articles))
-            log.info(f"✅ NewsAPI success: Found {total_results} total results for '{query}'. Returning top 5.")
+            # ... [same formatting logic as before] ...
+            log.info(f"✅ NewsAPI success: Found {data.get('totalResults')} results for {precise_query}.")
             formatted_articles = [
-                {
-                    "title": a.get("title"),
-                    "url": a.get("url"),
-                    "source_name": a.get("source", {}).get("name"),
-                    "published_at": a.get("publishedAt"),
-                    "description": a.get("description"),
-                }
+                {"title": a.get("title"), "url": a.get("url"), "source_name": a.get("source", {}).get("name")}
                 for a in articles
             ]
-            return {"type": "Market News (NewsAPI)", "articles": formatted_articles}
+            return {"type": "Market News (NewsAPI)", "articles": formatted_articles[:5]}
         
-        log.warning(f"⚠️ NewsAPI returned 0 articles for '{query}'. Attempting fallback...")
+        log.warning(f"⚠️ NewsAPI returned 0 articles for {precise_query}. Attempting fallback...")
 
     except Exception as e:
-        log.warning(f"❌ NewsAPI fetch failed for {ticker_symbol}. Attempting fallback... Error: {e}")
+        log.warning(f"❌ NewsAPI fetch failed. Attempting fallback... Error: {e}")
 
-    # --- Attempt 2: yfinance Fallback ---
+    # --- Attempt 2: yfinance Fallback (no changes here) ---
     try:
         log.info(f"-> Fallback: Trying yfinance.news for {ticker_symbol}")
-        ticker_obj = yf.Ticker(ticker_symbol)
-        yf_news = ticker_obj.news
-        
+        yf_news = yf.Ticker(ticker_symbol).news
         if yf_news:
             log.info(f"✅ yfinance Fallback success: Found {len(yf_news)} articles.")
             formatted_articles = [
-                {
-                    "title": item.get('title'),
-                    "url": item.get('link'),
-                    "source_name": item.get('publisher'),
-                    "published_at": datetime.fromtimestamp(item.get('providerPublishTime')).isoformat() if item.get('providerPublishTime') else None,
-                    "description": None # yfinance news doesn't provide a description snippet
-                }
+                {"title": item.get('title'), "url": item.get('link'), "source_name": item.get('publisher')}
                 for item in yf_news
             ]
-            return {"type": "Market News (Yahoo Finance)", "articles": formatted_articles[:8]} # yfinance can provide more articles
+            return {"type": "Market News (Yahoo Finance)", "articles": formatted_articles[:8]}
         
         log.warning(f"⚠️ yfinance Fallback also found 0 articles for {ticker_symbol}")
         return {"type": "No News Found", "articles": []}
