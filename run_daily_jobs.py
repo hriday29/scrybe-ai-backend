@@ -24,14 +24,14 @@ def run_unified_daily_analysis():
     log.info("--- 🚀 Starting Unified Daily Analysis Job ---")
     
     try:
-        # --- 1. INITIAL SETUP ---
+        # --- 1. INITIAL SETUP (No Changes) ---
         database_manager.init_db(purpose='analysis')
         key_iterator = setup_api_key_iterator()
         current_api_key = next(key_iterator)
         ai_analyzer = AIAnalyzer(api_key=current_api_key)
         active_strategy = config.APEX_SWING_STRATEGY
 
-        # --- 2. GATHER UNIVERSE & MARKET DATA ---
+        # --- 2. GATHER UNIVERSE & MARKET DATA (No Changes) ---
         log.info("Fetching Nifty 50 universe for daily analysis...")
         stock_universe = index_manager.get_nifty50_tickers()
         if not stock_universe:
@@ -50,7 +50,7 @@ def run_unified_daily_analysis():
         
         stock_sector_map = quantitative_screener._get_stock_sector_map(stock_universe)
 
-        # --- 3. DIAGNOSE MARKET STATE ---
+        # --- 3. DIAGNOSE MARKET STATE (No Changes) ---
         point_in_time = pd.Timestamp.now().floor('D')
         vix_data = data_retriever.get_historical_stock_data("^INDIAVIX")
         latest_vix = 0.0
@@ -71,9 +71,21 @@ def run_unified_daily_analysis():
         sector_performance_context = data_retriever.get_nifty50_performance()
 
         # =================================================================================
-        # --- 4. SINGLE INTELLIGENT ANALYSIS LOOP ---
+        # --- 4. SINGLE INTELLIGENT ANALYSIS LOOP (WITH PERFORMANCE REVAMP) ---
         # =================================================================================
         log.info(f"--- Starting Unified Analysis for {len(stock_universe)} stocks ---")
+
+        # --- PHOENIX REVAMP: Create an info cache to avoid redundant API calls ---
+        info_cache = {}
+        log.info("Pre-caching company info objects for performance...")
+        import yfinance as yf
+        for ticker in stock_universe:
+            try:
+                info_cache[ticker] = yf.Ticker(ticker).info
+            except Exception:
+                info_cache[ticker] = {} # Store empty dict on failure
+        log.info("Company info caching complete.")
+        # --- END REVAMP ---
 
         for i, ticker in enumerate(stock_universe):
             log.info(f"--- Analyzing {i+1}/{len(stock_universe)}: {ticker} ---")
@@ -82,31 +94,46 @@ def run_unified_daily_analysis():
                 historical_data = full_data_cache.get(ticker)
                 stock_sector = stock_sector_map.get(ticker, "Other")
 
-                import yfinance as yf
-                try:
-                    info = yf.Ticker(ticker).info
-                    company_name = info.get('longName', ticker)
-                except Exception:
-                    company_name = ticker
+                # --- PHOENIX REVAMP: Use the cached info object ---
+                company_info = info_cache.get(ticker, {})
+                company_name = company_info.get('longName', ticker)
+                # --- END REVAMP ---
 
                 if historical_data is None:
                     log.warning(f"No cached data for {ticker}, skipping analysis.")
                     continue
 
-                # STEP 1: CHECK IF THE STOCK IS A STRATEGY CANDIDATE
+                # Pass the cached info object to the screener for efficiency
                 screener_reason = quantitative_screener.check_strategy_candidate(
                     ticker=ticker, data=historical_data, stock_sector=stock_sector, strong_sectors=strong_sectors, 
-                    market_regime=market_regime, volatility_regime=volatility_regime, point_in_time=point_in_time
+                    market_regime=market_regime, volatility_regime=volatility_regime, point_in_time=point_in_time,
+                    company_info=company_info # Pass cached info
                 )
 
-                # STEP 2: PERFORM AI ANALYSIS (WITH DYNAMIC REASON)
                 analysis_reason = screener_reason if screener_reason else "Comprehensive Daily Analysis"
                 log.info(f"AI analysis reason for {ticker}: {analysis_reason}")
 
-                full_context = technical_analyzer.build_live_context(ticker, historical_data, market_regime_context, sector_performance_context)
+                # Pass the cached info to the context builder as well
+                full_context = technical_analyzer.build_live_context(
+                    ticker, historical_data, market_regime_context, 
+                    sector_performance_context, company_info
+                )
                 full_context['companyName'] = company_name
                 sanitized_context = sanitize_context(full_context)
                 
+                try:
+                    atr = sanitized_context.get("technical_analysis", {}).get("ATR_14", 0)
+                    if atr and atr > 0:
+                        entry_price = historical_data['close'].iloc[-1]
+                        risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr
+                        reward_per_share = risk_per_share * active_strategy['profit_target_rr_multiple']
+
+                        # Add these metrics to the technical_analysis object to be saved
+                        sanitized_context["technical_analysis"]["potential_stop_loss"] = round(entry_price - risk_per_share, 2)
+                        sanitized_context["technical_analysis"]["potential_target"] = round(entry_price + reward_per_share, 2)
+                except Exception as e:
+                    log.warning(f"Could not calculate theoretical metrics for {ticker}: {e}")
+
                 ai_analysis_result = ai_analyzer.get_apex_analysis(
                     ticker=ticker, full_context=sanitized_context, screener_reason=analysis_reason,
                     strategic_review=None, tactical_lookback=None, per_stock_history=None, model_name=config.PRO_MODEL
@@ -116,13 +143,12 @@ def run_unified_daily_analysis():
                     log.warning(f"AI analysis returned no result for {ticker}. Skipping.")
                     continue
 
-                # STEP 3: APPLY VETO LOGIC & CREATE STRATEGY HIGHLIGHT
-                strategy_signal_obj = None # Default to null
+                strategy_signal_obj = None
                 
                 if screener_reason and ai_analysis_result.get('signal') == 'BUY':
+                    # ... (The trade plan logic you added is PERFECT, no changes needed here)
                     log.info(f"{ticker} is a '{screener_reason}' candidate with a BUY signal. Applying veto checks...")
                     scrybe_score = ai_analysis_result.get('scrybeScore', 0)
-                    
                     is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
                     is_regime_ok = market_regime != 'Bearish'
                     atr = sanitized_context.get("technical_analysis", {}).get("ATR_14", 0)
@@ -157,22 +183,16 @@ def run_unified_daily_analysis():
                             }
                         }
                 
-                # STEP 4: SAVE THE UNIFIED DOCUMENT
                 ai_analysis_result['strategy_signal'] = strategy_signal_obj
                 database_manager.save_vst_analysis(ticker, ai_analysis_result, sanitized_context)
 
-                # STEP 5: SAVE SEPARATE LIVE PREDICTION FOR ACTIONABLE TRADES
                 if strategy_signal_obj and strategy_signal_obj.get('signal') == 'BUY':
                     log.info(f"Generating live prediction record for {ticker}.")
-                    prediction_doc = {
-                        "ticker": ticker, "prediction_date": datetime.now(timezone.utc),
-                        "signal": "BUY", "strategy_name": active_strategy['name'],
-                        "screener_reason": screener_reason, "scrybe_score": scrybe_score,
-                        "details": ai_analysis_result
-                    }
+                    prediction_doc = { "ticker": ticker, "prediction_date": datetime.now(timezone.utc), "signal": "BUY", "strategy_name": active_strategy['name'], "screener_reason": screener_reason, "scrybe_score": scrybe_score, "details": ai_analysis_result }
                     database_manager.save_live_prediction(prediction_doc)
 
             except Exception as e:
+                # ... (error handling logic is fine, no changes needed)
                 if "429" in str(e):
                     log.error("Quota exhausted, rotating API key...")
                     try:

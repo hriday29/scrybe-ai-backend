@@ -25,13 +25,13 @@ TREND_CHECK_EMA = 50
 
 
 # --- Fundamental Health Check ---
-def _passes_fundamental_health_check(ticker: str, sector: str) -> bool:
+def _passes_fundamental_health_check(ticker: str, sector: str, company_info: dict = None) -> bool:
     """
     Performs a robust, multi-factor check on key fundamental metrics.
     It calculates a weighted Quality Score based on profitability, efficiency, and institutional trust.
     """
     try:
-        info = yf.Ticker(ticker).info
+        info = company_info if company_info is not None else yf.Ticker(ticker).info
         
         # --- Hard Filters ---
         pe_ratio = info.get('trailingPE')
@@ -98,7 +98,7 @@ def _get_stock_sector_map(tickers: list[str]) -> dict:
 # --- NEW SINGLE-STOCK CHECKER FUNCTIONS for the Unified Analysis Plan ---
 # =================================================================================
 
-def _passes_preflight_checks_single(ticker: str, data: pd.DataFrame, stock_sector: str, strong_sectors: list[str], point_in_time: pd.Timestamp) -> bool:
+def _passes_preflight_checks_single(ticker: str, data: pd.DataFrame, stock_sector: str, strong_sectors: list[str], point_in_time: pd.Timestamp, company_info: dict = None) -> bool:
     """Performs all basic checks (sector, volume, data length, fundamentals) for a single stock."""
     # 1. Sector Check
     target_sectors = {SECTOR_NAME_MAPPING[name] for name in strong_sectors if name in SECTOR_NAME_MAPPING}
@@ -112,7 +112,7 @@ def _passes_preflight_checks_single(ticker: str, data: pd.DataFrame, stock_secto
     if df['volume'].tail(20).mean() < MIN_AVG_VOLUME: return False
     
     # 3. Fundamental Health Check (this is the slowest part, so it's last)
-    if not _passes_fundamental_health_check(ticker, stock_sector):
+    if not _passes_fundamental_health_check(ticker, stock_sector, company_info=company_info):
         return False
         
     return True
@@ -134,14 +134,15 @@ def _check_mean_reversion_rules(df: pd.DataFrame) -> bool:
 
 def check_strategy_candidate(
     ticker: str, data: pd.DataFrame, stock_sector: str, strong_sectors: list[str],
-    market_regime: str, volatility_regime: str, point_in_time: pd.Timestamp
+    market_regime: str, volatility_regime: str, point_in_time: pd.Timestamp,
+    company_info: dict = None
 ) -> str | None:
     """
     Main dispatcher function for the unified daily job. Checks a single stock against the
     appropriate strategy based on the market regime and returns the reason if it's a candidate.
     """
     # Step 1: Run all pre-flight checks. If it fails any, it's not a candidate.
-    if not _passes_preflight_checks_single(ticker, data, stock_sector, strong_sectors, point_in_time):
+    if not _passes_preflight_checks_single(ticker, data, stock_sector, strong_sectors, point_in_time, company_info=company_info):
         return None
 
     # Step 2: Calculate necessary indicators

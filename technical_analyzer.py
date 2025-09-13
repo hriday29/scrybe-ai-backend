@@ -253,7 +253,7 @@ def generate_focused_charts(full_data: pd.DataFrame, ticker: str) -> dict:
     log.info(f"Successfully generated charts for {ticker}.")
     return charts
 
-def build_live_context(ticker: str, historical_data: pd.DataFrame, market_regime_context: dict, sector_performance_context: dict) -> dict:
+def build_live_context(ticker: str, historical_data: pd.DataFrame, market_regime_context: dict, sector_performance_context: dict, company_info: dict = None) -> dict:
     """
     Constructs the complete, live context dictionary for the AI by mirroring
     the logic from the backtester's context builder.
@@ -263,7 +263,7 @@ def build_live_context(ticker: str, historical_data: pd.DataFrame, market_regime
     
     # These calls fetch live, real-time data
     options_data = data_retriever.get_options_data(ticker)
-    news = data_retriever.get_news_articles_for_ticker(ticker)
+    news = data_retriever.get_news_articles_for_ticker(ticker, company_info=company_info)
     
     context = {
         "ticker": ticker,
