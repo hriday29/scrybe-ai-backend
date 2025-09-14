@@ -292,12 +292,23 @@ def ask_conversational_question(current_user):
     if not question or not ticker:
         return jsonify({"error": "A question and ticker are required."}), 400
 
-    # Fetch the context from the DB instead of receiving it from the frontend
     analysis_context = database_manager.get_precomputed_analysis(ticker)
     if not analysis_context:
         return jsonify({"error": "Analysis context not found for the given ticker."}), 404
 
-    result = ai_analyzer_instance.get_conversational_answer(question, analysis_context)
+    # ============================ NEW ROBUST FIX ============================
+    # REMOVE the previous fix for just the '_id' field.
+    # This new approach cleans the entire object of all non-serializable types
+    # (like ObjectId and datetime) by using your existing custom serializer.
+    
+    json_string_context = json.dumps(analysis_context, default=custom_json_serializer)
+    cleaned_analysis_context = json.loads(json_string_context)
+    
+    # ============================ END OF FIX ================================
+
+    # Now, pass the fully cleaned context to the AI analyzer
+    result = ai_analyzer_instance.get_conversational_answer(question, cleaned_analysis_context)
+    
     if result:
         return jsonify(result)
     else:

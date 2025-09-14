@@ -427,78 +427,95 @@ def get_social_sentiment(ticker_symbol: str):
 
 def get_news_articles_for_ticker(ticker_symbol: str, company_info: dict = None) -> dict:
     """
-    Fetches news with a revamped, precise query and a robust fallback system.
-    Provides richer data including description and publication date.
+    Fetches news with a revamped, precise query, a robust fallback system,
+    and a crucial post-fetch filtering step to ensure relevance.
     """
     log.info(f"[FETCH] Running FOCUSED news fetch for {ticker_symbol}...")
     
-    # --- Attempt 1: NewsAPI (with a precise, quoted query) ---
+    try:
+        info = company_info if company_info is not None else yf.Ticker(ticker_symbol).info
+        long_name = info.get('longName', ticker_symbol.split('.')[0])
+        
+        # 1. Sanitize the name to get the core company identity.
+        # This removes generic suffixes for better queries and filtering.
+        suffixes_to_remove = ['Limited', 'Ltd.', 'Ltd', 'Inc.', 'Inc', 'Corporation', 'Corp.']
+        clean_name = long_name
+        for suffix in suffixes_to_remove:
+            if clean_name.endswith(suffix):
+                clean_name = clean_name[:-len(suffix)].strip() # "Hindalco Industries Limited" -> "Hindalco Industries"
+
+        # 2. Get the primary name for filtering titles (most important word).
+        primary_name_for_filter = clean_name.split(' ')[0].replace('.', '') # "Hindalco"
+        log.info(f"Will filter news results for titles containing '{primary_name_for_filter}'.")
+
+        # 3. Create a more robust query for NewsAPI using the cleaned name.
+        precise_query = f'"{clean_name}"'
+
+    except Exception as e:
+        log.error(f"Failed to get company info for {ticker_symbol} via yfinance: {e}")
+        # Fallback to a simple name if yfinance fails
+        primary_name_for_filter = ticker_symbol.split('.')[0]
+        precise_query = f'"{primary_name_for_filter}"'
+
+    # --- Attempt 1: NewsAPI ---
     try:
         if not config.NEWSAPI_API_KEY:
             raise ValueError("NewsAPI key not configured.")
         
-        info = company_info if company_info is not None else yf.Ticker(ticker_symbol).info
-        long_name = info.get('longName', ticker_symbol.split('.')[0])
-        
-        # Create a more specific query, e.g., "Bharti Airtel" or "Reliance Industries"
-        query_parts = long_name.split(' ')[:2]
-        precise_query = f'"{" ".join(query_parts)}"'
         log.info(f"Using precise query: {precise_query} for NewsAPI search.")
         
-        url = (
-            "https://newsapi.org/v2/everything"
-            f"?q={precise_query}"
-            "&language=en"
-            "&sortBy=publishedAt"
-            "&pageSize=5"
-            f"&apiKey={config.NEWSAPI_API_KEY}"
-        )
+        url = (f"https://newsapi.org/v2/everything?q={precise_query}"
+               "&language=en&sortBy=publishedAt&pageSize=20" # Fetch more (20) to have a better chance after filtering
+               f"&apiKey={config.NEWSAPI_API_KEY}")
         
         response = requests.get(url, timeout=15)
         response.raise_for_status()
         data = response.json()
         articles = data.get('articles', [])
 
-        if articles:
-            total_results = data.get('totalResults', len(articles))
-            log.info(f"✅ NewsAPI success: Found {total_results} results for {precise_query}. Returning top 5.")
-            formatted_articles = [
-                {
-                    "title": a.get("title"),
-                    "url": a.get("url"),
-                    "source_name": a.get("source", {}).get("name"),
-                    "published_at": a.get("publishedAt"),
-                    "description": a.get("description"),
-                }
-                for a in articles
-            ]
+        # --- CRUCIAL FILTERING STEP ---
+        relevant_articles = [
+            a for a in articles 
+            if primary_name_for_filter.lower() in a.get('title', '').lower()
+        ]
+        
+        if relevant_articles:
+            log.info(f"✅ NewsAPI success: Found {len(articles)} raw articles, returning {len(relevant_articles)} after relevance filtering.")
+            formatted_articles = [{
+                "title": a.get("title"), "url": a.get("url"),
+                "source_name": a.get("source", {}).get("name"),
+                "published_at": a.get("publishedAt"), "description": a.get("description"),
+            } for a in relevant_articles[:5]] # Return the top 5 relevant articles
             return {"type": "Market News (NewsAPI)", "articles": formatted_articles}
         
-        log.warning(f"⚠️ NewsAPI returned 0 articles for {precise_query}. Attempting fallback...")
+        log.warning(f"⚠️ NewsAPI returned 0 relevant articles for '{primary_name_for_filter}'. Attempting fallback...")
 
     except Exception as e:
-        log.warning(f"❌ NewsAPI fetch failed. Attempting fallback... Error: {e}")
+        log.warning(f"❌ NewsAPI fetch failed for {ticker_symbol}. Attempting fallback... Error: {e}")
 
-    # --- Attempt 2: yfinance Fallback ---
+    # --- Attempt 2: yfinance Fallback with Filtering ---
     try:
         log.info(f"-> Fallback: Trying yfinance.news for {ticker_symbol}")
         yf_news = yf.Ticker(ticker_symbol).news
         if yf_news:
-            log.info(f"✅ yfinance Fallback success: Found {len(yf_news)} articles.")
-            formatted_articles = [
-                {
-                    "title": item.get('title'),
-                    "url": item.get('link'),
+            # --- CRUCIAL FILTERING STEP FOR FALLBACK ---
+            relevant_articles = [
+                item for item in yf_news
+                if primary_name_for_filter.lower() in item.get('title', '').lower()
+            ]
+
+            if relevant_articles:
+                log.info(f"✅ yfinance Fallback success: Found {len(yf_news)} raw, returning {len(relevant_articles)} after filtering.")
+                formatted_articles = [{
+                    "title": item.get('title'), "url": item.get('link'),
                     "source_name": item.get('publisher'),
                     "published_at": datetime.fromtimestamp(item.get('providerPublishTime')).isoformat() if item.get('providerPublishTime') else None,
                     "description": None
-                }
-                for item in yf_news
-            ]
-            return {"type": "Market News (Yahoo Finance)", "articles": formatted_articles[:8]}
-        
-        log.warning(f"⚠️ yfinance Fallback also found 0 articles for {ticker_symbol}")
-        return {"type": "No News Found", "articles": []}
+                } for item in relevant_articles[:8]] # Return top 8 relevant articles
+                return {"type": "Market News (Yahoo Finance)", "articles": formatted_articles}
+
+        log.warning(f"⚠️ yfinance Fallback also found 0 relevant articles for {ticker_symbol}")
+        return {"type": "No Relevant News Found", "articles": []}
 
     except Exception as e:
         log.error(f"❌ yfinance Fallback also failed for {ticker_symbol}: {e}")
