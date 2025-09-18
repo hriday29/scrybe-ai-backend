@@ -2,6 +2,7 @@
 import pandas_market_calendars as mcal
 from datetime import datetime, timedelta
 import pytz
+import sys
 
 # Get the NSE calendar
 nse = mcal.get_calendar('NSE')
@@ -15,16 +16,21 @@ today = datetime.now(india_tz)
 # So, we check 3 calendar days ago.
 if today.weekday() == 0:
     day_to_check = today.date() - timedelta(days=3)
-# For any other day (Tuesday-Friday), we just check the previous calendar day.
 else:
     day_to_check = today.date() - timedelta(days=1)
 
+# Format the date for nicer logs (e.g., "Friday, 13 Sep 2025")
+day_to_check_str = day_to_check.strftime("%A, %d %b %Y")
+
+# Always log what date we are checking
+print(f"Checking last relevant trading day: {day_to_check_str}")
+
 # Check if the determined day (e.g., last Friday or yesterday) was a valid trading day.
 if nse.valid_days(start_date=day_to_check, end_date=day_to_check).empty:
-    print(f"Market was closed on the last relevant day ({day_to_check}). Skipping analysis.")
-    # Exit with a non-zero code to indicate failure, stopping the workflow correctly
-    exit(1) 
+    print(f"[SKIPPED] Market was closed on {day_to_check_str}. No analysis will be run.")
+    # Exit with non-zero → workflow step is marked as skipped (not failed, thanks to continue-on-error)
+    sys.exit(1)
 else:
-    print(f"Market was open on the last relevant day ({day_to_check}). Proceeding with analysis.")
-    # Exit with a zero code to indicate success, allowing the workflow to continue
-    exit(0)
+    print(f"[OK] Market was open on {day_to_check_str}. Proceeding with analysis.")
+    # Exit with zero → workflow continues
+    sys.exit(0)

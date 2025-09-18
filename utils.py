@@ -28,25 +28,41 @@ def sanitize_context(context: dict) -> dict:
     return sanitized_context
 
 class APIKeyManager:
-    """A simple class to manage and rotate a list of API keys."""
+    """
+    A robust class to manage and rotate a pool of API keys.
+    It deactivates keys that fail (e.g., due to rate limits) for the current run.
+    """
 
     def __init__(self, api_keys: list):
         if not api_keys:
             raise ValueError("API key list cannot be empty.")
-        self.api_keys = api_keys
-        self.current_index = 0
-        log.info(f"APIKeyManager initialized with {len(self.api_keys)} keys.")
+        # Use list.copy() to avoid modifying the original config list
+        self.active_keys = api_keys.copy()
+        self.deactivated_keys = []
+        log.info(f"APIKeyManager initialized with {len(self.active_keys)} active keys.")
 
-    def get_key(self) -> str:
-        """Returns the current API key."""
-        return self.api_keys[self.current_index]
+    def get_key(self) -> str | None:
+        """
+        Returns the current active API key. Returns None if all keys are exhausted.
+        """
+        if not self.active_keys:
+            log.error("FATAL: All API keys have been exhausted.")
+            return None
+        return self.active_keys[0]
 
-    def rotate_key(self) -> str:
+    def deactivate_current_key_and_get_next(self) -> str | None:
         """
-        Rotates to the next API key in the list and returns it.
-        Wraps around to the beginning if it reaches the end.
+        Moves the current key to the deactivated pool and returns the next available key.
+        Returns None if no more active keys are available.
         """
-        self.current_index = (self.current_index + 1) % len(self.api_keys)
-        new_key = self.get_key()
-        log.warning(f"API key quota likely exceeded. Rotating to key #{self.current_index + 1}.")
-        return new_key
+        if not self.active_keys:
+            log.error("Attempted to deactivate a key, but the active pool is already empty.")
+            return None
+
+        # Deactivate the current key (which is always the first one)
+        failing_key = self.active_keys.pop(0)
+        self.deactivated_keys.append(failing_key)
+        log.warning(f"Deactivating an API key. {len(self.active_keys)} keys remaining.")
+        
+        # Return the new first key, or None if the pool is now empty
+        return self.get_key()

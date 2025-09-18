@@ -349,12 +349,13 @@ def record_analysis_vote(current_user):
         return jsonify({"error": "analysis_id and vote_type are required."}), 400
 
     try:
-        success = database_manager.add_analysis_vote(analysis_id, vote_type)
-        
-        if success:
+        result = database_manager.add_analysis_vote(analysis_id, vote_type, current_user['uid'])
+
+        if result.get("success"):
             return jsonify({"status": "success", "message": f"Vote '{vote_type}' recorded."})
         else:
-            return jsonify({"error": "Failed to record vote."}), 500
+            return jsonify({"error": result.get("error", "Failed to record vote.")}), 500
+
     except Exception as e:
         log.error(f"Error recording vote: {e}", exc_info=True)
         return jsonify({"error": "An internal server error occurred."}), 500

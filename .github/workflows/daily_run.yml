@@ -1,5 +1,3 @@
-# .github/workflows/daily_run.yml (Corrected and Optimized)
-
 name: Scrybe AI - Daily Market Analysis
 
 on:
@@ -32,10 +30,13 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
 
-      - name: Check if the last market day was open
+      - name: Check if yesterday was a trading day
+        id: market_check
         run: python check_market_open.py
+        continue-on-error: true
 
       - name: Run Daily Analysis Script
+        if: steps.market_check.outcome == 'success'
         env:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
@@ -56,7 +57,7 @@ jobs:
         run: python run_daily_jobs.py
 
       - name: Send Daily Report
-        if: success()
+        if: steps.market_check.outcome == 'success'
         env:
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}

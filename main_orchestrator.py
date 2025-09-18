@@ -212,11 +212,16 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
     # --- STEP 1: Load historical constituents file ---
     try:
-        constituents_df = pd.read_csv('nifty50_historical_constituents.csv')
+        # --- FIX: Construct an absolute path to the CSV file ---
+        # This ensures the file is found regardless of where the script is executed from.
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        csv_path = os.path.join(script_dir, 'nifty50_historical_constituents.csv')
+        
+        constituents_df = pd.read_csv(csv_path)
         constituents_df['date'] = pd.to_datetime(constituents_df['date'])
-        log.info("✅ Successfully loaded 'nifty50_historical_constituents.csv'.")
+        log.info(f"✅ Successfully loaded constituents file from: {csv_path}")
     except FileNotFoundError:
-        log.error("CRITICAL: Constituents file missing. Aborting simulation to avoid survivorship bias.")
+        log.error(f"CRITICAL: Constituents file missing at expected path '{csv_path}'. Aborting simulation.")
         return
 
     # --- NEW: Define indices required for every simulation run ---
@@ -367,14 +372,20 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
                 # --- AI Analysis with retry + exponential backoff + fallback ---
                 final_analysis = None
-                max_attempts = len(config.GEMINI_API_KEY_POOL)
-                current_attempt = 0
                 delay = 5  # initial backoff delay
 
                 log.info(f"--- Analyzing {ticker} with Primary Model ({config.PRO_MODEL}) ---")
 
-                while current_attempt < max_attempts:
+                while True:  # Loop will now break cleanly when keys are exhausted
+                    current_key = key_manager.get_key()
+                    if not current_key:
+                        log.error(f"Stopping analysis for {ticker}, all API keys are exhausted.")
+                        break  # Exit the while loop if no keys are left
+
                     try:
+                        # Ensure analyzer is using the current valid key
+                        analyzer.update_api_key(current_key) 
+                        
                         final_analysis = analyzer.get_apex_analysis(
                             ticker, sanitized_full_context, strategic_review, tactical_lookback,
                             per_stock_history, model_name=config.PRO_MODEL, screener_reason=screener_reason
@@ -382,30 +393,43 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                         if final_analysis:
                             log.info(f"✅ Got analysis for {ticker} (Primary model).")
                             final_analysis['modelUsed'] = 'pro'
-                            break
+                            break  # Success, exit the while loop
+
                     except Exception as e:
-                        log.error(f"Primary attempt #{current_attempt + 1} for {ticker} failed. Error: {e}")
+                        log.error(f"Primary model attempt for {ticker} failed. Error: {e}")
+                        
+                        # Check for recoverable errors to decide whether to rotate the key
                         if any(x in str(e).lower() for x in ["429", "quota", "500"]) or isinstance(e, ValueError):
-                            log.warning("Recoverable error. Rotating API key and retrying with exponential backoff...")
-                            analyzer = AIAnalyzer(api_key=key_manager.rotate_key())
-                            current_attempt += 1
-                            log.info(f"Backing off for {delay:.2f} seconds...")
+                            log.warning("Recoverable error detected. Deactivating current API key.")
+                            
+                            # The key manager now handles moving to the next key
+                            key_manager.deactivate_current_key_and_get_next()
+                            
+                            log.info(f"Backing off for {delay:.2f} seconds before retrying...")
                             time.sleep(delay)
                             delay = min(delay * 2, 60) + random.uniform(0, 1)  # exponential + jitter
                         else:
+                            # For non-recoverable errors, stop trying for this stock
+                            log.error("Non-recoverable error. Aborting analysis for this stock.")
                             break
 
                 # --- Fallback to Flash model ---
                 if not final_analysis:
                     log.warning(f"⚡ Fallback model ({config.FLASH_MODEL}) for {ticker}.")
                     try:
-                        final_analysis = analyzer.get_apex_analysis(
-                            ticker, sanitized_full_context, strategic_review, tactical_lookback,
-                            per_stock_history, model_name=config.FLASH_MODEL, screener_reason=screener_reason
-                        )
-                        if final_analysis:
-                            log.info(f"✅ Got analysis for {ticker} (Fallback).")
-                            final_analysis['modelUsed'] = 'flash'
+                        # Rotate to the next available key before Flash, in case current one is exhausted
+                        fallback_key = key_manager.get_key() or key_manager.deactivate_current_key_and_get_next()
+                        if not fallback_key:
+                            log.error(f"No API keys left for fallback model on {ticker}.")
+                        else:
+                            analyzer.update_api_key(fallback_key)
+                            final_analysis = analyzer.get_apex_analysis(
+                                ticker, sanitized_full_context, strategic_review, tactical_lookback,
+                                per_stock_history, model_name=config.FLASH_MODEL, screener_reason=screener_reason
+                            )
+                            if final_analysis:
+                                log.info(f"✅ Got analysis for {ticker} (Fallback).")
+                                final_analysis['modelUsed'] = 'flash'
                     except Exception as e:
                         log.error(f"CRITICAL: Fallback model also failed for {ticker}. Error: {e}")
                         final_analysis = None

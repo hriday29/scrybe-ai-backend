@@ -1,4 +1,3 @@
-# database_manager.py
 import pymongo
 import certifi
 from logger_config import log
@@ -307,47 +306,66 @@ def save_user_trade(trade_data: dict, user_id: str): # Accept the user_id
         log.error(f"Failed to save user trade. Error: {e}")
         return None
 
-def add_analysis_vote(analysis_id: str, vote_type: str):
-    """Finds an analysis by its unique ID and increments its vote counter."""
+def add_analysis_vote(analysis_id: str, vote_type: str, user_id: str):
+    """Adds or updates a user's vote for a specific analysis, preventing duplicates."""
     if db is None:
         log.error("Cannot add vote, 'analysis' db not initialized.")
-        return False
+        return {"success": False, "message": "Database not initialized."}
         
     if vote_type not in ['agree', 'unsure', 'disagree']:
         log.warning(f"Invalid vote type received: {vote_type}")
-        return False
+        return {"success": False, "message": "Invalid vote type."}
         
     try:
         feedback_collection = db.analysis_feedback
-        update_field = f"{vote_type}_votes"
         
-        # --- DEFINITIVE FIX: Two-step update/insert logic ---
+        # Find the document for this analysis
+        feedback_doc = feedback_collection.find_one({"analysis_id": analysis_id})
         
-        # Step 1: Try to increment the vote on an existing document.
-        result = feedback_collection.update_one(
-            {"analysis_id": analysis_id},
-            {"$inc": {update_field: 1}}
-        )
+        if feedback_doc:
+            # Document exists, check if user has already voted
+            previous_vote = feedback_doc.get("votes_by_user", {}).get(user_id)
+            
+            if previous_vote == vote_type:
+                # User is voting for the same thing again, do nothing.
+                log.info(f"User {user_id} already voted '{vote_type}' for {analysis_id}. No change.")
+                return {"success": True, "message": "Vote already recorded."}
 
-        # Step 2: If no document was found and updated, create a new one.
-        if result.matched_count == 0:
-            log.info(f"No existing feedback doc found for {analysis_id}. Creating new one.")
-            feedback_doc = {
+            # Prepare the update operation
+            update_op = {
+                "$inc": {f"{vote_type}_votes": 1},
+                "$set": {f"votes_by_user.{user_id}": vote_type}
+            }
+            
+            # If user had a previous, different vote, decrement the old counter
+            if previous_vote:
+                update_op["$inc"][f"{previous_vote}_votes"] = -1
+
+            result = feedback_collection.update_one(
+                {"analysis_id": analysis_id},
+                update_op
+            )
+            log.info(f"User {user_id} changed vote to '{vote_type}' for {analysis_id}.")
+
+        else:
+            # No document exists, create a new one
+            new_feedback_doc = {
                 "analysis_id": analysis_id,
                 "agree_votes": 1 if vote_type == 'agree' else 0,
                 "unsure_votes": 1 if vote_type == 'unsure' else 0,
-                "disagree_votes": 1 if vote_type == 'disagree' else 0
+                "disagree_votes": 1 if vote_type == 'disagree' else 0,
+                "votes_by_user": {
+                    user_id: vote_type
+                }
             }
-            feedback_collection.insert_one(feedback_doc)
-        
-        # ---------------------------------------------------
-
-        log.info(f"Successfully logged '{vote_type}' vote for analysis_id: {analysis_id}.")
-        return True
+            feedback_collection.insert_one(new_feedback_doc)
+            log.info(f"Created new feedback doc and logged first vote for {analysis_id} by {user_id}.")
+            
+        return {"success": True, "message": f"Vote '{vote_type}' recorded successfully."}
             
     except Exception as e:
-        log.error(f"Failed to add analysis vote. Error: {e}", exc_info=True)
-        return False
+        log.error(f"Failed to add analysis vote for user {user_id}. Error: {e}", exc_info=True)
+        return {"success": False, "message": "An internal server error occurred."}
     
 def save_feedback(feedback_data: dict, user_id: str): # <-- 1. Add user_id here
     """Saves user-submitted feedback to the feedback collection."""
