@@ -187,8 +187,38 @@ def run_unified_daily_analysis():
                 database_manager.save_vst_analysis(ticker, ai_analysis_result, sanitized_context)
 
                 if strategy_signal_obj and strategy_signal_obj.get('signal') == 'BUY':
-                    log.info(f"Generating live prediction record for {ticker}.")
-                    prediction_doc = { "ticker": ticker, "prediction_date": datetime.now(timezone.utc), "signal": "BUY", "strategy_name": active_strategy['name'], "screener_reason": screener_reason, "scrybe_score": scrybe_score, "details": ai_analysis_result }
+                    # --- THIS PART IS THE FIX ---
+                    log.info(f"✅ Actionable BUY signal for {ticker}. Setting as an active trade.")
+                    
+                    # 1. Get the trade plan details from the object we already created
+                    trade_plan = strategy_signal_obj.get('trade_plan', {})
+                    
+                    # 2. Create a complete trade object that the frontend page expects
+                    active_trade_object = {
+                        'signal': 'BUY',
+                        'entry_date': datetime.now(timezone.utc),
+                        'expiry_date': datetime.now(timezone.utc) + pd.Timedelta(days=active_strategy['holding_period']),
+                        'entry_price': trade_plan.get('entry_price'),
+                        'target': trade_plan.get('target_price'),
+                        'stop_loss': trade_plan.get('stop_loss'),
+                        'risk_reward_ratio': trade_plan.get('risk_reward_ratio'),
+                        'strategy': active_strategy.get('name', 'VST_Live')
+                    }
+
+                    # 3. Call the correct database function to set this as an open position
+                    database_manager.set_active_trade(ticker, active_trade_object)
+                    
+                    # --- This part below is optional but recommended for logging ---
+                    log.info(f"Generating live prediction record for {ticker} as a historical log.")
+                    prediction_doc = { 
+                        "ticker": ticker, 
+                        "prediction_date": datetime.now(timezone.utc), 
+                        "signal": "BUY", 
+                        "strategy_name": active_strategy['name'], 
+                        "screener_reason": screener_reason, 
+                        "scrybe_score": scrybe_score, 
+                        "details": ai_analysis_result 
+                    }
                     database_manager.save_live_prediction(prediction_doc)
 
             except Exception as e:
