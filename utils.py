@@ -18,7 +18,11 @@ def sanitize_context(context: dict) -> dict:
         if isinstance(details, dict):
             sanitized_details = {}
             for k, v in details.items():
-                if not v or str(v).strip().lower() in ["unavailable", "n/a", "none", "null", "unavailable in backtest"]:
+                # --- THIS IS THE FIX ---
+                # The old check 'if not v' incorrectly converted empty lists [].
+                # This new check 'if v is None' correctly handles only null values,
+                # preserving empty lists for the frontend.
+                if v is None or str(v).strip().lower() in ["unavailable", "n/a", "none", "null", "unavailable in backtest"]:
                     sanitized_details[k] = "Data Not Available"
                 else:
                     sanitized_details[k] = v
