@@ -73,9 +73,20 @@ def run_unified_daily_analysis():
         # =================================================================================
         # --- 4. SINGLE INTELLIGENT ANALYSIS LOOP (WITH PERFORMANCE REVAMP) ---
         # =================================================================================
+
+        # --- FIX STARTS HERE (Step 1: Load the current state) ---
+        log.info("Checking for existing open positions before analysis...")
+        open_trades_docs = database_manager.get_open_trades()
+        # Create a set of tickers for quick O(1) lookups to prevent overwriting
+        open_positions_tickers = {trade['ticker'] for trade in open_trades_docs}
+        if open_positions_tickers:
+            log.info(f"Found {len(open_positions_tickers)} existing open positions: {list(open_positions_tickers)}")
+        else:
+            log.info("No existing open positions found.")
+        # --- FIX ENDS HERE ---
+
         log.info(f"--- Starting Unified Analysis for {len(stock_universe)} stocks ---")
 
-        # --- PHOENIX REVAMP: Create an info cache to avoid redundant API calls ---
         info_cache = {}
         log.info("Pre-caching company info objects for performance...")
         import yfinance as yf
@@ -83,9 +94,8 @@ def run_unified_daily_analysis():
             try:
                 info_cache[ticker] = yf.Ticker(ticker).info
             except Exception:
-                info_cache[ticker] = {} # Store empty dict on failure
+                info_cache[ticker] = {}
         log.info("Company info caching complete.")
-        # --- END REVAMP ---
 
         for i, ticker in enumerate(stock_universe):
             log.info(f"--- Analyzing {i+1}/{len(stock_universe)}: {ticker} ---")
@@ -93,27 +103,22 @@ def run_unified_daily_analysis():
             try:
                 historical_data = full_data_cache.get(ticker)
                 stock_sector = stock_sector_map.get(ticker, "Other")
-
-                # --- PHOENIX REVAMP: Use the cached info object ---
                 company_info = info_cache.get(ticker, {})
                 company_name = company_info.get('longName', ticker)
-                # --- END REVAMP ---
 
                 if historical_data is None:
                     log.warning(f"No cached data for {ticker}, skipping analysis.")
                     continue
 
-                # Pass the cached info object to the screener for efficiency
                 screener_reason = quantitative_screener.check_strategy_candidate(
                     ticker=ticker, data=historical_data, stock_sector=stock_sector, strong_sectors=strong_sectors, 
                     market_regime=market_regime, volatility_regime=volatility_regime, point_in_time=point_in_time,
-                    company_info=company_info # Pass cached info
+                    company_info=company_info
                 )
 
                 analysis_reason = screener_reason if screener_reason else "Comprehensive Daily Analysis"
                 log.info(f"AI analysis reason for {ticker}: {analysis_reason}")
 
-                # Pass the cached info to the context builder as well
                 full_context = technical_analyzer.build_live_context(
                     ticker, historical_data, market_regime_context, 
                     sector_performance_context, company_info
@@ -127,8 +132,6 @@ def run_unified_daily_analysis():
                         entry_price = historical_data['close'].iloc[-1]
                         risk_per_share = active_strategy['stop_loss_atr_multiplier'] * atr
                         reward_per_share = risk_per_share * active_strategy['profit_target_rr_multiple']
-
-                        # Add these metrics to the technical_analysis object to be saved
                         sanitized_context["technical_analysis"]["potential_stop_loss"] = round(entry_price - risk_per_share, 2)
                         sanitized_context["technical_analysis"]["potential_target"] = round(entry_price + reward_per_share, 2)
                 except Exception as e:
@@ -146,7 +149,6 @@ def run_unified_daily_analysis():
                 strategy_signal_obj = None
                 
                 if screener_reason and ai_analysis_result.get('signal') == 'BUY':
-                    # ... (The trade plan logic you added is PERFECT, no changes needed here)
                     log.info(f"{ticker} is a '{screener_reason}' candidate with a BUY signal. Applying veto checks...")
                     scrybe_score = ai_analysis_result.get('scrybeScore', 0)
                     is_conviction_ok = abs(scrybe_score) >= active_strategy['min_conviction_score']
@@ -187,42 +189,42 @@ def run_unified_daily_analysis():
                 database_manager.save_vst_analysis(ticker, ai_analysis_result, sanitized_context)
 
                 if strategy_signal_obj and strategy_signal_obj.get('signal') == 'BUY':
-                    # --- THIS PART IS THE FIX ---
-                    log.info(f"✅ Actionable BUY signal for {ticker}. Setting as an active trade.")
                     
-                    # 1. Get the trade plan details from the object we already created
-                    trade_plan = strategy_signal_obj.get('trade_plan', {})
-                    
-                    # 2. Create a complete trade object that the frontend page expects
-                    active_trade_object = {
-                        'signal': 'BUY',
-                        'entry_date': datetime.now(timezone.utc),
-                        'expiry_date': datetime.now(timezone.utc) + pd.Timedelta(days=active_strategy['holding_period']),
-                        'entry_price': trade_plan.get('entry_price'),
-                        'target': trade_plan.get('target_price'),
-                        'stop_loss': trade_plan.get('stop_loss'),
-                        'risk_reward_ratio': trade_plan.get('risk_reward_ratio'),
-                        'strategy': active_strategy.get('name', 'VST_Live')
-                    }
+                    # --- FIX STARTS HERE (Step 2: Check state before acting) ---
+                    if ticker in open_positions_tickers:
+                        log.info(f"SKIPPING active trade creation for {ticker}: Position is already open.")
+                    else:
+                        log.info(f"✅ Actionable BUY signal for {ticker}. Setting as a NEW active trade.")
+                        
+                        trade_plan = strategy_signal_obj.get('trade_plan', {})
+                        
+                        active_trade_object = {
+                            'signal': 'BUY',
+                            'entry_date': datetime.now(timezone.utc),
+                            'expiry_date': datetime.now(timezone.utc) + pd.Timedelta(days=active_strategy['holding_period']),
+                            'entry_price': trade_plan.get('entry_price'),
+                            'target': trade_plan.get('target_price'),
+                            'stop_loss': trade_plan.get('stop_loss'),
+                            'risk_reward_ratio': trade_plan.get('risk_reward_ratio'),
+                            'strategy': active_strategy.get('name', 'VST_Live')
+                        }
 
-                    # 3. Call the correct database function to set this as an open position
-                    database_manager.set_active_trade(ticker, active_trade_object)
-                    
-                    # --- This part below is optional but recommended for logging ---
-                    log.info(f"Generating live prediction record for {ticker} as a historical log.")
-                    prediction_doc = { 
-                        "ticker": ticker, 
-                        "prediction_date": datetime.now(timezone.utc), 
-                        "signal": "BUY", 
-                        "strategy_name": active_strategy['name'], 
-                        "screener_reason": screener_reason, 
-                        "scrybe_score": scrybe_score, 
-                        "details": ai_analysis_result 
-                    }
-                    database_manager.save_live_prediction(prediction_doc)
+                        database_manager.set_active_trade(ticker, active_trade_object)
+                        
+                        log.info(f"Generating live prediction record for {ticker} as a historical log.")
+                        prediction_doc = { 
+                            "ticker": ticker, 
+                            "prediction_date": datetime.now(timezone.utc), 
+                            "signal": "BUY", 
+                            "strategy_name": active_strategy['name'], 
+                            "screener_reason": screener_reason, 
+                            "scrybe_score": scrybe_score, 
+                            "details": ai_analysis_result 
+                        }
+                        database_manager.save_live_prediction(prediction_doc)
+                    # --- FIX ENDS HERE ---
 
             except Exception as e:
-                # ... (error handling logic is fine, no changes needed)
                 if "429" in str(e):
                     log.error("Quota exhausted, rotating API key...")
                     try:

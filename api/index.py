@@ -314,7 +314,7 @@ def ask_conversational_question(current_user):
     else:
         return jsonify({"error": "The AI failed to generate an answer."}), 500
  
-@app.route('/api/log-trade', methods=['POST'])
+@app.route('/api/trades/log', methods=['POST'])
 @token_required
 def log_user_trade(current_user): # Add the decorator and current_user
     log.info(f"API call to log trade for user: {current_user['uid']}")
@@ -446,6 +446,23 @@ def get_all_analysis():
         log.error(f"Failed to fetch all analysis: {e}", exc_info=True)
         return jsonify({"error": "Could not retrieve all analysis data."}), 500
 
+@app.route('/api/my-trades', methods=['GET'])
+@token_required
+def get_my_trades_endpoint(current_user):
+    log.info(f"API call to get trades for user: {current_user['uid']}")
+    try:
+        user_trades_collection = database_manager.db.user_trades
+        # Find all trades that match the logged-in user's ID
+        my_trades = list(user_trades_collection.find({'user_id': current_user['uid']}))
+        
+        # Sort trades by the date they were logged, with the newest first
+        my_trades.sort(key=lambda x: x.get('logged_at'), reverse=True)
+        
+        return Response(json.dumps(my_trades, default=custom_json_serializer), mimetype='application/json')
+    except Exception as e:
+        log.error(f"Error fetching trades for user {current_user['uid']}: {e}", exc_info=True)
+        return jsonify({"error": "An internal server error occurred while fetching your trades."}), 500
+    
 if __name__ == '__main__':
     log.info("Initializing default database connection...")
     database_manager.init_db(purpose='analysis')
