@@ -1,11 +1,12 @@
 # orchestrator_hybrid_screener_ai.py
-# EXPERIMENT 2: HYBRID APPROACH (SCREENER + AI)
+# EXPERIMENT 2: HYBRID APPROACH (SCREENER + AI) - CORRECTED VERSION
 # This script is a modified version of the main_orchestrator.
 # PURPOSE: To test the performance of the Quantitative Screener combined with the AI's analysis,
 # but WITHOUT the final hard-coded veto rules (VIX, market regime checks, etc.).
 # KEY MODIFICATIONS:
 # 1. QUANTITATIVE SCREENER: REMAINS ACTIVE.
 # 2. VETO LOGIC REMOVED: Replaced with a simple Scrybe Score threshold check.
+# 3. KEY ROTATION: The robust API key rotation logic has been re-implemented.
 
 import pandas as pd
 import time
@@ -31,7 +32,7 @@ import random
 # --- CONFIGURATION FOR THIS EXPERIMENT ---
 MIN_SCRYBE_SCORE_FOR_TRADE = 60 # Only trust the AI if its conviction is 60 or higher.
 
-# (All helper functions from main_orchestrator.py are included and unchanged)
+# (Helper functions from main_orchestrator.py are included and unchanged)
 def _build_backtest_context(ticker: str, point_in_time_data: pd.DataFrame, market_regime: str, nifty_data: pd.DataFrame) -> dict:
     # This function is identical to the one in main_orchestrator.py
     failed_indicators = []
@@ -79,11 +80,8 @@ def _build_backtest_context(ticker: str, point_in_time_data: pd.DataFrame, marke
 def sanitize_context(context: dict) -> dict:
     return json.loads(json.dumps(context).replace('NaN', 'null'))
 
-# (The rest of the script is identical to main_orchestrator until the Veto Logic section)
-
 def run_hybrid_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: bool = False):
     log.info(f"### STARTING HYBRID (SCREENER + AI) SIMULATION FOR BATCH: {batch_id} ###")
-    # --- This setup part is identical to main_orchestrator.py ---
     script_dir = os.path.dirname(os.path.abspath(__file__))
     csv_path = os.path.join(script_dir, 'nifty50_historical_constituents.csv')
     constituents_df = pd.read_csv(csv_path)
@@ -126,10 +124,6 @@ def run_hybrid_simulation(batch_id: str, start_date: str, end_date: str, is_fres
         vix_slice = vix_data.loc[:current_day] if vix_data is not None else None
         volatility_regime = data_retriever.get_volatility_regime(vix_slice)
 
-        # ==============================================================================
-        # --- SCREENER LOGIC REMAINS ACTIVE ---
-        # We are still using the screener to filter the universe down to a manageable list.
-        # ==============================================================================
         stocks_for_today = []
         if market_regime == "Bearish":
             stocks_for_today = quantitative_screener.screen_for_mean_reversion(strong_sectors, approved_stock_data_cache, current_day)
@@ -156,29 +150,44 @@ def run_hybrid_simulation(batch_id: str, start_date: str, end_date: str, is_fres
             point_in_time_data.ta.atr(length=14, append=True)
             atr_at_prediction = point_in_time_data['ATRr_14'].iloc[-1]
 
+            # --- FIX: RE-IMPLEMENTED ROBUST API CALL WITH KEY ROTATION ---
             final_analysis = None
-            try:
-                final_analysis = analyzer.get_apex_analysis(
-                    ticker, sanitized_full_context, strategic_review=None, tactical_lookback=None,
-                    per_stock_history=None, model_name=config.PRO_MODEL, screener_reason=screener_reason
-                )
-            except Exception as e:
-                log.error(f"AI analysis for {ticker} failed: {e}")
-                continue
+            delay = 5 # initial backoff delay
+            
+            while True:
+                current_key = key_manager.get_key()
+                if not current_key:
+                    log.error(f"Stopping analysis for {ticker}, all API keys are exhausted.")
+                    break
 
-            time.sleep(10) 
+                try:
+                    analyzer.update_api_key(current_key)
+                    final_analysis = analyzer.get_apex_analysis(
+                        ticker, sanitized_full_context, strategic_review=None, tactical_lookback=None,
+                        per_stock_history=None, model_name=config.PRO_MODEL, screener_reason=screener_reason
+                    )
+                    if final_analysis:
+                        log.info(f"✅ Got analysis for {ticker}.")
+                        break # Success, exit the while loop
+                except Exception as e:
+                    log.error(f"API call for {ticker} failed with key ending in ...{current_key[-4:]}. Error: {e}")
+                    if any(x in str(e).lower() for x in ["429", "quota"]):
+                        log.warning("Quota error detected. Deactivating current API key and trying next.")
+                        key_manager.deactivate_current_key_and_get_next()
+                        log.info(f"Backing off for {delay:.2f} seconds before retrying...")
+                        time.sleep(delay)
+                        delay = min(delay * 2, 60) + random.uniform(0, 1)
+                    else:
+                        log.error("Non-recoverable error. Aborting analysis for this stock.")
+                        break # Exit loop for non-quota errors
 
             if not final_analysis: continue
+            # --- END OF FIX ---
             
             original_signal = final_analysis.get('signal')
             scrybe_score = final_analysis.get('scrybeScore', 0)
             
-            # ==============================================================================
-            # --- MODIFICATION: VETO LOGIC IS REMOVED ---
-            # The complex checks on VIX, regime, etc., are gone. We now only check the AI's signal and score.
-            # ==============================================================================
-            final_signal = 'HOLD' # Default to HOLD
-            
+            final_signal = 'HOLD'
             if original_signal == 'BUY' and scrybe_score >= MIN_SCRYBE_SCORE_FOR_TRADE:
                 final_signal = 'BUY'
             
