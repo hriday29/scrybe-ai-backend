@@ -1,13 +1,49 @@
 # technical_analyzer.py (CORRECTED)
 import matplotlib
-matplotlib.use('Agg') # Use a non-interactive backend
+matplotlib.use('Agg')
 import pandas as pd
 import matplotlib.pyplot as plt
 import io
 import base64
 from logger_config import log
 import data_retriever
-import pandas_ta as ta # Ensure pandas_ta is imported
+import pandas_ta as ta
+import angelone_retriever
+
+def get_fundamental_proxies(data_slice: pd.DataFrame) -> dict:
+    """
+    Calculates fundamental proxy metrics using point-in-time historical price data.
+    This version correctly uses UPPERCASE column names.
+    """
+    if data_slice is None or len(data_slice) < 252:
+        return {
+            "valuation_proxy": "N/A",
+            "quality_proxy_volatility": "N/A",
+            "quality_score": 50 # Return a neutral default score
+        }
+
+    # --- Proxy 1: Valuation (52-Week Range Position) ---
+    high_52_week = data_slice['high'].iloc[-252:].max()
+    low_52_week = data_slice['low'].iloc[-252:].min()
+    latest_close = data_slice['close'].iloc[-1]
+    
+    valuation_range_score = 100
+    if (high_52_week - low_52_week) > 0:
+        valuation_range_score = ((latest_close - low_52_week) / (high_52_week - low_52_week)) * 100
+
+    # --- Proxy 2: Quality/Durability (Realized Volatility) ---
+    returns_90_day = data_slice['close'].iloc[-90:].pct_change()
+    realized_volatility_90d = returns_90_day.std() * (252**0.5) # Annualized volatility
+
+    # --- Convert Proxies to a final "Quality Score" ---
+    capped_vol = min(realized_volatility_90d, 0.50)
+    quality_score = (1 - (capped_vol / 0.50)) * 100
+    
+    return {
+        "valuation_proxy": f"{valuation_range_score:.1f}% of 52-Week Range",
+        "quality_proxy_volatility": f"{realized_volatility_90d:.2%}",
+        "quality_score": int(quality_score)
+    }
 
 def get_all_technicals(data: pd.DataFrame) -> dict:
     """
@@ -253,28 +289,56 @@ def generate_focused_charts(full_data: pd.DataFrame, ticker: str) -> dict:
     log.info(f"Successfully generated charts for {ticker}.")
     return charts
 
-def build_live_context(ticker: str, historical_data: pd.DataFrame, market_regime_context: dict, sector_performance_context: dict, company_info: dict = None) -> dict:
+def build_analysis_context(
+    ticker: str, 
+    historical_data: pd.DataFrame, 
+    market_state: dict,
+    is_backtest: bool = False
+) -> dict:
     """
-    Constructs the complete, live context dictionary for the AI by mirroring
-    the logic from the backtester's context builder.
+    Builds the ultimate, institutional-grade context packet for the AI.
+    This is the single source of truth for the AI's data.
     """
+    log.info(f"Building ULTIMATE context for {ticker} (Backtest Mode: {is_backtest})...")
+
+    # --- Initialize all data components ---
+    technicals, fundamentals, options, news, market_depth = {}, {}, {}, {}, {}
+
+    # --- Fetch Data (Adapts for backtest vs. live) ---
     technicals = get_all_technicals(historical_data)
-    relative_strength = get_relative_strength(historical_data)
     
-    # These calls fetch live, real-time data
-    options_data = data_retriever.get_options_data(ticker)
-    news = data_retriever.get_news_articles_for_ticker(ticker, company_info=company_info)
-    
+    if is_backtest:
+        # For backtesting, we use proxies and placeholders
+        fundamentals = get_fundamental_proxies(historical_data)
+        options = {"status": "Unavailable in backtest"}
+        news = {"status": "Unavailable in backtest"}
+        market_depth = {"status": "Unavailable in backtest"}
+    else:
+        # For live runs, we fetch from our rich data sources
+        fundamentals = data_retriever.get_stored_fundamentals(ticker)
+        options = data_retriever.get_options_data(ticker)
+        news = data_retriever.get_news_articles_for_ticker(ticker)
+        market_depth = data_retriever.get_live_market_depth(ticker)
+
+    # --- Assemble the Final Context ---
     context = {
         "ticker": ticker,
-        "market_regime_analysis": market_regime_context,
-        "sector_and_relative_strength": {
-            "sector_performance": sector_performance_context,
-            "relative_strength_vs_nifty50": relative_strength
+        "macro_context": {
+            "overall_market_regime": market_state.get("market_regime"),
+            "volatility_regime": market_state.get("volatility_regime"),
+            "market_breadth": market_state.get("market_breadth"),
+            "global_benchmarks": market_state.get("benchmark_performance")
         },
-        "fundamental_proxy_analysis": data_retriever.get_fundamental_proxies(historical_data),
+        "sector_and_relative_strength": {
+            "strong_sectors_of_day": market_state.get("strong_sectors"),
+            "stock_vs_nifty50_rs": get_relative_strength(historical_data)
+        },
+        "fundamental_analysis": fundamentals,
         "technical_analysis": technicals,
-        "options_sentiment_analysis": options_data,
-        "news_and_events_analysis": news
+        "market_internals": {
+            "options_sentiment": options,
+            "live_order_book": market_depth
+        },
+        "news_and_events": news
     }
     return context

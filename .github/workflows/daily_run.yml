@@ -2,8 +2,8 @@ name: Scrybe AI - Daily Market Analysis
 
 on:
   schedule:
-    # Runs at 20:30 UTC Monday-Friday (which is 2:00 AM IST Tuesday-Saturday)
-    - cron: '30 20 * * 1-5'
+    # Runs at 17:00 UTC Monday-Friday (which is 10:30 PM IST)
+    - cron: '00 17 * * 1-5'
   workflow_dispatch:
 
 jobs:
@@ -13,18 +13,12 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # --- CHANGE #1: Updated Python Version ---
-      # Set up Python 3.12 to match your Dockerfile and support modern libraries.
-      # --- CHANGE #2: Enabled Caching ---
-      # This will cache your installed packages to speed up future runs significantly.
       - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          cache: 'pip' # Enable caching for pip dependencies
+          cache: 'pip'
 
-      # --- CHANGE #3: Simplified and Correct Installation ---
-      # A single, clean step is all that's needed.
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
@@ -38,12 +32,23 @@ jobs:
       - name: Run Daily Analysis Script
         if: steps.market_check.outcome == 'success'
         env:
+          # Angel One Credentials
+          ANGELONE_API_KEY: ${{ secrets.ANGELONE_API_KEY }}
+          ANGELONE_CLIENT_ID: ${{ secrets.ANGELONE_CLIENT_ID }}
+          ANGELONE_PASSWORD: ${{ secrets.ANGELONE_PASSWORD }}
+          ANGELONE_TOTP: ${{ secrets.ANGELONE_TOTP }}
+          
+          # Database & Other API Keys
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
           NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
+          
+          # Email Configuration
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
+          
+          # Gemini API Key Pool
           GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
           GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
           GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}

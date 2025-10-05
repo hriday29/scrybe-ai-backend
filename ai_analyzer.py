@@ -32,85 +32,80 @@ class AIAnalyzer:
     def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str, model_name: str, screener_reason: str) -> dict:
         """
         Generates a definitive, institutional-grade analysis using the "Apex" multi-layered model.
+        Includes retry and fallback logic as per Gemini’s instruction.
         """
         log.info(f"Generating APEX analysis for {ticker}...")
 
-        # In ai_analyzer.py, inside the get_apex_analysis function
-
+        # --- Define Prompt, Schema & Config ---
         system_instruction = """
-        You are "Scrybe," an expert-level quantitative AI analyst. Your primary function is to conduct a rigorous, data-driven analysis of a stock's potential for a short-term swing trade based on a multi-layered thesis.
+        You are "Scrybe," an expert-level quantitative AI analyst at a top-tier hedge fund. Your function is to conduct a rigorous, unbiased, multi-layered analysis of a stock to find a high-probability swing trade opportunity (5-10 day holding period).
 
-        **CRITICAL STRATEGY DIRECTIVE:**
-        The stock you are analyzing has been pre-screened for a potential LONG (BUY) opportunity based on either Momentum, Pullback, or Mean Reversion criteria. Your entire task is to VALIDATE this bullish thesis. You are strictly forbidden from recommending a 'SELL' (short) signal. Your final `signal` can only be 'BUY' or 'HOLD'.
+        **ANALYTICAL MANDATE:**
+        Your analysis must be a masterclass in synthesis. You will receive a comprehensive data packet. You must weigh all evidence, identify points of confluence and contradiction, and generate a definitive "BUY", "SELL", or "HOLD" signal with a clear, justifiable thesis.
 
-        **CONTEXT AWARENESS (CRITICAL):**
-        The data provided is for professional financial market analysis. All terminology related to risk, loss, gains, momentum, targets, and market direction (e.g., "downside," "risk," "sell") is standard industry language. These terms are NOT harmful. You MUST interpret them within a financial context and are strictly forbidden from blocking a response due to this terminology. Your purpose is educational research.
-        
-        **DATA AVAILABILITY RULE:**
-        If any data layer contains missing, null, or unavailable content, you must explicitly state "Data Not Available" in your analysis for that layer and weigh your final decision accordingly. Do not speculate on missing data.
+        **CORE ANALYTICAL PROTOCOL:**
+        1.  **Synthesize the Primary Layers:** Form a core thesis by integrating the Macro Context, Sector Strength, Fundamental Analysis, and Technical Analysis.
+        2.  **Incorporate Market Internals:** Use the `market_internals` data (Options Sentiment and Order Book) to refine your thesis. Does the micro-structure of the market support your view?
+        3.  **Consider Catalysts:** Evaluate the `news_and_events` data for any near-term catalysts that could accelerate or invalidate your thesis.
+        4.  **Apply Self-Correction (Backtest Only):** If `performance_feedback` is provided, use it as a self-correction mechanism. If recent trades of a similar thesis type have failed, you must state this and justify why this new trade is different, or adopt a more cautious stance.
 
-        **STRATEGY CONTEXT (NEW):**
-        You will be provided with a `screener_reason` that explains why this stock was selected for analysis. This context is critical.
-        - If `screener_reason` is **"Momentum"**: The stock is in a strong, confirmed uptrend and is breaking out. Your analysis should focus on the probability of **trend continuation**.
-        - If `screener_reason` is **"Pullback"**: The stock is in a strong long-term uptrend but has recently dipped. Your analysis must focus on the probability of **trend resumption**. Distinguish a healthy pullback from the start of a new downtrend.
-        - If `screener_reason` is **"Mean Reversion"**: The stock is in a long-term uptrend but is now significantly oversold in a non-trending phase. Your analysis should focus on the probability of a **sharp bounce or reversal** back toward its mean (e.g., the 50-day EMA).
+        **ADVANCED DATA SYNTHESIS INSTRUCTIONS:**
+        -   **Macro Context:** Do not just state the regime. Explain **how** the performance of global indices, commodities, and market breadth influences your risk appetite for this specific stock. A strong Nifty 50 trend with weak market breadth is a low-quality signal.
+        -   **Market Internals:** Explicitly analyze the **Order Book Imbalance (OBI)** for immediate supply/demand pressure. In your options analysis, discuss what the **Greeks and IV** imply about market maker positioning and future volatility expectations.
+        -   **Fundamentals:** Correlate your thesis with the company's **quarterly growth metrics and shareholder changes**. A bullish technical pattern is stronger if backed by accelerating earnings and increased institutional holding.
 
-        **ANALYTICAL PROTOCOL - STEP 1: MULTI-LAYERED SCENARIO FORMATION.**
-        Synthesize the following six layers of intelligence into a single, cohesive research thesis. Each layer must be weighed according to its specified importance.
-
-        - **Layer 1: Macro & Inter-market Context (Weight: 15%):** The risk environment. Are global markets and benchmarks supportive or adverse?
-        - **Layer 2: Sector & Relative Strength (Weight: 20%):** Is the stock's sector outperforming? How does the stock's strength compare to the Nifty 50 index?
-        - **Layer 3: Fundamental Profile (Weight: 15%):** The company's financial health. Is it stable with durable profitability or showing weakness?
-        - **Layer 4: Technicals (Weight: 30%):** The most heavily weighted factor. Analyze the price action, trend, and key indicators.
-        - **Layer 5: Options Sentiment (Weight: 10%):** Signals from derivatives activity (if available).
-        - **Layer 6: News & Events (Weight: 10%):** Recent catalysts influencing price.
-
-        **ANALYTICAL PROTOCOL - STEP 2: FINAL SYNTHESIS AND SCORING.**
-        1.  **Synthesize:** In your `analystVerdict`, provide a master narrative combining all six layers into a clear, decisive thesis.
-        2.  **Score with Conviction:** Provide a `scrybeScore` from -100 (maximum conviction SELL) to +100 (maximum conviction BUY). **Do not be overly conservative.** A setup with strong confluence across multiple weighted layers (especially Technicals and Relative Strength) **must receive a score of 60 or higher.** A setup with significant contradictions should have a score closer to 0. Use the full spectrum to reflect your conviction.
-        3.  **Estimate Gain Potential:** Provide a realistic `predicted_gain_pct`, estimating the percentage move if the thesis plays out. Justify this with a `gain_prediction_rationale`.
-        4.  **Assess Risks & Invalidation:** Identify key risks and provide a specific price or event that would invalidate your thesis.
-
-        **OUTPUT REQUIREMENT:**
-        You must generate a JSON output that strictly adheres to the provided schema. All fields are mandatory.
+        **FINAL OUTPUT REQUIREMENTS:**
+        1.  **scrybeScore:** Your final conviction score from **-100 (max conviction SELL)** to **+100 (max conviction BUY)**. A score between -25 and +25 is neutral (HOLD).
+        2.  **signal:** "BUY", "SELL", or "HOLD". This must be a direct consequence of your score.
+        3.  **thesisType:** Your classification of the setup (e.g., "Momentum Breakout in Strong Sector", "Bearish Breakdown on Weak Fundamentals", "Mean Reversion Against Frothy Sentiment").
+        4.  **analystVerdict:** Your master narrative. This must be a concise, powerful summary that starts with your conclusion and then justifies it by synthesizing the most critical data points from your analysis above.
+        5.  **keyInsight:** The single most important takeaway for a human fund manager to read.
         """
 
         output_schema = {
             "type": "OBJECT",
             "properties": {
-                "scrybeScore": {"type": "NUMBER", "description": "The final conviction score from -100 (high conviction sell) to +100 (high conviction buy)."},
-                "signal": {"type": "STRING", "enum": ["BUY", "HOLD"], "description": "The definitive trading signal derived from the Scrybe Score. Can only be BUY or HOLD."}, #
+                "scrybeScore": {"type": "NUMBER", "description": "Conviction score from -100 (max conviction SELL) to +100 (max conviction BUY)."},
+                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"], "description": "The definitive trading signal derived from the Scrybe Score."},
+                "thesisType": {"type": "STRING", "description": "The classification of the trade setup (e.g., 'Momentum', 'Pullback', 'Mean Reversion')."},
                 "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"], "description": "The qualitative confidence level, logically derived from the Scrybe Score."},
                 "predicted_gain_pct": {"type": "NUMBER", "description": "The realistic estimated profit percentage for this trade setup over the holding period."},
                 "gain_prediction_rationale": {"type": "STRING", "description": "A concise justification for the predicted gain percentage, based on volatility and technical targets."},
                 "keyInsight": {"type": "STRING", "description": "The single most important, actionable takeaway from the entire analysis."},
                 "analystVerdict": {"type": "STRING", "description": "The master narrative synthesizing all six layers, starting with the influence of the Omni-Context review."},
                 "keyRisks_and_Mitigants": {
-                    "type": "OBJECT", "description": "The top two factors that could cause this trade to fail, and any mitigating factors.",
-                    "properties": {"risk_1": {"type": "STRING"}, "risk_2": {"type": "STRING"}, "mitigant": {"type": "STRING"}},
+                    "type": "OBJECT",
+                    "description": "The top two factors that could cause this trade to fail, and any mitigating factors.",
+                    "properties": {
+                        "risk_1": {"type": "STRING"},
+                        "risk_2": {"type": "STRING"},
+                        "mitigant": {"type": "STRING"}
+                    },
                     "required": ["risk_1", "risk_2", "mitigant"]
                 },
                 "thesisInvalidationPoint": {"type": "STRING", "description": "A specific price level or event that, if breached, would definitively invalidate the entire thesis."},
                 "keyObservations": {
-                    "type": "OBJECT", "description": "The key points of agreement and disagreement across the analytical layers.",
-                    "properties": {"confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}}, "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}}},
+                    "type": "OBJECT",
+                    "description": "The key points of agreement and disagreement across the analytical layers.",
+                    "properties": {
+                        "confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}},
+                        "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}}
+                    },
                     "required": ["confluencePoints", "contradictionPoints"]
                 }
-                # We are omitting the detailed breakdown fields for brevity in the backtester,
-                # as the core decision metrics are what we need to simulate performance.
             },
             "required": [
                 "scrybeScore", "signal", "confidence", "predicted_gain_pct", "gain_prediction_rationale",
-                "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "thesisInvalidationPoint", "keyObservations"
+                "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "thesisInvalidationPoint", "keyObservations", "thesisType"
             ]
         }
 
         generation_config = genai.types.GenerationConfig(
-        response_mime_type="application/json", 
-        response_schema=output_schema,
-        max_output_tokens=16384
+            response_mime_type="application/json",
+            response_schema=output_schema,
+            max_output_tokens=8192  # Slightly reduced for safety
         )
-        
+
         safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
@@ -118,36 +113,65 @@ class AIAnalyzer:
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
         }
 
-        # --- This is the "After" code ---
-        model = genai.GenerativeModel(
-            model_name, 
-            system_instruction=system_instruction, 
-            generation_config=generation_config,
-            safety_settings=safety_settings 
-        )
-
         formatted_context = "\n## Today's Full Data Packet ##\n" + json.dumps(full_context, indent=2)
-
         prompt_parts = [
-            # "## Omni-Context Performance Review ##",
-            # f"30-Day Strategic Review:\n{strategic_review or 'Data Not Available'}",
-            # f"\nPer-Stock Recent Trade History ({ticker}):\n{per_stock_history or 'Data Not Available'}",
-            # f"\nPrevious Day's Tactical Note ({ticker}):\n{tactical_lookback or 'Data Not Available'}",
+            f"Performance Feedback (Strategy): {strategic_review or 'Data Not Available'}",
+            f"Performance Feedback ({ticker}): {per_stock_history or 'Data Not Available'}",
+            f"Tactical Lookback Notes: {tactical_lookback or 'Data Not Available'}",
             f"Screener Reason for selecting {ticker}: **{screener_reason}**",
             formatted_context
         ]
 
+        # --- Main Logic: Retry Loop + Fallback ---
+        try:
+            log.info(f"Primary attempt with {model_name}...")
+            for attempt in range(3):  # Try up to 3 times
+                try:
+                    model = genai.GenerativeModel(
+                        model_name,
+                        system_instruction=system_instruction,
+                        generation_config=generation_config,
+                        safety_settings=safety_settings
+                    )
+                    response = model.generate_content(prompt_parts, request_options={"timeout": 300})
 
-        response = model.generate_content(prompt_parts, request_options={"timeout": 300})
-    
-        if not response.parts:
-            finish_reason_detail = "Unknown"
-            if hasattr(response, 'prompt_feedback') and hasattr(response.prompt_feedback, 'block_reason'):
-                finish_reason_detail = response.prompt_feedback.block_reason.name
-            raise ValueError(f"Empty or blocked response from API. Reason: {finish_reason_detail}")
-        
-        log.info(f"✅ Successfully received and parsed APEX analysis for {ticker}.")
-        return json.loads(response.text)
+                    if not response.parts:
+                        raise ValueError(f"Empty or blocked response. Feedback: {response.prompt_feedback}")
+
+                    analysis_result = json.loads(response.text)
+                    analysis_result["model_used"] = model_name
+                    log.info(f"✅ Success on attempt {attempt + 1} with {model_name}.")
+                    return analysis_result  # Exit successfully
+
+                except Exception as e:
+                    log.warning(f"Attempt {attempt + 1} with {model_name} failed: {e}")
+                    if attempt < 2:
+                        time.sleep(5)  # retry delay
+
+            raise Exception(f"Primary model ({model_name}) failed after all 3 attempts.")
+
+        except Exception as e:
+            log.warning(f"🚨 {e}. Attempting fallback with {config.FLASH_MODEL}...")
+            try:
+                model = genai.GenerativeModel(
+                    config.FLASH_MODEL,
+                    system_instruction=system_instruction,
+                    generation_config=generation_config,
+                    safety_settings=safety_settings
+                )
+                response = model.generate_content(prompt_parts, request_options={"timeout": 300})
+
+                if not response.parts:
+                    raise ValueError(f"Fallback model also returned empty response. Feedback: {response.prompt_feedback}")
+
+                fallback_result = json.loads(response.text)
+                fallback_result["model_used"] = config.FLASH_MODEL
+                log.info(f"✅ Successfully received analysis from FALLBACK model.")
+                return fallback_result
+
+            except Exception as final_e:
+                log.error(f"❌ CRITICAL: Fallback model also failed for {ticker}. Final Error: {final_e}")
+                return None
 
     def get_single_news_impact_analysis(self, article: dict) -> dict:
         """

@@ -1,37 +1,50 @@
+# data_retriever.py 
+# This file serves as the single, stable data gateway for the entire application.
+# It uses a control switch in config.py to decide whether to fetch data from
+# the new, high-fidelity Angel One API or fall back to the yfinance API.
+
 import yfinance as yf
 import pandas as pd
 import requests
 import index_manager
 import json
 import os
-import config
-from logger_config import log
-from datetime import datetime
 from datetime import datetime, timezone, timedelta
-import pandas_ta as ta
+import database_manager
 
-# --- Ensure the cache directory exists on startup ---
+from logger_config import log
+import config  # Reads the new DATA_SOURCE flag
+
+# --- NEW: Import the Angel One retriever module ---
+# This module contains the specialized logic for the Angel One API.
+import angelone_retriever
+
+# --- Initialize Angel One Session on Startup ---
+# This ensures the API is logged in and ready when the app starts.
+if config.DATA_SOURCE == "angelone":
+    log.info("Data source is Angel One. Initializing API session...")
+    angelone_retriever.initialize_angelone_session()
+# --------------------------------------------------
+
+# --- Caching Setup (Remains the same) ---
 CACHE_DIR = 'cache'
 if not os.path.exists(CACHE_DIR):
     os.makedirs(CACHE_DIR)
-
 CACHE_FILE = os.path.join(CACHE_DIR, 'sector_cache.json')
-# --------------------------------------------------------
-
 DATA_CACHE_DIR = 'data_cache'
 if not os.path.exists(DATA_CACHE_DIR):
     os.makedirs(DATA_CACHE_DIR)
+# -------------------------------------------
 
 def load_sector_cache():
     """
     Safely loads the sector cache. If the file is corrupt or missing,
-    it returns an empty dictionary.
+    it returns an empty dictionary. (Unchanged)
     """
     if os.path.exists(CACHE_FILE):
         try:
             with open(CACHE_FILE, 'r') as f:
                 data = json.load(f)
-                # Ensure it returns a dictionary even if file is empty
                 return data if isinstance(data, dict) else {}
         except json.JSONDecodeError:
             log.warning("Could not decode sector_cache.json. It might be corrupt. Starting fresh.")
@@ -41,107 +54,266 @@ def load_sector_cache():
 def save_sector_cache(cache):
     """
     Saves the sector cache, but only if it contains a reasonable number
-    of tickers, preventing incomplete saves.
+    of tickers, preventing incomplete saves. (Unchanged)
     """
-    # Sanity check: Only write to the file if the cache is substantial.
     if isinstance(cache, dict) and len(cache) > 40:
         with open(CACHE_FILE, 'w') as f:
             json.dump(cache, f, indent=4)
         log.info(f"Successfully saved a valid sector cache with {len(cache)} entries.")
     else:
-        log.warning(f"Skipped saving sector cache because it was incomplete (had {len(cache)} entries). The existing valid cache file is preserved.")
+        log.warning(f"Skipped saving sector cache because it was incomplete (had {len(cache)} entries).")
 
 def get_historical_stock_data(ticker_symbol: str, end_date=None):
     """
-    Fetches historical daily OHLC stock data.
-    It prioritizes loading from a local cache to maximize speed. If data is not
-    cached, it fetches from Yahoo Finance and saves it to the cache for future use.
+    MODIFIED: Fetches historical daily OHLC stock data using the source specified in config.py.
     """
-    # Create a unique filename based on the ticker and end_date for point-in-time accuracy
-    # Note: A live run (end_date=None) will have a different cache from a historical run
-    date_suffix = end_date.replace('-', '') if end_date else 'live'
-    cache_file = os.path.join(DATA_CACHE_DIR, f"{ticker_symbol}_{date_suffix}.feather")
-
-    # --- Step 1: Prioritize loading from cache ---
-    if os.path.exists(cache_file):
+    if config.DATA_SOURCE == "angelone":
+        # Angel One requires a date range. We'll calculate an approximate 5-year range.
+        to_date_obj = datetime.strptime(end_date, '%Y-%m-%d') if end_date else datetime.now()
+        from_date_obj = to_date_obj - timedelta(days=5*365)
+        to_date_str = to_date_obj.strftime('%Y-%m-%d')
+        from_date_str = from_date_obj.strftime('%Y-%m-%d')
+        # Note: Angel One's historical API might need specific time formatting
+        return angelone_retriever.get_historical_data(ticker_symbol, f"{from_date_str} 09:15", f"{to_date_str} 15:30", "ONE_DAY")
+    else:
+        # --- Original yfinance logic with caching ---
+        date_suffix = end_date.replace('-', '') if end_date else 'live'
+        cache_file = os.path.join(DATA_CACHE_DIR, f"{ticker_symbol}_{date_suffix}.feather")
+        if os.path.exists(cache_file):
+            try:
+                log.info(f"CACHE HIT: Loading {ticker_symbol} data from {cache_file}")
+                df = pd.read_feather(cache_file)
+                df.set_index('Date', inplace=True)
+                return df
+            except Exception as e:
+                log.warning(f"Could not read from cache file {cache_file}. Error: {e}. Refetching.")
+        log.info(f"CACHE MISS: Fetching historical data for {ticker_symbol} from Yahoo Finance...")
         try:
-            log.info(f"CACHE HIT: Loading {ticker_symbol} data from {cache_file}")
-            df = pd.read_feather(cache_file)
-            # THIS IS THE CRUCIAL FIX: Set the 'Date' column back to the index
-            df.set_index('Date', inplace=True) 
-            return df
-        except Exception as e:
-            log.warning(f"Could not read from cache file {cache_file}. Error: {e}. Refetching.")
-
-    # --- Step 2: If cache miss, fetch from API ---
-    log.info(f"CACHE MISS: Fetching historical data for {ticker_symbol} from Yahoo Finance...")
-    if end_date:
-        log.info(f"--- Using historical end_date: {end_date} ---")
-        
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        df = ticker.history(period="5y", end=end_date)
-
-        if df.empty:
-            log.warning(f"No 5-year data found for {ticker_symbol}. Trying 1-year period...")
-            df = ticker.history(period="1y", end=end_date)
-
-        if df.empty:
-            log.warning(f"No historical data returned for {ticker_symbol}.")
-            return None
-            
-        df.rename(columns={
-            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
-        }, inplace=True)
-
-        df.index = df.index.tz_localize(None) # Remove timezone
-        
-        # --- Step 3: Save the newly fetched data to cache ---
-        try:
-            # Reset index to store datetime index in a column, which Feather requires
+            ticker = yf.Ticker(ticker_symbol)
+            df = ticker.history(period="5y", end=end_date)
+            if df.empty:
+                df = ticker.history(period="1y", end=end_date)
+            if df.empty:
+                log.warning(f"No historical data returned for {ticker_symbol}.")
+                return None
+            df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
+            df.index = df.index.tz_localize(None)
             df.reset_index().to_feather(cache_file)
             log.info(f"CACHE WRITE: Saved {ticker_symbol} data to {cache_file}")
-            # Set the index back for the rest of the application
-            df = df.set_index(df.columns[0]) if 'Date' in df.columns else df
+            return df.set_index('Date')
         except Exception as e:
-            log.error(f"Failed to write to cache file {cache_file}. Error: {e}")
-
-        log.info(f"Successfully fetched {len(df)} data points for {ticker_symbol}.")
-        return df.sort_index()
-
-    except Exception as e:
-        log.error(f"Error fetching historical data for {ticker_symbol}: {e}")
-        return None
+            log.error(f"Error fetching yfinance historical data for {ticker_symbol}: {e}")
+            return None
 
 def get_live_financial_data(ticker_symbol: str):
-    """Fetches curated live financial data, now with more detail for DVM scores."""
-    log.info(f"Fetching all live financial data for {ticker_symbol}...")
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        raw_info = ticker.info
-        
-        # Expanded list of curated data points
-        curated_data = {
-            "currentPrice": raw_info.get("currentPrice", raw_info.get("previousClose")),
-            "trailingPE": raw_info.get("trailingPE"),
-            "priceToBook": raw_info.get("priceToBook"),
-            "profitMargins": raw_info.get("profitMargins"),
-            "heldPercentInstitutions": raw_info.get("heldPercentInstitutions"),
-            "returnOnEquity": raw_info.get("returnOnEquity"),
-            "debtToEquity": raw_info.get("debtToEquity"),
-            "totalCash": raw_info.get("totalCash"),
-        }
+    """
+    MODIFIED: Fetches curated live financial data using a hybrid approach.
+    It gets the precise LTP from Angel One and enriches it with deep
+    fundamental data from yfinance.
+    """
+    if config.DATA_SOURCE == "angelone":
+        log.info(f"Fetching hybrid financial data for {ticker_symbol} (AO Price + YF Fundamentals)...")
+        try:
+            # 1. Get high-fidelity live price from Angel One
+            quote = angelone_retriever.get_full_quote(ticker_symbol)
+            live_price = quote.get("ltp") if quote else None
 
-        if curated_data["currentPrice"] is None:
-            log.error(f"No price data available for {ticker_symbol}.")
-            return None
+            # 2. Get rich fundamental data from yfinance
+            raw_info = yf.Ticker(ticker_symbol).info
+
+            # 3. Combine them for the best of both worlds
+            curated_data = {
+                "currentPrice": live_price or raw_info.get("currentPrice"), # Fallback to yf price if AO fails
+                "trailingPE": raw_info.get("trailingPE"),
+                "priceToBook": raw_info.get("priceToBook"),
+                "profitMargins": raw_info.get("profitMargins"),
+                "heldPercentInstitutions": raw_info.get("heldPercentInstitutions"),
+                "returnOnEquity": raw_info.get("returnOnEquity"),
+                "debtToEquity": raw_info.get("debtToEquity"),
+                "totalCash": raw_info.get("totalCash"),
+            }
+            if curated_data["currentPrice"] is None: return None
             
-        log.info(f"Successfully fetched all live financial data for {ticker_symbol}.")
-        return {"curatedData": curated_data, "rawDataSheet": raw_info}
-        
+            # The raw data sheet can be a combination of both sources
+            raw_data_sheet = {**(quote or {}), **(raw_info or {})}
+            return {"curatedData": curated_data, "rawDataSheet": raw_data_sheet}
+
+        except Exception as e:
+            log.error(f"Error fetching hybrid financial data for {ticker_symbol}: {e}")
+            return None
+    else:
+        # --- Original yfinance logic (remains as the fallback) ---
+        log.info(f"Fetching financial data for {ticker_symbol} from yfinance...")
+        try:
+            raw_info = yf.Ticker(ticker_symbol).info
+            curated_data = {
+                "currentPrice": raw_info.get("currentPrice", raw_info.get("previousClose")),
+                "trailingPE": raw_info.get("trailingPE"), "priceToBook": raw_info.get("priceToBook"),
+                "profitMargins": raw_info.get("profitMargins"), "heldPercentInstitutions": raw_info.get("heldPercentInstitutions"),
+                "returnOnEquity": raw_info.get("returnOnEquity"), "debtToEquity": raw_info.get("debtToEquity"),
+                "totalCash": raw_info.get("totalCash"),
+            }
+            if curated_data["currentPrice"] is None: return None
+            return {"curatedData": curated_data, "rawDataSheet": raw_info}
+        except Exception as e:
+            log.error(f"Error fetching yfinance live financial data for {ticker_symbol}: {e}")
+            return None
+
+def get_options_data(ticker_symbol: str):
+    """
+    MODIFIED: Fetches and processes options chain data for a STOCK.
+    Now also fetches and attaches option greeks from Angel One.
+    """
+    if config.DATA_SOURCE == "angelone":
+        log.info(f"Fetching options data for {ticker_symbol} from Angel One...")
+        try:
+            # 1. Call our unified function from angelone_retriever
+            chain_data = angelone_retriever.get_option_chain_data(ticker_symbol)
+            if not chain_data or 'chain' not in chain_data or not chain_data['chain']:
+                log.warning(f"No option chain data returned from Angel One for {ticker_symbol}.")
+                return None
+
+            # 2. Convert to DataFrame and ensure numeric columns
+            df = pd.DataFrame(chain_data['chain'])
+            for col in ['openInterest', 'volume', 'strikePrice']:
+                if col not in df.columns:
+                    log.error(f"Missing required column '{col}' in Angel One option chain data for {ticker_symbol}.")
+                    return None
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            df.dropna(inplace=True)
+
+            calls = df[df['optionType'] == 'CE']
+            puts = df[df['optionType'] == 'PE']
+
+            if calls.empty or puts.empty:
+                log.warning(f"Incomplete option chain for {ticker_symbol} (missing calls or puts).")
+                return None
+
+            # 3. Perform calculations
+            pcr_oi = puts['openInterest'].sum() / calls['openInterest'].sum() if calls['openInterest'].sum() > 0 else 0
+            max_oi_call_strike = calls.loc[calls['openInterest'].idxmax()]['strikePrice']
+            max_oi_put_strike = puts.loc[puts['openInterest'].idxmax()]['strikePrice']
+
+            # --- NEW: Fetch and attach option greeks ---
+            try:
+                greeks = angelone_retriever.get_option_greeks(ticker_symbol)
+            except Exception as ge:
+                log.warning(f"Failed to fetch option greeks for {ticker_symbol}: {ge}")
+                greeks = None
+
+            return {
+                "put_call_ratio_oi": round(pcr_oi, 2),
+                "max_oi_call_strike": max_oi_call_strike,
+                "max_oi_put_strike": max_oi_put_strike,
+                "greeks_analysis": greeks  # <-- Attach the new data
+            }
+
+        except Exception as e:
+            log.error(f"Error processing Angel One options data for {ticker_symbol}: {e}", exc_info=True)
+            return None
+
+    else:
+        # --- Original yfinance logic (remains as fallback) ---
+        try:
+            log.warning("Options greeks are not available with the yfinance fallback.")
+            ticker = yf.Ticker(ticker_symbol)
+            if not ticker.options:
+                return None
+
+            opt = ticker.option_chain(ticker.options[0])
+            calls, puts = opt.calls, opt.puts
+
+            pcr_volume = puts['volume'].sum() / calls['volume'].sum() if calls['volume'].sum() > 0 else 0
+            pcr_oi = puts['openInterest'].sum() / calls['openInterest'].sum() if calls['openInterest'].sum() > 0 else 0
+            max_oi_call_strike = calls.loc[calls['openInterest'].idxmax()]['strike']
+            max_oi_put_strike = puts.loc[puts['openInterest'].idxmax()]['strike']
+
+            atm_calls = calls.iloc[(calls['strike'] - calls['lastPrice'].iloc[-1]).abs().argsort()[:5]]
+            atm_puts = puts.iloc[(puts['strike'] - puts['lastPrice'].iloc[-1]).abs().argsort()[:5]]
+            avg_iv = pd.concat([atm_calls['impliedVolatility'], atm_puts['impliedVolatility']]).mean()
+
+            return {
+                "put_call_ratio_volume": round(pcr_volume, 2),
+                "put_call_ratio_oi": round(pcr_oi, 2),
+                "max_oi_call_strike": max_oi_call_strike,
+                "max_oi_put_strike": max_oi_put_strike,
+                "average_iv": f"{avg_iv:.2%}"
+            }
+
+        except Exception as e:
+            log.warning(f"Could not retrieve yfinance options data for {ticker_symbol}. Error: {e}")
+            return None
+
+
+def get_intraday_data(ticker_symbol: str):
+    """MODIFIED: Fetches recent 15-minute intraday data for a stock."""
+    if config.DATA_SOURCE == "angelone":
+        to_date = datetime.now()
+        from_date = to_date - timedelta(days=2) # Fetch last 2 days of data
+        return angelone_retriever.get_historical_data(
+            ticker_symbol,
+            from_date.strftime('%Y-%m-%d %H:%M'),
+            to_date.strftime('%Y-%m-%d %H:%M'),
+            "FIFTEEN_MINUTE"
+        )
+    else:
+        try:
+            log.info(f"[yfinance] Getting 15-min intraday data for {ticker_symbol}...")
+            df = yf.Ticker(ticker_symbol).history(period="2d", interval="15m")
+            if df.empty: return None
+            df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
+            return df
+        except Exception as e:
+            log.error(f"Error fetching yfinance intraday data for {ticker_symbol}: {e}")
+            return None
+
+def get_stored_fundamentals(ticker: str) -> dict:
+    """Fetches curated fundamental data from the 'fundamentals' MongoDB collection."""
+    if database_manager.db is None:
+        log.warning("Cannot fetch fundamentals, DB not initialized.")
+        return {"error": "Database not initialized."}
+    
+    try:
+        fundamentals_collection = database_manager.db.fundamentals
+        data = fundamentals_collection.find_one({'ticker': ticker})
+        if data:
+            data.pop('_id', None) # Remove the MongoDB-specific ID
+            return data
+        else:
+            return {"status": "Data not found in fundamentals collection."}
     except Exception as e:
-        log.error(f"Error fetching live financial data for {ticker_symbol}: {e}")
-        return None
+        log.error(f"Error fetching stored fundamentals for {ticker}: {e}")
+        return {"error": str(e)}
+
+def get_live_market_depth(ticker: str) -> dict:
+    """Fetches live market depth from Angel One and calculates Order Book Imbalance."""
+    if config.DATA_SOURCE != "angelone":
+        return {"status": "Market depth only available from Angel One."}
+    
+    try:
+        depth_data = angelone_retriever.get_market_depth(ticker)
+        if not depth_data or 'bids' not in depth_data or 'asks' not in depth_data:
+            return {"status": "Incomplete market depth data."}
+
+        total_bid_qty = sum(item['quantity'] for item in depth_data['bids'])
+        total_ask_qty = sum(item['quantity'] for item in depth_data['asks'])
+
+        obi_ratio = total_bid_qty / total_ask_qty if total_ask_qty > 0 else float('inf')
+
+        return {
+            "total_bid_quantity": total_bid_qty,
+            "total_ask_quantity": total_ask_qty,
+            "order_book_imbalance": round(obi_ratio, 2)
+        }
+    except Exception as e:
+        log.error(f"Error fetching market depth for {ticker}: {e}")
+        return {"error": str(e)}
+    
+# ===================================================================
+# UNCHANGED FUNCTIONS
+# These functions are either placeholders or are better served by yfinance/NewsAPI
+# for broad market data, which is not the specialty of a broker API.
+# ===================================================================
 
 def get_nifty50_performance():
     """
@@ -341,75 +513,6 @@ def get_index_option_data(index_ticker: str) -> dict:
     except Exception as e:
         log.warning(f"Could not fetch or process option chain data for {index_ticker}. Error: {e}")
         return None
-
-def get_intraday_data(ticker_symbol: str):
-    """Fetches recent 15-minute intraday data for a stock."""
-    try:
-        log.info(f"[FETCH] Getting 15-min intraday data for {ticker_symbol}...")
-        ticker = yf.Ticker(ticker_symbol)
-        df = ticker.history(period="2d", interval="15m")
-        if df.empty:
-            log.warning(f"No intraday data returned for {ticker_symbol}.")
-            return None
-            
-        # --- THIS IS THE FIX ---
-        # Normalize column names to lowercase for consistency
-        df.rename(columns={
-            'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'
-        }, inplace=True)
-        # ----------------------
-
-        return df
-    except Exception as e:
-        log.error(f"Error fetching intraday data for {ticker_symbol}: {e}")
-        return None
-
-def get_options_data(ticker_symbol: str):
-    """
-    Fetches key options chain data for a stock, including PCR by OI and Volume,
-    Max OI levels, and average Implied Volatility.
-    """
-    log.info(f"[FETCH] Getting immersive options chain data for {ticker_symbol}...")
-    try:
-        ticker = yf.Ticker(ticker_symbol)
-        
-        # Get the option chain for the nearest expiration date
-        # First, check if there are any option expiry dates available
-        if not ticker.options:
-            log.warning(f"No options chain data found for {ticker_symbol}.")
-            return None
-        
-        opt = ticker.option_chain(ticker.options[0])
-        calls = opt.calls
-        puts = opt.puts
-
-        # --- Calculate Key Metrics ---
-
-        # 1. Put-Call Ratios (both are important)
-        pcr_volume = puts['volume'].sum() / calls['volume'].sum() if calls['volume'].sum() > 0 else 0
-        pcr_oi = puts['openInterest'].sum() / calls['openInterest'].sum() if calls['openInterest'].sum() > 0 else 0
-
-        # 2. Max OI Strikes (Key Support & Resistance)
-        max_oi_call_strike = calls.loc[calls['openInterest'].idxmax()]['strike']
-        max_oi_put_strike = puts.loc[puts['openInterest'].idxmax()]['strike']
-        
-        # 3. Implied Volatility (Market's Fear/Expectation Gauge)
-        # We calculate a weighted average IV for at-the-money options
-        atm_calls = calls.iloc[(calls['strike'] - calls['lastPrice'].iloc[-1]).abs().argsort()[:5]]
-        atm_puts = puts.iloc[(puts['strike'] - puts['lastPrice'].iloc[-1]).abs().argsort()[:5]]
-        avg_iv = pd.concat([atm_calls['impliedVolatility'], atm_puts['impliedVolatility']]).mean()
-
-        return {
-            "put_call_ratio_volume": round(pcr_volume, 2),
-            "put_call_ratio_oi": round(pcr_oi, 2),
-            "max_oi_call_strike": max_oi_call_strike,
-            "max_oi_put_strike": max_oi_put_strike,
-            "average_iv": f"{avg_iv:.2%}" # Format as percentage
-        }
-        
-    except Exception as e:
-        log.warning(f"Could not retrieve options data for {ticker_symbol}. It may not be an F&O stock. Error: {e}")
-        return None
     
 def get_social_sentiment(ticker_symbol: str):
     """
@@ -520,131 +623,3 @@ def get_news_articles_for_ticker(ticker_symbol: str, company_info: dict = None) 
     except Exception as e:
         log.error(f"❌ yfinance Fallback also failed for {ticker_symbol}: {e}")
         return {"type": "News Fetch Error", "articles": []}
-
-def get_market_regime() -> str:
-    """
-    Determines the current market regime based on NIFTY 50's EMAs.
-    Returns 'Bullish', 'Bearish', or 'Neutral'.
-    """
-    log.info("Determining current market regime...")
-    try:
-        # Fetch about a year's worth of data for the NIFTY 50 index
-        nifty = yf.Ticker("^NSEI")
-        hist = nifty.history(period="1y")
-
-        if len(hist) < 100:
-            log.warning("Not enough NIFTY 50 data to determine market regime.")
-            return "Neutral"
-
-        # Calculate 20, 50, and 100-day Exponential Moving Averages
-        hist.ta.ema(length=20, append=True)
-        hist.ta.ema(length=50, append=True)
-        hist.ta.ema(length=100, append=True)
-        hist.dropna(inplace=True)
-
-        # Get the latest values
-        latest_emas = hist.iloc[-1]
-        ema_20 = latest_emas['EMA_20']
-        ema_50 = latest_emas['EMA_50']
-        ema_100 = latest_emas['EMA_100']
-
-        # Determine the regime
-        if ema_20 > ema_50 > ema_100:
-            regime = "Bullish"
-        elif ema_20 < ema_50 < ema_100:
-            regime = "Bearish"
-        else:
-            regime = "Neutral"
-        
-        log.info(f"Current Market Regime determined as: {regime}")
-        return regime
-
-    except Exception as e:
-        log.error(f"Failed to determine market regime: {e}")
-        # Default to Neutral in case of any error
-        return "Neutral"
-    
-def calculate_regime_from_data(historical_data: pd.DataFrame) -> str:
-    """
-    Calculates the market regime from a given DataFrame of historical index data.
-    Returns 'Bullish', 'Bearish', or 'Neutral'.
-    """
-    if historical_data is None or len(historical_data) < 100:
-        return "Neutral" # Not enough data to determine
-
-    try:
-        # Use a copy to avoid SettingWithCopyWarning
-        data = historical_data.copy()
-        data.ta.ema(length=20, append=True)
-        data.ta.ema(length=50, append=True)
-        data.ta.ema(length=100, append=True)
-        data.dropna(inplace=True)
-
-        latest_emas = data.iloc[-1]
-        ema_20 = latest_emas['EMA_20']
-        ema_50 = latest_emas['EMA_50']
-        ema_100 = latest_emas['EMA_100']
-
-        if ema_20 > ema_50 > ema_100:
-            return "Bullish"
-        elif ema_20 < ema_50 < ema_100:
-            return "Bearish"
-        else:
-            return "Neutral"
-    except Exception:
-        return "Neutral" # Default to Neutral on any error
-    
-def get_fundamental_proxies(data_slice: pd.DataFrame) -> dict:
-    """
-    Calculates fundamental proxy metrics using point-in-time historical price data.
-    This version correctly uses UPPERCASE column names.
-    """
-    if data_slice is None or len(data_slice) < 252:
-        return {
-            "valuation_proxy": "N/A",
-            "quality_proxy_volatility": "N/A",
-            "quality_score": 50 # Return a neutral default score
-        }
-
-    # --- Proxy 1: Valuation (52-Week Range Position) ---
-    high_52_week = data_slice['high'].iloc[-252:].max()
-    low_52_week = data_slice['low'].iloc[-252:].min()
-    latest_close = data_slice['close'].iloc[-1]
-    
-    valuation_range_score = 100
-    if (high_52_week - low_52_week) > 0:
-        valuation_range_score = ((latest_close - low_52_week) / (high_52_week - low_52_week)) * 100
-
-    # --- Proxy 2: Quality/Durability (Realized Volatility) ---
-    returns_90_day = data_slice['close'].iloc[-90:].pct_change()
-    realized_volatility_90d = returns_90_day.std() * (252**0.5) # Annualized volatility
-
-    # --- Convert Proxies to a final "Quality Score" ---
-    capped_vol = min(realized_volatility_90d, 0.50)
-    quality_score = (1 - (capped_vol / 0.50)) * 100
-    
-    return {
-        "valuation_proxy": f"{valuation_range_score:.1f}% of 52-Week Range",
-        "quality_proxy_volatility": f"{realized_volatility_90d:.2%}",
-        "quality_score": int(quality_score)
-    }
-    
-def get_volatility_regime(historical_vix_data: pd.DataFrame) -> str:
-    """
-    Classify volatility environment based on India VIX.
-    Returns one of: "High-Risk", "Low", "Normal"
-    """
-    if historical_vix_data is None or len(historical_vix_data) < 20:
-        return "Normal"
-    try:
-        latest_vix = historical_vix_data['close'].iloc[-1]   # <-- lowercase
-        vix_20_day_avg = historical_vix_data['close'].rolling(window=20).mean().iloc[-1]
-        HIGH_VIX_THRESHOLD = 20.0
-        if latest_vix > HIGH_VIX_THRESHOLD and latest_vix > (vix_20_day_avg * 1.15):
-            return "High-Risk"
-        elif latest_vix < 14:
-            return "Low"
-        else:
-            return "Normal"
-    except Exception:
-        return "Normal"

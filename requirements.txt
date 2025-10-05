@@ -1,4 +1,4 @@
-# requirements.txt (Corrected and Final Version)
+# requirements.txt
 
 # --- Web Framework & Server ---
 gunicorn
@@ -26,4 +26,4 @@ matplotlib
 google-generativeai
 firebase-admin
 sentry-sdk[flask]
-Flask-CORS
+smartapi-python
