@@ -13,42 +13,19 @@ import sys
 import os
 import logging # Make sure logging is imported
 
-# =======================================================
-# CHECK THE FILESYSTEM
-# =======================================================
-site_packages_path = '/opt/render/project/src/.venv/lib/python3.12/site-packages'
-print(f"\n--- CHECKING CONTENTS OF: {site_packages_path} ---")
-try:
-    contents = os.listdir(site_packages_path)
-    print(f"Directory exists. Found {len(contents)} items.")
-    
-    found_it = False
-    for item in contents:
-        if 'smartapi' in item.lower():
-            print(f"  -> Found a file/folder containing 'smartapi': {item}")
-            found_it = True
-    
-    if not found_it:
-        print("!!! CRITICAL: DID NOT FIND ANY 'smartapi' FOLDER IN site-packages.")
+# # You must install the Angel One SDK first:
+# # pip install smartapi-python
+# try:
+#     print("Attempting to import SmartConnect...")
+#     from smartapi import SmartConnect
+#     print("Successfully imported SmartConnect.")
+# except ImportError as e:
+#     # This will log the TRUE, detailed error message to your console
+#     print(f"!!! DETAILED IMPORT ERROR: {e}")
+#     logging.getLogger("ScrybeAI").error(f"Detailed import error for smartapi", exc_info=True)
+#     raise e
 
-except FileNotFoundError:
-    print(f"!!! CRITICAL: The site-packages directory was NOT FOUND at {site_packages_path}")
-except Exception as e:
-    print(f"!!! An error occurred while listing site-packages: {e}")
-print("--- FINISHED CHECKING CONTENTS ---\n")
-# =======================================================
-
-# You must install the Angel One SDK first:
-# pip install smartapi-python
-try:
-    print("Attempting to import SmartConnect...")
-    from smartapi import SmartConnect
-    print("Successfully imported SmartConnect.")
-except ImportError as e:
-    # This will log the TRUE, detailed error message to your console
-    print(f"!!! DETAILED IMPORT ERROR: {e}")
-    logging.getLogger("ScrybeAI").error(f"Detailed import error for smartapi", exc_info=True)
-    raise e
+from smartapi import SmartConnect
 
 # --- Module-Level API Session & Cache Management ---
 smart_api_session = None

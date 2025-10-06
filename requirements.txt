@@ -26,4 +26,3 @@ matplotlib
 google-generativeai
 firebase-admin
 sentry-sdk[flask]
-smartapi-python
