@@ -9,15 +9,28 @@ from logger_config import log
 import config  # To get API keys and credentials
 import time
 from datetime import datetime
+import sys
+import os
+import logging # Make sure logging is imported
+
+print("--- STARTING SCRYBE-AI DEBUG ---")
+print(f"Current Working Directory: {os.getcwd()}")
+print("Python sys.path:")
+for path in sys.path:
+    print(f"  - {path}")
+print("--- END OF DEBUG INFO ---\n")
 
 # You must install the Angel One SDK first:
 # pip install smartapi-python
 try:
+    print("Attempting to import SmartConnect...")
     from smartapi import SmartConnect
-except ImportError:
-    log.error("The 'smartapi-python' library is not installed. Please run: pip install smartapi-python")
-    # Exit or handle appropriately if the core dependency is missing
-    raise
+    print("Successfully imported SmartConnect.")
+except ImportError as e:
+    # This will log the TRUE, detailed error message to your console
+    print(f"!!! DETAILED IMPORT ERROR: {e}")
+    logging.getLogger("ScrybeAI").error(f"Detailed import error for smartapi", exc_info=True)
+    raise e
 
 # --- Module-Level API Session & Cache Management ---
 smart_api_session = None
