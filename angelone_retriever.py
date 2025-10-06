@@ -1,4 +1,4 @@
-# angelone_retriever.py (Cleaned Version 2.0)
+# angelone_retriever.py
 # DESIGN PHILOSOPHY:
 # This module is the single, comprehensive gateway for all Angel One API data.
 # It prioritizes data richness and completeness over efficiency. The goal is to
@@ -13,12 +13,30 @@ import sys
 import os
 import logging # Make sure logging is imported
 
-print("--- STARTING SCRYBE-AI DEBUG ---")
-print(f"Current Working Directory: {os.getcwd()}")
-print("Python sys.path:")
-for path in sys.path:
-    print(f"  - {path}")
-print("--- END OF DEBUG INFO ---\n")
+# =======================================================
+# CHECK THE FILESYSTEM
+# =======================================================
+site_packages_path = '/opt/render/project/src/.venv/lib/python3.12/site-packages'
+print(f"\n--- CHECKING CONTENTS OF: {site_packages_path} ---")
+try:
+    contents = os.listdir(site_packages_path)
+    print(f"Directory exists. Found {len(contents)} items.")
+    
+    found_it = False
+    for item in contents:
+        if 'smartapi' in item.lower():
+            print(f"  -> Found a file/folder containing 'smartapi': {item}")
+            found_it = True
+    
+    if not found_it:
+        print("!!! CRITICAL: DID NOT FIND ANY 'smartapi' FOLDER IN site-packages.")
+
+except FileNotFoundError:
+    print(f"!!! CRITICAL: The site-packages directory was NOT FOUND at {site_packages_path}")
+except Exception as e:
+    print(f"!!! An error occurred while listing site-packages: {e}")
+print("--- FINISHED CHECKING CONTENTS ---\n")
+# =======================================================
 
 # You must install the Angel One SDK first:
 # pip install smartapi-python
