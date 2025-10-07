@@ -46,7 +46,7 @@ jobs:
           ANGELONE_API_KEY: ${{ secrets.ANGELONE_API_KEY }}
           ANGELONE_CLIENT_ID: ${{ secrets.ANGELONE_CLIENT_ID }}
           ANGELONE_PASSWORD: ${{ secrets.ANGELONE_PASSWORD }}
-          ANGELONE_TOTP: ${{ secrets.ANGELONE_TOTP }}
+          ANGELONE_TOTP_SECRET: ${{ secrets.ANGELONE_TOTP_SECRET }}
           
           # Database & Other API Keys
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
