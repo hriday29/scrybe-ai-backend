@@ -62,6 +62,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
     
     # Pre-load all data needed for the entire simulation period
     try:
+        log.info("--- Starting massive data pre-load. This may take a while and use significant memory... ---")
         # (Data loading logic remains the same as before)
         script_dir = os.path.dirname(os.path.abspath(__file__))
         csv_path = os.path.join(script_dir, 'nifty50_historical_constituents.csv')
@@ -75,6 +76,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
             for ticker in (all_past_tickers + required_indices)
         }
         full_data_cache = {k: v for k, v in full_data_cache.items() if v is not None and not v.empty}
+        log.info(f"--- ✅ Data pre-load complete. In-memory cache size: {len(full_data_cache)} tickers. ---")
         log.info("✅ All historical data has been pre-loaded.")
     except Exception as e:
         log.fatal(f"Failed during data loading: {e}")
