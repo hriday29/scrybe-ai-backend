@@ -107,7 +107,13 @@ cache = Cache(app)
 
 # Initialize the AI Analyzer once on startup for efficiency
 try:
-    ai_analyzer_instance = AIAnalyzer(config.GEMINI_API_KEY)
+    # Use the first key from the pool to initialize the AI Analyzer for the API
+    if config.GEMINI_API_KEY_POOL:
+        ai_analyzer_instance = AIAnalyzer(config.GEMINI_API_KEY_POOL[0])
+    else:
+        # Handle the case where no keys are configured
+        log.error("CRITICAL: No Gemini API keys found in the configuration. AI features will fail.")
+        ai_analyzer_instance = None 
 except ValueError as e:
     log.fatal(f"Could not initialize AI Analyzer: {e}")
     ai_analyzer_instance = None
