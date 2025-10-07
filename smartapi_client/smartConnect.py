@@ -1,7 +1,6 @@
 from six.moves.urllib.parse import urljoin
 import json
 import logging
-import SmartApi.smartExceptions as ex
 import requests
 from requests import get
 import re, uuid
@@ -11,7 +10,8 @@ import logzero
 from logzero import logger
 import time
 import ssl
-from SmartApi.version import __version__, __title__
+from . import smartExceptions as ex
+from .version import __version__, __title__
 
 log = logging.getLogger(__name__)
 
