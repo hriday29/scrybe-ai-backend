@@ -20,7 +20,7 @@ from collections import deque
 from sector_analyzer import CORE_SECTOR_INDICES, BENCHMARK_INDEX
 import random
 import technical_analyzer
-from analysis_pipeline import AnalysisPipeline
+from analysis_pipeline import AnalysisPipeline, BENCHMARK_TICKERS
 
 STATE_FILE = 'simulation_state.json'
 
@@ -68,7 +68,6 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
         constituents_df = pd.read_csv(csv_path)
         constituents_df['date'] = pd.to_datetime(constituents_df['date'])
         all_past_tickers = constituents_df['ticker'].unique().tolist()
-        from analysis_pipeline import BENCHMARK_TICKERS # <-- Add this import at the top
         required_indices = list(sector_analyzer.CORE_SECTOR_INDICES.values()) + [sector_analyzer.BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())
         full_data_cache = { ... for ticker in (all_past_tickers + required_indices) }
         full_data_cache = {
