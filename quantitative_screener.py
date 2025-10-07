@@ -6,6 +6,7 @@ from logger_config import log
 import pandas_ta as ta
 import yfinance as yf
 import os
+import database_manager
 
 # --- Sector Mapping ---
 SECTOR_NAME_MAPPING = {
@@ -24,26 +25,42 @@ MIN_AVG_VOLUME = 500000
 TREND_CHECK_EMA = 50
 
 # --- Fundamental Health Check ---
-def _passes_fundamental_health_check(ticker: str, data_slice: pd.DataFrame) -> bool:
+def _passes_fundamental_health_check(ticker: str, point_in_time: pd.Timestamp) -> bool:
     """
-    Performs a robust, UNIFIED fundamental check using price-based proxies.
-    This ensures the logic is 100% consistent between the backtester and live run.
+    --- FINAL VERSION ---
+    Performs a point-in-time, UTC-aware fundamental check. This is the definitive fix.
     """
-    if data_slice is None or data_slice.empty:
-        return False
-        
     try:
-        proxies = data_retriever.get_fundamental_proxies(data_slice)
-        quality_score = proxies.get("quality_score", 0)
+        # --- TIMEZONE FIX: Convert the backtest's current time to a UTC datetime object for the query ---
+        point_in_time_utc = pd.to_datetime(point_in_time, utc=True).to_pydatetime()
+
+        cursor = database_manager.db.fundamentals.find({
+            "ticker": ticker,
+            "asOfDate": {"$lte": point_in_time_utc} # Query using the UTC-aware date
+        }).sort("asOfDate", -1).limit(1)
+
+        results = list(cursor)
+        if not results:
+            log.warning(f"No point-in-time fundamentals found for {ticker} on or before {point_in_time.date()}.")
+            return False
         
-        # A score of 50 is neutral. We screen for stocks better than neutral.
-        if quality_score > 55:
+        fundamentals = results[0]
+
+        roe = fundamentals.get("returnOnEquity")
+        margins = fundamentals.get("profitMargins")
+
+        passes_roe_check = roe is not None and roe > 0.12
+        passes_margins_check = margins is not None and margins > 0.08
+
+        if passes_roe_check and passes_margins_check:
+            log.info(f"✅ {ticker} passed point-in-time fundamental check for {point_in_time.date()} (using report from {fundamentals['asOfDate'].date()})")
             return True
         else:
+            log.warning(f"-> {ticker} failed point-in-time fundamental check for {point_in_time.date()} (ROE: {roe}, Margin: {margins})")
             return False
             
     except Exception as e:
-        log.warning(f"Could not perform fundamental proxy check for {ticker}. Error: {e}. Skipping.")
+        log.error(f"Error during point-in-time fundamental check for {ticker}: {e}. The stock will fail the check.")
         return False
 
 # --- Sector Map ---
@@ -91,7 +108,7 @@ def _passes_preflight_checks_single(ticker: str, data: pd.DataFrame, stock_secto
     if df['volume'].tail(20).mean() < MIN_AVG_VOLUME: return False
     
     # 3. Fundamental Health Check - **FIXED: Passing the data slice**
-    if not _passes_fundamental_health_check(ticker, df):
+    if not _passes_fundamental_health_check(ticker, point_in_time):
         return False
         
     return True
@@ -171,7 +188,7 @@ def _prepare_filtered_universe(strong_sectors: list[str], full_data_cache: dict,
         if df_slice['volume'].tail(20).mean() < MIN_AVG_VOLUME: continue
         
         # **FIXED: Passing the correct data slice**
-        if not _passes_fundamental_health_check(ticker, df_slice): continue
+        if not _passes_fundamental_health_check(ticker, point_in_time): continue
         
         qualified.append(ticker)
 
@@ -250,7 +267,7 @@ def get_analyzable_universe(full_data_cache: dict, point_in_time: pd.Timestamp) 
         df_slice = data.loc[:point_in_time]
         if df_slice.empty or len(df_slice) < 252: continue
         if df_slice['volume'].tail(20).mean() < MIN_AVG_VOLUME: continue
-        if not _passes_fundamental_health_check(ticker, df_slice): continue
+        if not _passes_fundamental_health_check(ticker, point_in_time): continue
         
         qualified_tickers.append(ticker)
 

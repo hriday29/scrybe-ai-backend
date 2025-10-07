@@ -20,6 +20,7 @@ from collections import deque
 from sector_analyzer import CORE_SECTOR_INDICES, BENCHMARK_INDEX
 import random
 import technical_analyzer
+import index_manager
 from analysis_pipeline import AnalysisPipeline, BENCHMARK_TICKERS
 
 STATE_FILE = 'simulation_state.json'
@@ -79,12 +80,11 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
         log.info(f"\n--- Simulating Day {i+1}/{len(simulation_days)}: {day_str} ---")
 
         # Determine the correct stock universe for THIS specific day
-        available_dates = constituents_df[constituents_df['date'] <= current_day]['date']
-        if available_dates.empty:
-            log.warning(f"No constituent data available on or before {day_str}. Skipping day.")
+        stock_universe_for_today = index_manager.get_point_in_time_nifty50_tickers(current_day)
+
+        if not stock_universe_for_today:
+            log.warning(f"Could not determine stock universe for {day_str} from index_manager. Skipping day.")
             continue
-        latest_constituent_date = available_dates.max()
-        stock_universe_for_today = constituents_df[constituents_df['date'] == latest_constituent_date]['ticker'].tolist()
         
         # Build the list of all tickers needed JUST FOR TODAY
         required_indices = list(sector_analyzer.CORE_SECTOR_INDICES.values()) + [sector_analyzer.BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())

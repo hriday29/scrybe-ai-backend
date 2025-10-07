@@ -16,6 +16,7 @@ import uuid
 from datetime import datetime, timezone
 import performance_context
 import pandas as pd
+import yfinance as yf
 
 BENCHMARK_TICKERS = {
     "S&P 500": "^GSPC",
@@ -261,7 +262,6 @@ class AnalysisPipeline:
                 # --- !! CRITICAL FIX: LIVE FUNDAMENTAL VETO !! ---
                 elif not is_backtest:
                     try:
-                        import yfinance as yf
                         company_info = yf.Ticker(ticker).info
                         roe = company_info.get('returnOnEquity')
                         margins = company_info.get('profitMargins')
@@ -275,7 +275,9 @@ class AnalysisPipeline:
                     result['final_signal'] = 'BUY'
 
             elif ai_signal == 'SELL' and scrybe_score <= -self.active_strategy['min_conviction_score']:
-                veto_reason = "FILTERED: Short-selling disabled"
+                # Only veto if the strategy config explicitly disallows short-selling
+                if not self.active_strategy.get('allow_short_selling', False):
+                    veto_reason = "FILTERED: Short-selling disabled by strategy config"
 
             if veto_reason:
                 result['veto_reason'] = veto_reason

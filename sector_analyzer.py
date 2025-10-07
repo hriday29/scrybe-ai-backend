@@ -60,10 +60,18 @@ def get_top_performing_sectors(full_data_cache: dict, point_in_time: pd.Timestam
     sorted_sectors = sorted(performance.items(), key=lambda item: item[1], reverse=True)
     
     top_sector_names = []
-    for ticker, perf in sorted_sectors[:TOP_N_SECTORS]:
-        sector_name = next((name for name, t in CORE_SECTOR_INDICES.items() if t == ticker), ticker)
-        top_sector_names.append(sector_name)
-        log.info(f"  -> Strong Sector Found: {sector_name} ({perf:+.2f}%)")
+    log.info(f"Filtering for sectors outperforming the benchmark ({benchmark_performance:.2f}%)...")
+    for ticker, perf in sorted_sectors:
+        # --- THIS IS THE FIX ---
+        # Only select sectors that are showing true relative strength
+        if perf > benchmark_performance:
+            sector_name = next((name for name, t in CORE_SECTOR_INDICES.items() if t == ticker), ticker)
+            top_sector_names.append(sector_name)
+            log.info(f"  -> Strong Sector Found: {sector_name} ({perf:+.2f}%)")
+        
+        # Stop once we have found the top N outperformers
+        if len(top_sector_names) >= TOP_N_SECTORS:
+            break
 
     if not top_sector_names:
         log.warning("No sectors were found to be outperforming the market benchmark.")

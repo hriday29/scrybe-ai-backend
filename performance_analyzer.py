@@ -1,4 +1,5 @@
 import pandas as pd
+import config
 from logger_config import log
 
 def calculate_historical_performance(historical_data: pd.DataFrame) -> dict:

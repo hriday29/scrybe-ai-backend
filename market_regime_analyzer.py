@@ -4,6 +4,7 @@ import data_retriever
 from logger_config import log
 import pandas as pd
 import pandas_ta as ta
+import config
 
 def calculate_regime_from_data(historical_data: pd.DataFrame) -> str:
     """
@@ -43,10 +44,9 @@ def get_volatility_regime(historical_vix_data: pd.DataFrame) -> str:
     if historical_vix_data is None or len(historical_vix_data) < 20:
         return "Normal"
     try:
-        latest_vix = historical_vix_data['close'].iloc[-1]   # <-- lowercase
+        latest_vix = historical_vix_data['close'].iloc[-1]
         vix_20_day_avg = historical_vix_data['close'].rolling(window=20).mean().iloc[-1]
-        HIGH_VIX_THRESHOLD = 20.0
-        if latest_vix > HIGH_VIX_THRESHOLD and latest_vix > (vix_20_day_avg * 1.15):
+        if latest_vix > config.HIGH_RISK_VIX_THRESHOLD and latest_vix > (vix_20_day_avg * 1.15):
             return "High-Risk"
         elif latest_vix < 14:
             return "Low"

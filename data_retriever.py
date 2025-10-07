@@ -66,19 +66,21 @@ def save_sector_cache(cache):
 def get_historical_stock_data(ticker_symbol: str, end_date=None):
     """
     Fetches historical daily OHLC stock data with a robust file-caching system
-    for both Angel One and yfinance to optimize backtesting performance.
+    and a new Angel One -> yfinance fallback mechanism.
     """
-    # Define a unique cache file name based on the data source
+    # --- MODIFIED: Normalize ticker for consistent caching and API calls ---
+    clean_ticker = ticker_symbol.replace('.NS', '')
+    
     source_suffix = "AO" if config.DATA_SOURCE == "angelone" else "YF"
     date_suffix = end_date.replace('-', '') if end_date else 'live'
-    cache_file = os.path.join(DATA_CACHE_DIR, f"{ticker_symbol}_{date_suffix}_{source_suffix}.feather")
+    # Use the clean ticker for a consistent cache file name
+    cache_file = os.path.join(DATA_CACHE_DIR, f"{clean_ticker}_{date_suffix}_{source_suffix}.feather")
 
-    # --- Step 1: Check if a cached version of the data exists ---
+    # --- Step 1: Check cache (No changes here) ---
     if os.path.exists(cache_file):
         try:
             log.info(f"CACHE HIT ({source_suffix}): Loading {ticker_symbol} from {cache_file}")
             df = pd.read_feather(cache_file)
-            # Ensure the index is set correctly after loading from cache
             index_col = 'date' if 'date' in df.columns else 'Date'
             df[index_col] = pd.to_datetime(df[index_col])
             df.set_index(index_col, inplace=True)
@@ -86,44 +88,63 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
         except Exception as e:
             log.warning(f"Could not read from cache file {cache_file}. Refetching. Error: {e}")
 
-    # --- Step 2: If no cache, fetch from the selected data source ---
+    # --- Step 2: If no cache, fetch data with new fallback logic ---
     log.info(f"CACHE MISS ({source_suffix}): Fetching data for {ticker_symbol} from API...")
     
     df = None
+    data_source_used = "N/A"
+
+    # --- MODIFIED: Implement Angel One with yfinance fallback ---
     if config.DATA_SOURCE == "angelone":
         try:
+            log.info(f"Attempting to fetch {clean_ticker} from Angel One...")
             to_date_obj = datetime.strptime(end_date, '%Y-%m-%d') if end_date else datetime.now()
             from_date_obj = to_date_obj - timedelta(days=5*365)
             to_date_str = to_date_obj.strftime('%Y-%m-%d')
             from_date_str = from_date_obj.strftime('%Y-%m-%d')
             
-            df = angelone_retriever.get_historical_data(ticker_symbol, f"{from_date_str} 09:15", f"{to_date_str} 15:30", "ONE_DAY")
+            # Use the clean_ticker for the API call
+            df = angelone_retriever.get_historical_data(clean_ticker, f"{from_date_str} 09:15", f"{to_date_str} 15:30", "ONE_DAY")
+            
+            if df is not None and not df.empty:
+                log.info(f"✅ Successfully fetched data for {clean_ticker} from Angel One.")
+                data_source_used = "AngelOne"
+            else:
+                # This 'else' catches cases where the API call succeeds but returns no data.
+                log.warning(f"Angel One returned no data for {clean_ticker}. Triggering fallback.")
+                df = None # Ensure df is None to proceed to fallback
         except Exception as e:
-            log.error(f"Error fetching Angel One historical data for {ticker_symbol}: {e}")
-            return None
-    else: # yfinance
+            log.warning(f"Angel One API failed for {clean_ticker}: {e}. Triggering fallback to yfinance.")
+            df = None # Ensure df is None to proceed to fallback
+
+    # --- MODIFIED: This block now serves as the primary yfinance path AND the Angel One fallback ---
+    if df is None:
         try:
+            log.info(f"Attempting to fetch {ticker_symbol} from yfinance (as primary or fallback)...")
             ticker = yf.Ticker(ticker_symbol)
+            # Fetch 5 years of data, which is a good standard
             df = ticker.history(period="5y", end=end_date)
             if df.empty:
-                df = ticker.history(period="1y", end=end_date)
-            if not df.empty:
+                 log.warning(f"yfinance returned no data for {ticker_symbol}.")
+            else:
                 df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
                 df.index.name = 'Date' # Standardize index name
+                log.info(f"✅ Successfully fetched data for {ticker_symbol} from yfinance.")
+                data_source_used = "yfinance"
         except Exception as e:
-            log.error(f"Error fetching yfinance historical data for {ticker_symbol}: {e}")
+            log.error(f"yfinance fetch also failed for {ticker_symbol}: {e}")
             return None
 
-    # --- Step 3: If data was fetched successfully, save it to the cache ---
+    # --- Step 3: Cache the successfully fetched data (No changes here) ---
     if df is not None and not df.empty:
         try:
-            df.index = df.index.tz_localize(None) # Ensure timezone is removed before saving
+            df.index = df.index.tz_localize(None)
             df.reset_index().to_feather(cache_file)
-            log.info(f"CACHE WRITE ({source_suffix}): Saved {ticker_symbol} data to {cache_file}")
+            log.info(f"CACHE WRITE ({data_source_used}): Saved {ticker_symbol} data to {cache_file}")
         except Exception as e:
             log.warning(f"Failed to write to cache file {cache_file}. Error: {e}")
     else:
-        log.warning(f"No historical data returned for {ticker_symbol}.")
+        log.warning(f"No historical data could be retrieved for {ticker_symbol} from any source.")
 
     return df
 

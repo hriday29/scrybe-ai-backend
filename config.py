@@ -46,13 +46,13 @@ if not EMAIL_RECIPIENTS:
     EMAIL_RECIPIENTS = BETA_TESTER_EMAILS
 
 # --- Models ---
-PRO_MODEL = "gemini-1.5-pro-latest"
-FLASH_MODEL = "gemini-1.5-flash-latest"
+PRO_MODEL = "gemini-2.5-pro"
+FLASH_MODEL = "gemini-2.5-flash"
 
 # --- Strategy & Portfolio ---
 APEX_SWING_STRATEGY = {
     "name": "AI_Analyst_v1", # Reflects the new AI-driven strategy
-    "allow_short_selling": True, # A master switch for SELL signals
+    "allow_short_selling": False, # A master switch for SELL signals
     "holding_period": 10,
     "stop_loss_atr_multiplier": 2.0,
     "profit_target_rr_multiple": 2.0,
