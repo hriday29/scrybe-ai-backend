@@ -65,45 +65,67 @@ def save_sector_cache(cache):
 
 def get_historical_stock_data(ticker_symbol: str, end_date=None):
     """
-    MODIFIED: Fetches historical daily OHLC stock data using the source specified in config.py.
+    Fetches historical daily OHLC stock data with a robust file-caching system
+    for both Angel One and yfinance to optimize backtesting performance.
     """
+    # Define a unique cache file name based on the data source
+    source_suffix = "AO" if config.DATA_SOURCE == "angelone" else "YF"
+    date_suffix = end_date.replace('-', '') if end_date else 'live'
+    cache_file = os.path.join(DATA_CACHE_DIR, f"{ticker_symbol}_{date_suffix}_{source_suffix}.feather")
+
+    # --- Step 1: Check if a cached version of the data exists ---
+    if os.path.exists(cache_file):
+        try:
+            log.info(f"CACHE HIT ({source_suffix}): Loading {ticker_symbol} from {cache_file}")
+            df = pd.read_feather(cache_file)
+            # Ensure the index is set correctly after loading from cache
+            index_col = 'date' if 'date' in df.columns else 'Date'
+            df[index_col] = pd.to_datetime(df[index_col])
+            df.set_index(index_col, inplace=True)
+            return df
+        except Exception as e:
+            log.warning(f"Could not read from cache file {cache_file}. Refetching. Error: {e}")
+
+    # --- Step 2: If no cache, fetch from the selected data source ---
+    log.info(f"CACHE MISS ({source_suffix}): Fetching data for {ticker_symbol} from API...")
+    
+    df = None
     if config.DATA_SOURCE == "angelone":
-        # Angel One requires a date range. We'll calculate an approximate 5-year range.
-        to_date_obj = datetime.strptime(end_date, '%Y-%m-%d') if end_date else datetime.now()
-        from_date_obj = to_date_obj - timedelta(days=5*365)
-        to_date_str = to_date_obj.strftime('%Y-%m-%d')
-        from_date_str = from_date_obj.strftime('%Y-%m-%d')
-        # Note: Angel One's historical API might need specific time formatting
-        return angelone_retriever.get_historical_data(ticker_symbol, f"{from_date_str} 09:15", f"{to_date_str} 15:30", "ONE_DAY")
-    else:
-        # --- Original yfinance logic with caching ---
-        date_suffix = end_date.replace('-', '') if end_date else 'live'
-        cache_file = os.path.join(DATA_CACHE_DIR, f"{ticker_symbol}_{date_suffix}.feather")
-        if os.path.exists(cache_file):
-            try:
-                log.info(f"CACHE HIT: Loading {ticker_symbol} data from {cache_file}")
-                df = pd.read_feather(cache_file)
-                df.set_index('Date', inplace=True)
-                return df
-            except Exception as e:
-                log.warning(f"Could not read from cache file {cache_file}. Error: {e}. Refetching.")
-        log.info(f"CACHE MISS: Fetching historical data for {ticker_symbol} from Yahoo Finance...")
+        try:
+            to_date_obj = datetime.strptime(end_date, '%Y-%m-%d') if end_date else datetime.now()
+            from_date_obj = to_date_obj - timedelta(days=5*365)
+            to_date_str = to_date_obj.strftime('%Y-%m-%d')
+            from_date_str = from_date_obj.strftime('%Y-%m-%d')
+            
+            df = angelone_retriever.get_historical_data(ticker_symbol, f"{from_date_str} 09:15", f"{to_date_str} 15:30", "ONE_DAY")
+        except Exception as e:
+            log.error(f"Error fetching Angel One historical data for {ticker_symbol}: {e}")
+            return None
+    else: # yfinance
         try:
             ticker = yf.Ticker(ticker_symbol)
             df = ticker.history(period="5y", end=end_date)
             if df.empty:
                 df = ticker.history(period="1y", end=end_date)
-            if df.empty:
-                log.warning(f"No historical data returned for {ticker_symbol}.")
-                return None
-            df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
-            df.index = df.index.tz_localize(None)
-            df.reset_index().to_feather(cache_file)
-            log.info(f"CACHE WRITE: Saved {ticker_symbol} data to {cache_file}")
-            return df.set_index('Date')
+            if not df.empty:
+                df.rename(columns={'Open': 'open', 'High': 'high', 'Low': 'low', 'Close': 'close', 'Volume': 'volume'}, inplace=True)
+                df.index.name = 'Date' # Standardize index name
         except Exception as e:
             log.error(f"Error fetching yfinance historical data for {ticker_symbol}: {e}")
             return None
+
+    # --- Step 3: If data was fetched successfully, save it to the cache ---
+    if df is not None and not df.empty:
+        try:
+            df.index = df.index.tz_localize(None) # Ensure timezone is removed before saving
+            df.reset_index().to_feather(cache_file)
+            log.info(f"CACHE WRITE ({source_suffix}): Saved {ticker_symbol} data to {cache_file}")
+        except Exception as e:
+            log.warning(f"Failed to write to cache file {cache_file}. Error: {e}")
+    else:
+        log.warning(f"No historical data returned for {ticker_symbol}.")
+
+    return df
 
 def get_live_financial_data(ticker_symbol: str):
     """

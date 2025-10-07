@@ -38,8 +38,8 @@ def load_state():
 api_call_timestamps = deque()
 def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: bool = False):
     """
-    Runs a unified, day-by-day backtest simulation.
-    Generates predictions and simulates portfolio performance in a single loop.
+    Runs a memory-efficient, day-by-day backtest simulation using on-demand data loading
+    with file caching for the Angel One data source.
     """
     log.info(f"### STARTING UNIFIED SIMULATION FOR BATCH: {batch_id} ###")
     log.info(f"Period: {start_date} to {end_date}")
@@ -52,7 +52,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
         database_manager.predictions_collection.delete_many({"batch_id": batch_id})
         database_manager.performance_collection.delete_many({"batch_id": batch_id})
 
-    # --- 1. PORTFOLIO & DATA SETUP ---
+    # --- 1. PORTFOLIO & SETUP (NO DATA PRE-LOADING) ---
     portfolio = {
         'equity': config.BACKTEST_PORTFOLIO_CONFIG['initial_capital'],
         'open_positions': [],
@@ -60,53 +60,57 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
         'daily_equity_log': []
     }
     
-    # Pre-load all data needed for the entire simulation period
+    # We only load the historical constituents list. All market data is loaded on-demand.
     try:
-        log.info("--- Starting massive data pre-load. This may take a while and use significant memory... ---")
-        # (Data loading logic remains the same as before)
         script_dir = os.path.dirname(os.path.abspath(__file__))
         csv_path = os.path.join(script_dir, 'nifty50_historical_constituents.csv')
         constituents_df = pd.read_csv(csv_path)
         constituents_df['date'] = pd.to_datetime(constituents_df['date'])
-        all_past_tickers = constituents_df['ticker'].unique().tolist()
-        required_indices = list(sector_analyzer.CORE_SECTOR_INDICES.values()) + [sector_analyzer.BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())
-        full_data_cache = { ... for ticker in (all_past_tickers + required_indices) }
-        full_data_cache = {
-            ticker: data_retriever.get_historical_stock_data(ticker, end_date=end_date)
-            for ticker in (all_past_tickers + required_indices)
-        }
-        full_data_cache = {k: v for k, v in full_data_cache.items() if v is not None and not v.empty}
-        log.info(f"--- ✅ Data pre-load complete. In-memory cache size: {len(full_data_cache)} tickers. ---")
-        log.info("✅ All historical data has been pre-loaded.")
+        log.info("✅ Historical constituents list loaded.")
     except Exception as e:
-        log.fatal(f"Failed during data loading: {e}")
+        log.fatal(f"Failed during setup: Could not load constituents file. Error: {e}")
         return
 
     # --- 2. DAILY SIMULATION LOOP ---
     simulation_days = pd.bdate_range(start=start_date, end=end_date)
+
     for i, current_day in enumerate(simulation_days):
         day_str = current_day.strftime('%Y-%m-%d')
         log.info(f"\n--- Simulating Day {i+1}/{len(simulation_days)}: {day_str} ---")
 
-        # A. MANAGE EXITS: Check existing positions against today's market open/high/low
-        _manage_exits_for_day(portfolio, current_day, full_data_cache, batch_id)
-
-        # B. GENERATE NEW SIGNALS: Run the pipeline to find today's opportunities
-        # (Universe selection logic remains the same)
+        # Determine the correct stock universe for THIS specific day
         available_dates = constituents_df[constituents_df['date'] <= current_day]['date']
-        if available_dates.empty: continue
+        if available_dates.empty:
+            log.warning(f"No constituent data available on or before {day_str}. Skipping day.")
+            continue
         latest_constituent_date = available_dates.max()
         stock_universe_for_today = constituents_df[constituents_df['date'] == latest_constituent_date]['ticker'].tolist()
-        universe_cache = {ticker: full_data_cache[ticker] for ticker in (stock_universe_for_today + required_indices) if ticker in full_data_cache}
+        
+        # Build the list of all tickers needed JUST FOR TODAY
+        required_indices = list(sector_analyzer.CORE_SECTOR_INDICES.values()) + [sector_analyzer.BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())
+        tickers_for_today = list(set(stock_universe_for_today + required_indices))
+        
+        # Load ONLY the data needed for today. 
+        # data_retriever will use its file cache for Angel One, making this fast and memory-efficient.
+        log.info(f"Loading data for {len(tickers_for_today)} assets for {day_str}...")
+        data_cache_for_today = {
+            ticker: data_retriever.get_historical_stock_data(ticker, end_date=end_date)
+            for ticker in tickers_for_today
+        }
+        data_cache_for_today = {k: v for k, v in data_cache_for_today.items() if v is not None and not v.empty}
+        
+        # A. MANAGE EXITS: Check existing positions against today's market data
+        _manage_exits_for_day(portfolio, current_day, data_cache_for_today, batch_id)
 
+        # B. GENERATE NEW SIGNALS: Run the full pipeline for today
         pipeline.run(
             point_in_time=current_day,
-            full_data_cache=universe_cache,
+            full_data_cache=data_cache_for_today,
             is_backtest=True,
             batch_id=batch_id
         )
 
-        # C. MANAGE ENTRIES: Fetch signals just generated and enter new positions
+        # C. MANAGE ENTRIES: Fetch signals just generated by the pipeline and enter new positions
         signals_for_today_from_db = list(database_manager.predictions_collection.find({
             "batch_id": batch_id, 
             "prediction_date": current_day.to_pydatetime(),
@@ -116,16 +120,17 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
             _manage_entries_for_day(portfolio, signals_for_today_from_db, current_day)
         
         # D. LOG DAILY EQUITY
-        # Calculate current value of open positions
         open_positions_value = 0
         for pos in portfolio['open_positions']:
             try:
-                current_price = full_data_cache[pos['ticker']].loc[current_day]['close']
+                # Use today's close price to value open positions
+                current_price = data_cache_for_today[pos['ticker']].loc[current_day]['close']
                 open_positions_value += current_price * pos['num_shares']
-            except KeyError:
-                # If market is closed, use the last known entry price
+            except (KeyError, IndexError):
+                # If market is closed or data is missing, use the last known entry price
                 open_positions_value += pos['entry_price'] * pos['num_shares']
         
+        # Equity available for new trades + value of open positions
         total_equity = portfolio['equity'] + open_positions_value
         portfolio['daily_equity_log'].append({'date': current_day, 'equity': total_equity})
         log.info(f"End of Day Equity: ₹{total_equity:,.2f}")
