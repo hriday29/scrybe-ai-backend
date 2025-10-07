@@ -26,3 +26,8 @@ matplotlib
 google-generativeai
 firebase-admin
 sentry-sdk[flask]
+# smartapi-python  # Using local smartapi_client instead
+pyotp
+logzero
+websocket-client
+pytz
