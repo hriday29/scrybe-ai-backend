@@ -123,33 +123,57 @@ class AIAnalyzer:
             formatted_context
         ]
     
-        # --- Simplified Main Logic (No fallback) ---
-        log.info(f"Primary attempt with {model_name}...")
-        for attempt in range(3):
-            try:
-                model = genai.GenerativeModel(
-                    model_name,
-                    system_instruction=system_instruction,
-                    generation_config=generation_config,
-                    safety_settings=safety_settings
-                )
-                response = model.generate_content(prompt_parts, request_options={"timeout": 300})
-    
-                if not response.parts:
-                    raise ValueError(f"Empty or blocked response. Feedback: {response.prompt_feedback}")
-    
-                analysis_result = json.loads(response.text)
-                analysis_result["model_used"] = model_name
-                log.info(f"✅ Success on attempt {attempt + 1} with {model_name}.")
-                return analysis_result
-    
-            except Exception as e:
-                log.warning(f"Attempt {attempt + 1} with {model_name} failed with a transient error: {e}")
-                if attempt < 2:
-                    time.sleep(5)
-    
-        # --- End of Function (no fallback) ---
-        raise Exception(f"Primary model ({model_name}) failed after all 3 attempts with transient errors.")
+        MAX_RETRIES_PER_KEY = 3
+        total_keys = len(self.api_keys)
+
+        # --- Key Rotation and Retry Logic ---
+        # Outer loop to iterate through each available API key
+        for i in range(total_keys):
+            key_to_use = self.api_keys[self.current_key_index]
+            log.info(f"--- Attempting analysis with API Key #{self.current_key_index + 1}/{total_keys} ---")
+            genai.configure(api_key=key_to_use)
+        
+            # Inner loop for retries with the current key
+            for attempt in range(MAX_RETRIES_PER_KEY):
+                try:
+                    model = genai.GenerativeModel(
+                        model_name,
+                        system_instruction=system_instruction,
+                        generation_config=generation_config,
+                        safety_settings=safety_settings
+                    )
+                    response = model.generate_content(prompt_parts, request_options={"timeout": 300})
+        
+                    if not response.parts:
+                        raise ValueError(f"Empty or blocked response. Feedback: {response.prompt_feedback}")
+        
+                    analysis_result = json.loads(response.text)
+                    analysis_result["model_used"] = model_name
+                    log.info(f"✅ Success on attempt {attempt + 1} with Key #{self.current_key_index + 1}.")
+                    return analysis_result # Success, exit the function
+        
+                except Exception as e:
+                    # Check for a quota error
+                    if "429" in str(e) or "quota" in str(e).lower():
+                        log.warning(f"Quota exceeded for Key #{self.current_key_index + 1}. Rotating to next key.")
+                        self.current_key_index = (self.current_key_index + 1) % total_keys
+                        break  # Break the INNER loop to switch to the next key
+                    
+                    # Handle other transient errors
+                    log.warning(f"Attempt {attempt + 1} with Key #{self.current_key_index + 1} failed: {e}")
+                    if attempt < MAX_RETRIES_PER_KEY - 1:
+                        time.sleep(5)
+                    else:
+                        log.error(f"All {MAX_RETRIES_PER_KEY} retries failed for Key #{self.current_key_index + 1}. Trying next key.")
+                        self.current_key_index = (self.current_key_index + 1) % total_keys
+        
+            # If the inner loop was broken by a quota error, the outer loop will continue with the next key.
+            # If the inner loop finished all retries, the outer loop will also continue with the next key.
+        
+        # If the outer loop completes, it means all keys failed
+        log.error(f"A non-quota, unrecoverable error occurred for {ticker}: Primary model ({model_name}) failed after all attempts with all {total_keys} keys.")
+        # Here you would trigger your fallback to the 'flash' model. For now, we raise an exception.
+        raise Exception(f"All {total_keys} API keys failed for model {model_name}.")
 
     def get_single_news_impact_analysis(self, article: dict) -> dict:
         """
