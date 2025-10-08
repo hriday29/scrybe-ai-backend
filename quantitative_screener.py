@@ -27,16 +27,19 @@ TREND_CHECK_EMA = 50
 # --- Fundamental Health Check ---
 def _passes_fundamental_health_check(ticker: str, point_in_time: pd.Timestamp) -> bool:
     """
-    --- FINAL VERSION ---
-    Performs a point-in-time, UTC-aware fundamental check. This is the definitive fix.
+    Performs a robust, score-based fundamental health check.
+
+    A stock is considered healthy if it passes a minimum number of fundamental
+    criteria, as defined in FUNDAMENTAL_THRESHOLDS. This approach gracefully
+    handles missing data (e.g., null ROE) by simply not awarding a point for that
+    metric, rather than disqualifying the stock entirely.
     """
     try:
-        # --- TIMEZONE FIX: Convert the backtest's current time to a UTC datetime object for the query ---
         point_in_time_utc = pd.to_datetime(point_in_time, utc=True).to_pydatetime()
 
         cursor = database_manager.db.fundamentals.find({
             "ticker": ticker,
-            "asOfDate": {"$lte": point_in_time_utc} # Query using the UTC-aware date
+            "asOfDate": {"$lte": point_in_time_utc}
         }).sort("asOfDate", -1).limit(1)
 
         results = list(cursor)
@@ -45,19 +48,68 @@ def _passes_fundamental_health_check(ticker: str, point_in_time: pd.Timestamp) -
             return False
         
         fundamentals = results[0]
+        score = 0
+        reasons = []
 
+        # 1. Return on Equity (ROE) Check
         roe = fundamentals.get("returnOnEquity")
-        margins = fundamentals.get("profitMargins")
-
-        passes_roe_check = roe is not None and roe > 0.12
-        passes_margins_check = margins is not None and margins > 0.08
-
-        if passes_roe_check and passes_margins_check:
-            log.info(f"✅ {ticker} passed point-in-time fundamental check for {point_in_time.date()} (using report from {fundamentals['asOfDate'].date()})")
-            return True
+        if roe is not None:
+            if roe > FUNDAMENTAL_THRESHOLDS["MIN_ROE"]:
+                score += 1
+                reasons.append(f"ROE OK ({roe:.2%})")
+            else:
+                reasons.append(f"ROE Low ({roe:.2%})")
         else:
-            log.warning(f"-> {ticker} failed point-in-time fundamental check for {point_in_time.date()} (ROE: {roe}, Margin: {margins})")
-            return False
+            reasons.append("ROE Missing")
+
+        # 2. Profit Margins Check
+        margins = fundamentals.get("profitMargins")
+        if margins is not None:
+            if margins > FUNDAMENTAL_THRESHOLDS["MIN_PROFIT_MARGIN"]:
+                score += 1
+                reasons.append(f"Margin OK ({margins:.2%})")
+            else:
+                reasons.append(f"Margin Low ({margins:.2%})")
+        else:
+            reasons.append("Margin Missing")
+            
+        # 3. Debt-to-Equity Check
+        d2e = fundamentals.get("debtToEquity")
+        if d2e is not None:
+            # Note: yfinance provides D/E as a percentage, so 1.5 is 150.
+            if d2e < (FUNDAMENTAL_THRESHOLDS["MAX_DEBT_TO_EQUITY"] * 100):
+                score += 1
+                reasons.append(f"D/E OK ({d2e:.1f})")
+            else:
+                reasons.append(f"D/E High ({d2e:.1f})")
+        else:
+            reasons.append("D/E Missing")
+            
+        # 4. Revenue Growth Check
+        rev_growth = fundamentals.get("revenueGrowth")
+        if rev_growth is not None:
+            if rev_growth > FUNDAMENTAL_THRESHOLDS["MIN_REVENUE_GROWTH"]:
+                score += 1
+                reasons.append(f"RevGrowth OK ({rev_growth:.2%})")
+            else:
+                reasons.append(f"RevGrowth Low ({rev_growth:.2%})")
+        else:
+            reasons.append("RevGrowth Missing")
+
+        # --- Final Decision ---
+        is_healthy = score >= FUNDAMENTAL_THRESHOLDS["MIN_HEALTH_SCORE"]
+        
+        report_date = fundamentals['asOfDate'].date()
+        log_func = log.info if is_healthy else log.warning
+        status_icon = "✅" if is_healthy else "->"
+        
+        log_func(
+            f"{status_icon} {ticker} passed fundamental check for {point_in_time.date()} "
+            f"(Score: {score}/{FUNDAMENTAL_THRESHOLDS['MIN_HEALTH_SCORE']}) "
+            f"| Reasons: [{', '.join(reasons)}] | Report Date: {report_date}"
+        )
+        
+        return is_healthy
             
     except Exception as e:
         log.error(f"Error during point-in-time fundamental check for {ticker}: {e}. The stock will fail the check.")
