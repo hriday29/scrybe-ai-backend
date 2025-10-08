@@ -13,10 +13,10 @@ import pandas_ta as ta
 class AIAnalyzer:
     """A class to handle all interactions with the Generative AI model."""
 
-    def __init__(self, api_key: str, model_name: str = None):
+    def __init__(self, model_name: str = None):
         # Expecting a list of keys from config now
         if not config.GEMINI_API_KEY_POOL or not isinstance(config.GEMINI_API_KEY_POOL, list):
-            raise ValueError("GEMINI_API_KEYS not configured in config.py or is not a list.")
+            raise ValueError("GEMINI_API_KEY_POOL not configured in config.py or is not a list.")
         self.api_keys = config.GEMINI_API_KEY_POOL
         self.current_key_index = 0
         self.model_name = model_name or config.PRO_MODEL
@@ -24,14 +24,6 @@ class AIAnalyzer:
         # Configure with the first key initially
         genai.configure(api_key=self.api_keys[self.current_key_index])
         log.info(f"AIAnalyzer initialized with {len(self.api_keys)} API keys.")
-
-    def update_api_key(self, new_key: str):
-        """Updates the API key for the generative model client."""
-        if not new_key or "PASTE_YOUR" in new_key:
-            raise ValueError("Invalid or missing API key provided.")
-        self.api_key = new_key
-        genai.configure(api_key=self.api_key)
-        log.info("AIAnalyzer API key has been updated.")
 
     def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str, model_name: str, screener_reason: str) -> dict:
         """
