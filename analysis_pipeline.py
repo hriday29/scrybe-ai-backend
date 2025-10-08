@@ -154,7 +154,7 @@ class AnalysisPipeline:
         """
         log.info(f"--- Running Deep-Dive AI Analysis for {len(candidates)} Candidate(s) ---")
         
-        ai_results = []    
+        ai_results = []
         for ticker, screener_reason in candidates:
             log.info(f"--- Analyzing {ticker} (Reason: {screener_reason}) ---")
             
@@ -177,41 +177,41 @@ class AnalysisPipeline:
                 strategic_review = per_stock_history = "Not applicable in live mode."
     
             # --- Simplified AI Call with Fallback ---
-            analysis = None
-            try:
-                analysis = self.ai_analyzer.get_apex_analysis(
-                    ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
-                    strategic_review=strategic_review, tactical_lookback=None,
-                    per_stock_history=per_stock_history, model_name=config.PRO_MODEL
-                )
-            except Exception as e:
-                log.error(f"Primary model failed for {ticker} after trying all API keys. Error: {e}")
-                # 'analysis' remains None, which triggers the fallback logic below.
-
-            # --- Final Fallback Logic ---
-            if analysis:
-                ai_results.append({
-                    "ticker": ticker, "ai_analysis": analysis,
-                    "point_in_time_data": point_in_time_data
-                })
-            else:
-                log.warning(f"🚨 All attempts with the primary model failed for {ticker}. Now attempting fallback with {config.FLASH_MODEL}...")
-                try:
-                    fallback_analysis = self.ai_analyzer.get_apex_analysis(
-                        ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
-                        strategic_review=strategic_review, tactical_lookback=None,
-                        per_stock_history=per_stock_history, model_name=config.FLASH_MODEL
-                    )
-                    if fallback_analysis:
-                        ai_results.append({
-                            "ticker": ticker, "ai_analysis": fallback_analysis,
-                            "point_in_time_data": point_in_time_data
-                        })
-                        log.info(f"✅ Successfully received analysis from FALLBACK model for {ticker}.")
-                    else:
-                        log.error(f"❌ CRITICAL: The fallback model also failed for {ticker}.")
-                except Exception as final_e:
-                    log.error(f"❌ CRITICAL: The fallback model failed with an unexpected error for {ticker}: {final_e}")
+            analysis = None
+            try:
+                analysis = self.ai_analyzer.get_apex_analysis(
+                    ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
+                    strategic_review=strategic_review, tactical_lookback=None,
+                    per_stock_history=per_stock_history, model_name=config.PRO_MODEL
+                )
+            except Exception as e:
+                log.error(f"Primary model failed for {ticker} after trying all API keys. Error: {e}")
+                # 'analysis' remains None, which triggers the fallback logic below.
+    
+            # --- Final Fallback Logic ---
+            if analysis:
+                ai_results.append({
+                    "ticker": ticker, "ai_analysis": analysis,
+                    "point_in_time_data": point_in_time_data
+                })
+            else:
+                log.warning(f"🚨 All attempts with the primary model failed for {ticker}. Now attempting fallback with {config.FLASH_MODEL}...")
+                try:
+                    fallback_analysis = self.ai_analyzer.get_apex_analysis(
+                        ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
+                        strategic_review=strategic_review, tactical_lookback=None,
+                        per_stock_history=per_stock_history, model_name=config.FLASH_MODEL
+                    )
+                    if fallback_analysis:
+                        ai_results.append({
+                            "ticker": ticker, "ai_analysis": fallback_analysis,
+                            "point_in_time_data": point_in_time_data
+                        })
+                        log.info(f"✅ Successfully received analysis from FALLBACK model for {ticker}.")
+                    else:
+                        log.error(f"❌ CRITICAL: The fallback model also failed for {ticker}.")
+                except Exception as final_e:
+                    log.error(f"❌ CRITICAL: The fallback model failed with an unexpected error for {ticker}: {final_e}")
     
     def _apply_strategy_overlay(self, ai_results, market_state, is_backtest):
         """
