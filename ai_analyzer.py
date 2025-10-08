@@ -14,12 +14,16 @@ class AIAnalyzer:
     """A class to handle all interactions with the Generative AI model."""
 
     def __init__(self, api_key: str, model_name: str = None):
-        if not api_key or "PASTE_YOUR" in api_key:
-            raise ValueError("Gemini API key not configured or is invalid.")
-        self.api_key = api_key
-        self.model_name = model_name or config.PRO_MODEL  # default to your main model
-        genai.configure(api_key=self.api_key)
-        log.info("AIAnalyzer initialized and Gemini API key configured.")
+        # Expecting a list of keys from config now
+        if not config.GEMINI_API_KEY_POOL or not isinstance(config.GEMINI_API_KEY_POOL, list):
+            raise ValueError("GEMINI_API_KEYS not configured in config.py or is not a list.")
+        self.api_keys = config.GEMINI_API_KEY_POOL
+        self.current_key_index = 0
+        self.model_name = model_name or config.PRO_MODEL
+        
+        # Configure with the first key initially
+        genai.configure(api_key=self.api_keys[self.current_key_index])
+        log.info(f"AIAnalyzer initialized with {len(self.api_keys)} API keys.")
 
     def update_api_key(self, new_key: str):
         """Updates the API key for the generative model client."""
