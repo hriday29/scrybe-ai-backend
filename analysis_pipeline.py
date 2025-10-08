@@ -151,103 +151,103 @@ class AnalysisPipeline:
         return [(ticker, "Unbiased Analysis") for ticker in candidates]
 
     def _run_ai_analysis(self, candidates, full_data_cache, market_state, point_in_time, is_backtest, batch_id=None):
-    """
-    Performs a deep-dive AI analysis on candidates with robust, multi-key retry logic.
-    For each stock, it tries each API key up to 3 times before falling back.
-    """
-    log.info(f"--- Running Deep-Dive AI Analysis for {len(candidates)} Candidate(s) ---")
+        """
+        Performs a deep-dive AI analysis on candidates with robust, multi-key retry logic.
+        For each stock, it tries each API key up to 3 times before falling back.
+        """
+        log.info(f"--- Running Deep-Dive AI Analysis for {len(candidates)} Candidate(s) ---")
+        
+        ai_results = []
+        total_keys = len(config.GEMINI_API_KEY_POOL)
     
-    ai_results = []
-    total_keys = len(config.GEMINI_API_KEY_POOL)
-
-    for ticker, screener_reason in candidates:
-        log.info(f"--- Analyzing {ticker} (Reason: {screener_reason}) ---")
-        
-        # --- Build Context (remains the same) ---
-        point_in_time_data = full_data_cache.get(ticker).loc[:point_in_time].copy()
-        if len(point_in_time_data) < 252:
-            log.warning(f"Skipping {ticker} due to insufficient data.")
-            continue
-        
-        full_context = technical_analyzer.build_analysis_context(
-            ticker=ticker, historical_data=point_in_time_data,
-            market_state=market_state, is_backtest=is_backtest
-        )
-        sanitized_context = sanitize_context(full_context)
-        
-        if is_backtest:
-            strategic_review = performance_context.get_strategy_performance_summary(batch_id, point_in_time)
-            per_stock_history = performance_context.get_ticker_trade_history(ticker, batch_id, point_in_time)
-        else:
-            strategic_review = per_stock_history = "Not applicable in live mode."
-
-        # --- New Master Rotation & Retry Loop ---
-        analysis = None
-        key_rotation_count = 0
-        
-        while key_rotation_count < total_keys:
-            try:
-                # This call will now try up to 3 times with the CURRENT key for transient errors.
-                # If it gets a 429 quota error, it will raise an exception immediately.
-                analysis = self.ai_analyzer.get_apex_analysis(
-                    ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
-                    strategic_review=strategic_review, tactical_lookback=None,
-                    per_stock_history=per_stock_history, model_name=config.PRO_MODEL
-                )
-                
-                # If we get here, the analysis was successful. Break the key-rotation loop.
-                log.info(f"Analysis for {ticker} SUCCEEDED with key #{key_rotation_count + 1}.")
-                break
-
-            except Exception as e:
-                if "429" in str(e).lower() or "quota" in str(e).lower():
-                    log.warning(f"Key #{key_rotation_count + 1} hit a quota limit for {ticker}.")
-                    key_rotation_count += 1
-
-                    if key_rotation_count < total_keys:
-                        log.info("Rotating to the next API key...")
-                        new_key = next(self.key_iterator)
-                        self.ai_analyzer.update_api_key(new_key)
-                        # The 'while' loop will now repeat the 'try' block with the new key.
+        for ticker, screener_reason in candidates:
+            log.info(f"--- Analyzing {ticker} (Reason: {screener_reason}) ---")
+            
+            # --- Build Context (remains the same) ---
+            point_in_time_data = full_data_cache.get(ticker).loc[:point_in_time].copy()
+            if len(point_in_time_data) < 252:
+                log.warning(f"Skipping {ticker} due to insufficient data.")
+                continue
+            
+            full_context = technical_analyzer.build_analysis_context(
+                ticker=ticker, historical_data=point_in_time_data,
+                market_state=market_state, is_backtest=is_backtest
+            )
+            sanitized_context = sanitize_context(full_context)
+            
+            if is_backtest:
+                strategic_review = performance_context.get_strategy_performance_summary(batch_id, point_in_time)
+                per_stock_history = performance_context.get_ticker_trade_history(ticker, batch_id, point_in_time)
+            else:
+                strategic_review = per_stock_history = "Not applicable in live mode."
+    
+            # --- New Master Rotation & Retry Loop ---
+            analysis = None
+            key_rotation_count = 0
+            
+            while key_rotation_count < total_keys:
+                try:
+                    # This call will now try up to 3 times with the CURRENT key for transient errors.
+                    # If it gets a 429 quota error, it will raise an exception immediately.
+                    analysis = self.ai_analyzer.get_apex_analysis(
+                        ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
+                        strategic_review=strategic_review, tactical_lookback=None,
+                        per_stock_history=per_stock_history, model_name=config.PRO_MODEL
+                    )
+                    
+                    # If we get here, the analysis was successful. Break the key-rotation loop.
+                    log.info(f"Analysis for {ticker} SUCCEEDED with key #{key_rotation_count + 1}.")
+                    break
+    
+                except Exception as e:
+                    if "429" in str(e).lower() or "quota" in str(e).lower():
+                        log.warning(f"Key #{key_rotation_count + 1} hit a quota limit for {ticker}.")
+                        key_rotation_count += 1
+    
+                        if key_rotation_count < total_keys:
+                            log.info("Rotating to the next API key...")
+                            new_key = next(self.key_iterator)
+                            self.ai_analyzer.update_api_key(new_key)
+                            # The 'while' loop will now repeat the 'try' block with the new key.
+                        else:
+                            log.error(f"All {total_keys} keys have been tried and failed for {ticker}. No more keys to rotate.")
+                            # The loop will terminate as key_rotation_count is no longer < total_keys.
                     else:
-                        log.error(f"All {total_keys} keys have been tried and failed for {ticker}. No more keys to rotate.")
-                        # The loop will terminate as key_rotation_count is no longer < total_keys.
-                else:
-                    # This was a non-quota error (e.g., all 3 transient retries failed).
-                    log.error(f"A non-quota, unrecoverable error occurred for {ticker}: {e}")
-                    analysis = None  # Ensure analysis is None before breaking.
-                    break  # Exit the key-rotation loop for this ticker.
-
-        # --- Final Fallback Logic ---
-        # This code runs AFTER the while loop has finished (either by success, error, or all keys failing).
-        if analysis:
-            ai_results.append({
-                "ticker": ticker, "ai_analysis": analysis,
-                "point_in_time_data": point_in_time_data
-            })
-        else:
-            # If analysis is still None, it means all keys failed with quota errors.
-            log.warning(f"🚨 All attempts with the primary model failed for {ticker}. Now attempting fallback with {config.FLASH_MODEL}...")
-            try:
-                # Call the analyzer again, but this time specify the FLASH model.
-                fallback_analysis = self.ai_analyzer.get_apex_analysis(
-                    ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
-                    strategic_review=strategic_review, tactical_lookback=None,
-                    per_stock_history=per_stock_history, model_name=config.FLASH_MODEL
-                )
-                if fallback_analysis:
-                    ai_results.append({
-                        "ticker": ticker, "ai_analysis": fallback_analysis,
-                        "point_in_time_data": point_in_time_data
-                    })
-                    log.info(f"✅ Successfully received analysis from FALLBACK model for {ticker}.")
-                else:
-                    log.error(f"❌ CRITICAL: The fallback model also failed for {ticker}.")
-            except Exception as final_e:
-                log.error(f"❌ CRITICAL: The fallback model failed with an unexpected error for {ticker}: {final_e}")
-                
-    log.info(f"✅ AI analysis complete for {len(ai_results)} candidate(s).")
-    return ai_results
+                        # This was a non-quota error (e.g., all 3 transient retries failed).
+                        log.error(f"A non-quota, unrecoverable error occurred for {ticker}: {e}")
+                        analysis = None  # Ensure analysis is None before breaking.
+                        break  # Exit the key-rotation loop for this ticker.
+    
+            # --- Final Fallback Logic ---
+            # This code runs AFTER the while loop has finished (either by success, error, or all keys failing).
+            if analysis:
+                ai_results.append({
+                    "ticker": ticker, "ai_analysis": analysis,
+                    "point_in_time_data": point_in_time_data
+                })
+            else:
+                # If analysis is still None, it means all keys failed with quota errors.
+                log.warning(f"🚨 All attempts with the primary model failed for {ticker}. Now attempting fallback with {config.FLASH_MODEL}...")
+                try:
+                    # Call the analyzer again, but this time specify the FLASH model.
+                    fallback_analysis = self.ai_analyzer.get_apex_analysis(
+                        ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
+                        strategic_review=strategic_review, tactical_lookback=None,
+                        per_stock_history=per_stock_history, model_name=config.FLASH_MODEL
+                    )
+                    if fallback_analysis:
+                        ai_results.append({
+                            "ticker": ticker, "ai_analysis": fallback_analysis,
+                            "point_in_time_data": point_in_time_data
+                        })
+                        log.info(f"✅ Successfully received analysis from FALLBACK model for {ticker}.")
+                    else:
+                        log.error(f"❌ CRITICAL: The fallback model also failed for {ticker}.")
+                except Exception as final_e:
+                    log.error(f"❌ CRITICAL: The fallback model failed with an unexpected error for {ticker}: {final_e}")
+                    
+        log.info(f"✅ AI analysis complete for {len(ai_results)} candidate(s).")
+        return ai_results
     
     def _apply_strategy_overlay(self, ai_results, market_state, is_backtest):
         """
