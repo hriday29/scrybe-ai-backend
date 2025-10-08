@@ -37,10 +37,14 @@ def load_state():
     return None
 
 api_call_timestamps = deque()
-def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: bool = False):
+
+def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: bool = False, tickers: list = None):
     """
     Runs a memory-efficient, day-by-day backtest simulation using on-demand data loading
     with file caching for the Angel One data source.
+
+    Added: optional 'tickers' argument — if provided, backtest will use this static list
+    for every day (useful for targeted backtests).
     """
     log.info(f"### STARTING UNIFIED SIMULATION FOR BATCH: {batch_id} ###")
     log.info(f"Period: {start_date} to {end_date}")
@@ -50,8 +54,11 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
     if is_fresh_run:
         log.warning("FRESH RUN: Deleting previous predictions and performance data for this batch.")
-        database_manager.predictions_collection.delete_many({"batch_id": batch_id})
-        database_manager.performance_collection.delete_many({"batch_id": batch_id})
+        # guard against missing collection handles
+        if getattr(database_manager, "predictions_collection", None) is not None:
+            database_manager.predictions_collection.delete_many({"batch_id": batch_id})
+        if getattr(database_manager, "performance_collection", None) is not None:
+            database_manager.performance_collection.delete_many({"batch_id": batch_id})
 
     # --- 1. PORTFOLIO & SETUP (NO DATA PRE-LOADING) ---
     portfolio = {
@@ -79,22 +86,27 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
         day_str = current_day.strftime('%Y-%m-%d')
         log.info(f"\n--- Simulating Day {i+1}/{len(simulation_days)}: {day_str} ---")
 
-        # Determine the correct stock universe for THIS specific day
-        stock_universe_for_today = index_manager.get_point_in_time_nifty50_tickers(current_day)
+        # --- USE 'tickers' ARGUMENT IF PROVIDED ---
+        if tickers:
+            stock_universe_for_today = tickers
+            log.info(f"Using predefined stock universe of {len(tickers)} tickers.")
+        else:
+            # Determine the correct stock universe for THIS specific day using index_manager
+            stock_universe_for_today = index_manager.get_point_in_time_nifty50_tickers(current_day)
 
         if not stock_universe_for_today:
-            log.warning(f"Could not determine stock universe for {day_str} from index_manager. Skipping day.")
+            log.warning(f"Could not determine stock universe for {day_str}. Skipping day.")
             continue
         
         # Build the list of all tickers needed JUST FOR TODAY
         required_indices = list(sector_analyzer.CORE_SECTOR_INDICES.values()) + [sector_analyzer.BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())
         tickers_for_today = list(set(stock_universe_for_today + required_indices))
         
-        # Load ONLY the data needed for today. 
-        # data_retriever will use its file cache for Angel One, making this fast and memory-efficient.
+        # Load ONLY the data needed for today.
+        # IMPORTANT BUG FIX: pass the point-in-time day_str as end_date so data_retriever returns correct point-in-time slices.
         log.info(f"Loading data for {len(tickers_for_today)} assets for {day_str}...")
         data_cache_for_today = {
-            ticker: data_retriever.get_historical_stock_data(ticker, end_date=end_date)
+            ticker: data_retriever.get_historical_stock_data(ticker, end_date=day_str)
             for ticker in tickers_for_today
         }
         data_cache_for_today = {k: v for k, v in data_cache_for_today.items() if v is not None and not v.empty}
@@ -286,3 +298,30 @@ def _calculate_closed_trade(position: dict, closing_price: float, closing_reason
         "batch_id": position['batch_id']
     }
     return performance_doc, net_pnl
+
+# --- MAIN EXECUTION BLOCK (CLI) ---
+if __name__ == "__main__":
+    # This block allows the script to be run from the command line.
+    parser = argparse.ArgumentParser(description="Run a full backtest using the main orchestrator.")
+    
+    # These arguments will be provided by your GitHub Actions workflow or CLI
+    parser.add_argument("--batch_id", required=True, help="Unique ID for the backtest batch.")
+    parser.add_argument("--start_date", required=True, help="Start date in YYYY-MM-DD format.")
+    parser.add_argument("--end_date", required=True, help="End date in YYYY-MM-DD format.")
+    
+    # The 'fresh_run' argument is converted from a string 'true'/'false' to a boolean
+    parser.add_argument('--fresh_run', type=lambda x: (str(x).lower() == 'true'), default=True, help='Delete previous data for this batch_id? (true/false)')
+    
+    # Optional argument for a targeted backtest on specific stocks
+    parser.add_argument("--tickers", nargs='+', required=False, help="Optional: Space-separated list of specific tickers to backtest.")
+
+    args = parser.parse_args()
+
+    # Call the main simulation function with all the parsed arguments
+    run_simulation(
+        batch_id=args.batch_id,
+        start_date=args.start_date,
+        end_date=args.end_date,
+        is_fresh_run=args.fresh_run,
+        tickers=args.tickers  # Pass the list of tickers (will be None if not provided)
+    )
