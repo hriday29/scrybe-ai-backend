@@ -9,7 +9,7 @@ def setup_api_key_iterator():
     if not key_pool:
         raise ValueError("API key pool is empty. Check your .env and config.py files.")
     log.info(f"API key rotator setup with {len(key_pool)} keys.")
-    return itertools.cycle(key_pool)
+    return iter(key_pool)
 
 def sanitize_context(context: dict) -> dict:
     """Sanitizes the context dictionary to replace null-like values."""
