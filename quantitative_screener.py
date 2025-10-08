@@ -1,4 +1,4 @@
-# quantitative_screener.py (FINAL CORRECTED VERSION)
+# quantitative_screener.py
 import pandas as pd
 import config
 import data_retriever
@@ -19,6 +19,14 @@ SECTOR_NAME_MAPPING = {
     "NIFTY PSU Bank": "Financial Services",
     "NIFTY Oil & Gas": "Energy",
     "NIFTY India Consumption": "Consumer Defensive",
+}
+
+FUNDAMENTAL_THRESHOLDS = {
+    "MIN_ROE": 0.15,
+    "MIN_PROFIT_MARGIN": 0.10,
+    "MAX_DEBT_TO_EQUITY": 2.0,
+    "MIN_REVENUE_GROWTH": 0.10,
+    "MIN_HEALTH_SCORE": 2
 }
 
 MIN_AVG_VOLUME = 500000
