@@ -19,7 +19,6 @@ on:
         description: 'Delete previous data for this batch_id? (true/false)'
         required: true
         default: 'true'
-      # --- ADD THIS NEW INPUT ---
       tickers:
         description: 'Optional: Tickers to test (e.g., RELIANCE.NS HDFCBANK.NS). Leave blank for full Nifty 50.'
         required: false
@@ -57,15 +56,21 @@ jobs:
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
           NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
           
-          # Gemini API Key Pool
+          # --- Gemini API Key Pool (Fully Mapped) ---
           GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
-          # ... (add the rest of your GOOGLE_API_KEY secrets here) ...
+          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
+          GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
+          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
+          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
+          GOOGLE_API_KEY_6: ${{ secrets.GOOGLE_API_KEY_6 }}
+          GOOGLE_API_KEY_7: ${{ secrets.GOOGLE_API_KEY_7 }}
+          GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
+          GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
           GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
         
-        # --- THIS RUN COMMAND IS NOW UPDATED ---
         run: |
-          # This small script conditionally adds the --tickers argument
-          # ONLY if the user provides a value in the input field.
+          # This script conditionally adds the --tickers argument
+          # only if the user provides a value in the input field.
           TICKER_ARGS=""
           if [ -n "${{ github.event.inputs.tickers }}" ]; then
             TICKER_ARGS="--tickers ${{ github.event.inputs.tickers }}"
