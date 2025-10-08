@@ -61,6 +61,14 @@ APEX_SWING_STRATEGY = {
     "trailing_stop_atr_multiplier": 1.5,
 }
 
+FUNDAMENTAL_THRESHOLDS = {
+    "MIN_ROE": 0.15,                 # Minimum 15% Return on Equity
+    "MIN_PROFIT_MARGIN": 0.10,       # Minimum 10% Profit Margin
+    "MAX_DEBT_TO_EQUITY": 2.0,       # Maximum 2.0 Debt to Equity Ratio
+    "MIN_REVENUE_GROWTH": 0.10,      # Minimum 10% year-over-year revenue growth
+    "MIN_HEALTH_SCORE": 2            # Stock must pass at least 2 of the above checks
+}
+
 PORTFOLIO_CONSTRAINTS = {
     "max_concurrent_trades": 5
 }
