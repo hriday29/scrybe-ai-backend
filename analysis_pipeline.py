@@ -212,6 +212,7 @@ class AnalysisPipeline:
                         log.error(f"❌ CRITICAL: The fallback model also failed for {ticker}.")
                 except Exception as final_e:
                     log.error(f"❌ CRITICAL: The fallback model failed with an unexpected error for {ticker}: {final_e}")
+        return ai_results
     
     def _apply_strategy_overlay(self, ai_results, market_state, is_backtest):
         """
