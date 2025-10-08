@@ -29,8 +29,6 @@ class AIAnalyzer:
         genai.configure(api_key=self.api_key)
         log.info("AIAnalyzer API key has been updated.")
 
-    # --- REPLACE THE ENTIRE get_apex_analysis FUNCTION WITH THIS ---
-
     def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str, model_name: str, screener_reason: str) -> dict:
         """
         Generates a definitive, institutional-grade analysis using the "Apex" multi-layered model.
@@ -121,70 +119,33 @@ class AIAnalyzer:
         ]
 
         # --- Main Logic: Corrected Error Handling ---
+        # --- Simplified Main Logic (No fallback) ---
+    log.info(f"Primary attempt with {model_name}...")
+    for attempt in range(3):
         try:
-            log.info(f"Primary attempt with {model_name}...")
-            for attempt in range(3):
-                try:
-                    model = genai.GenerativeModel(
-                        model_name,
-                        system_instruction=system_instruction,
-                        generation_config=generation_config,
-                        safety_settings=safety_settings
-                    )
-                    response = model.generate_content(prompt_parts, request_options={"timeout": 300})
+            model = genai.GenerativeModel(
+                model_name,
+                system_instruction=system_instruction,
+                generation_config=generation_config,
+                safety_settings=safety_settings
+            )
+            response = model.generate_content(prompt_parts, request_options={"timeout": 300})
 
-                    if not response.parts:
-                        raise ValueError(f"Empty or blocked response. Feedback: {response.prompt_feedback}")
+            if not response.parts:
+                raise ValueError(f"Empty or blocked response. Feedback: {response.prompt_feedback}")
 
-                    analysis_result = json.loads(response.text)
-                    analysis_result["model_used"] = model_name
-                    log.info(f"✅ Success on attempt {attempt + 1} with {model_name}.")
-                    return analysis_result
-
-                except Exception as e:
-                    # --- FIX #1 (Already Done): Re-raise the 429 error from the inner loop ---
-                    if "429" in str(e) or "quota" in str(e).lower():
-                        log.warning(f"Quota error on attempt {attempt + 1}. Re-raising to trigger key rotation.")
-                        raise e # Pass the error up
-                    
-                    log.warning(f"Attempt {attempt + 1} with {model_name} failed with a transient error: {e}")
-                    if attempt < 2:
-                        time.sleep(5)
-            
-            raise Exception(f"Primary model ({model_name}) failed after all 3 attempts with transient errors.")
+            analysis_result = json.loads(response.text)
+            analysis_result["model_used"] = model_name
+            log.info(f"✅ Success on attempt {attempt + 1} with {model_name}.")
+            return analysis_result
 
         except Exception as e:
-            # --- FIX #2 (The Missing Piece): Check for 429 error here too before falling back ---
-            if "429" in str(e) or "quota" in str(e).lower():
-                # If it's a quota error that escaped the inner loop, pass it up to the pipeline.
-                # Do NOT attempt a fallback.
-                raise e
+            log.warning(f"Attempt {attempt + 1} with {model_name} failed with a transient error: {e}")
+            if attempt < 2:
+                time.sleep(5)
 
-            # For any OTHER error that escaped the inner loop, THEN attempt the fallback.
-            log.warning(f"🚨 {e}. Attempting fallback with {config.FLASH_MODEL}...")
-            try:
-                model = genai.GenerativeModel(
-                    config.FLASH_MODEL,
-                    system_instruction=system_instruction,
-                    generation_config=generation_config,
-                    safety_settings=safety_settings
-                )
-                response = model.generate_content(prompt_parts, request_options={"timeout": 300})
-
-                if not response.parts:
-                    raise ValueError(f"Fallback model also returned empty response. Feedback: {response.prompt_feedback}")
-
-                fallback_result = json.loads(response.text)
-                fallback_result["model_used"] = config.FLASH_MODEL
-                log.info("✅ Successfully received analysis from FALLBACK model.")
-                return fallback_result
-
-            except Exception as final_e:
-                log.error(f"❌ CRITICAL: Fallback model also failed for {ticker}. Final Error: {final_e}")
-                # If the fallback also gets a quota error, raise it so the pipeline rotates keys for the next stock.
-                if "429" in str(final_e) or "quota" in str(final_e).lower():
-                    raise final_e
-                return None
+    # --- End of Function (no fallback) ---
+    raise Exception(f"Primary model ({model_name}) failed after all 3 attempts with transient errors.")
 
     def get_single_news_impact_analysis(self, article: dict) -> dict:
         """
