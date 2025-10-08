@@ -29,14 +29,16 @@ class AIAnalyzer:
         genai.configure(api_key=self.api_key)
         log.info("AIAnalyzer API key has been updated.")
 
+    # --- REPLACE THE ENTIRE get_apex_analysis FUNCTION WITH THIS ---
+
     def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str, model_name: str, screener_reason: str) -> dict:
         """
         Generates a definitive, institutional-grade analysis using the "Apex" multi-layered model.
-        Includes retry and fallback logic as per Gemini’s instruction.
+        This version has the corrected error handling to allow key rotation.
         """
         log.info(f"Generating APEX analysis for {ticker}...")
 
-        # --- Define Prompt, Schema & Config ---
+        # --- All your prompt and schema setup remains the same ---
         system_instruction = """
         You are "Scrybe," an expert-level quantitative AI analyst at a top-tier hedge fund. Your function is to conduct a rigorous, unbiased, multi-layered analysis of a stock to find a high-probability swing trade opportunity (5-10 day holding period).
 
@@ -61,7 +63,6 @@ class AIAnalyzer:
         4.  **analystVerdict:** Your master narrative. This must be a concise, powerful summary that starts with your conclusion and then justifies it by synthesizing the most critical data points from your analysis above.
         5.  **keyInsight:** The single most important takeaway for a human fund manager to read.
         """
-
         output_schema = {
             "type": "OBJECT",
             "properties": {
@@ -99,20 +100,17 @@ class AIAnalyzer:
                 "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "thesisInvalidationPoint", "keyObservations", "thesisType"
             ]
         }
-
         generation_config = genai.types.GenerationConfig(
             response_mime_type="application/json",
             response_schema=output_schema,
-            max_output_tokens=8192  # Slightly reduced for safety
+            max_output_tokens=8192
         )
-
         safety_settings = {
             HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
             HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
         }
-
         formatted_context = "\n## Today's Full Data Packet ##\n" + json.dumps(full_context, indent=2)
         prompt_parts = [
             f"Performance Feedback (Strategy): {strategic_review or 'Data Not Available'}",
@@ -122,10 +120,10 @@ class AIAnalyzer:
             formatted_context
         ]
 
-        # --- Main Logic: Retry Loop + Fallback ---
+        # --- Main Logic: Corrected Error Handling ---
         try:
             log.info(f"Primary attempt with {model_name}...")
-            for attempt in range(3):  # Try up to 3 times
+            for attempt in range(3):
                 try:
                     model = genai.GenerativeModel(
                         model_name,
@@ -141,22 +139,28 @@ class AIAnalyzer:
                     analysis_result = json.loads(response.text)
                     analysis_result["model_used"] = model_name
                     log.info(f"✅ Success on attempt {attempt + 1} with {model_name}.")
-                    return analysis_result  # Exit successfully
+                    return analysis_result
 
                 except Exception as e:
-                    # If it's a quota error, stop retrying and raise it immediately.
+                    # --- FIX #1 (Already Done): Re-raise the 429 error from the inner loop ---
                     if "429" in str(e) or "quota" in str(e).lower():
                         log.warning(f"Quota error on attempt {attempt + 1}. Re-raising to trigger key rotation.")
-                        raise e # Pass the error up to the pipeline
+                        raise e # Pass the error up
                     
-                    # For any other error, log it and retry.
                     log.warning(f"Attempt {attempt + 1} with {model_name} failed with a transient error: {e}")
                     if attempt < 2:
                         time.sleep(5)
-
-            raise Exception(f"Primary model ({model_name}) failed after all 3 attempts.")
+            
+            raise Exception(f"Primary model ({model_name}) failed after all 3 attempts with transient errors.")
 
         except Exception as e:
+            # --- FIX #2 (The Missing Piece): Check for 429 error here too before falling back ---
+            if "429" in str(e) or "quota" in str(e).lower():
+                # If it's a quota error that escaped the inner loop, pass it up to the pipeline.
+                # Do NOT attempt a fallback.
+                raise e
+
+            # For any OTHER error that escaped the inner loop, THEN attempt the fallback.
             log.warning(f"🚨 {e}. Attempting fallback with {config.FLASH_MODEL}...")
             try:
                 model = genai.GenerativeModel(
@@ -172,11 +176,14 @@ class AIAnalyzer:
 
                 fallback_result = json.loads(response.text)
                 fallback_result["model_used"] = config.FLASH_MODEL
-                log.info(f"✅ Successfully received analysis from FALLBACK model.")
+                log.info("✅ Successfully received analysis from FALLBACK model.")
                 return fallback_result
 
             except Exception as final_e:
                 log.error(f"❌ CRITICAL: Fallback model also failed for {ticker}. Final Error: {final_e}")
+                # If the fallback also gets a quota error, raise it so the pipeline rotates keys for the next stock.
+                if "429" in str(final_e) or "quota" in str(final_e).lower():
+                    raise final_e
                 return None
 
     def get_single_news_impact_analysis(self, article: dict) -> dict:
