@@ -144,9 +144,15 @@ class AIAnalyzer:
                     return analysis_result  # Exit successfully
 
                 except Exception as e:
-                    log.warning(f"Attempt {attempt + 1} with {model_name} failed: {e}")
+                    # If it's a quota error, stop retrying and raise it immediately.
+                    if "429" in str(e) or "quota" in str(e).lower():
+                        log.warning(f"Quota error on attempt {attempt + 1}. Re-raising to trigger key rotation.")
+                        raise e # Pass the error up to the pipeline
+                    
+                    # For any other error, log it and retry.
+                    log.warning(f"Attempt {attempt + 1} with {model_name} failed with a transient error: {e}")
                     if attempt < 2:
-                        time.sleep(5)  # retry delay
+                        time.sleep(5)
 
             raise Exception(f"Primary model ({model_name}) failed after all 3 attempts.")
 
