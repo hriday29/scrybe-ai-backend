@@ -15,7 +15,7 @@ import logging  # Make sure logging is imported
 import pyotp  # ADDED: For dynamic TOTP generation
 import requests  # ADDED: For downloading instrument list
 from functools import wraps
-from py_vollib_vectorized import vectorized_implied_volatility, vectorized_greeks
+from py_vollib_vectorized import vectorized_implied_volatility, vectorized_delta, vectorized_gamma, vectorized_theta
 
 # You must install the Angel One SDK first:
 # pip install smartapi-python
@@ -413,12 +413,15 @@ def get_option_greeks(symbol: str) -> dict | None:
         df['strikePrice'] = pd.to_numeric(df['strikePrice'], errors='coerce')
         df['lastPrice'] = pd.to_numeric(df['lastPrice'], errors='coerce')
         df = df.dropna(subset=['strikePrice', 'lastPrice'])
+        if df.empty:
+            log.warning(f"No valid option contracts with price data found for {symbol}.")
+            return None
 
         # Calculate Time to Expiry in years
         expiry_dt = pd.to_datetime(df['expiryDate'].iloc[0], format='%d%b%Y')
         time_to_expiry = (expiry_dt - datetime.now()).days / 365.25
         if time_to_expiry <= 0:
-            log.warning(f"Expiry for {symbol} is in the past. Cannot calculate greeks.")
+            log.warning(f"Expiry for {symbol} is in the past or today. Cannot calculate greeks.")
             return None
         
         # --- Find 3 ATM Strikes ---
@@ -434,20 +437,25 @@ def get_option_greeks(symbol: str) -> dict | None:
             price=price_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, flag=flag_array, return_as='numpy', on_error='warn'
         )
         
-        # Calculate Greeks using the calculated IV
-        greeks = vectorized_greeks(
-            flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, sigma=iv_array, return_as='dict'
-        )
+        # --- FIX: Calculate Greeks individually ---
+        greeks = {
+            'delta': vectorized_delta(flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, sigma=iv_array),
+            'gamma': vectorized_gamma(flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, sigma=iv_array),
+            'theta': vectorized_theta(flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, sigma=iv_array)
+        }
 
         # --- Format Output ---
         results = {}
         for i, strike in enumerate(strike_array):
+            # Check if IV calculation was successful for this strike
+            iv_valid = iv_array[i] > 0 and not pd.isna(iv_array[i])
+            
             results[f"strike_{strike}"] = {
                 "optionType": atm_strikes_df.iloc[i]['optionType'],
-                "implied_volatility": round(iv_array[i], 4) if iv_array[i] > 0 else "N/A",
-                "delta": round(greeks['delta'][i], 4) if iv_array[i] > 0 else "N/A",
-                "theta": round(greeks['theta'][i], 4) if iv_array[i] > 0 else "N/A",
-                "gamma": round(greeks['gamma'][i], 4) if iv_array[i] > 0 else "N/A",
+                "implied_volatility": round(iv_array[i], 4) if iv_valid else "N/A",
+                "delta": round(greeks['delta'][i], 4) if iv_valid else "N/A",
+                "theta": round(greeks['theta'][i], 4) if iv_valid else "N/A",
+                "gamma": round(greeks['gamma'][i], 4) if iv_valid else "N/A",
             }
         
         log.info(f"✅ Successfully calculated greeks for {len(results)} NTM strikes for {symbol}.")
