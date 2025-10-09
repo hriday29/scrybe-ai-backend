@@ -1,4 +1,4 @@
-# technical_analyzer.py (CORRECTED)
+# technical_analyzer.py
 import matplotlib
 matplotlib.use('Agg')
 import pandas as pd
@@ -10,118 +10,81 @@ import data_retriever
 import pandas_ta as ta
 import angelone_retriever
 
-def get_fundamental_proxies(data_slice: pd.DataFrame) -> dict:
-    """
-    Calculates fundamental proxy metrics using point-in-time historical price data.
-    This version correctly uses UPPERCASE column names.
-    """
-    if data_slice is None or len(data_slice) < 252:
-        return {
-            "valuation_proxy": "N/A",
-            "quality_proxy_volatility": "N/A",
-            "quality_score": 50 # Return a neutral default score
-        }
-
-    # --- Proxy 1: Valuation (52-Week Range Position) ---
-    high_52_week = data_slice['high'].iloc[-252:].max()
-    low_52_week = data_slice['low'].iloc[-252:].min()
-    latest_close = data_slice['close'].iloc[-1]
-    
-    valuation_range_score = 100
-    if (high_52_week - low_52_week) > 0:
-        valuation_range_score = ((latest_close - low_52_week) / (high_52_week - low_52_week)) * 100
-
-    # --- Proxy 2: Quality/Durability (Realized Volatility) ---
-    returns_90_day = data_slice['close'].iloc[-90:].pct_change()
-    realized_volatility_90d = returns_90_day.std() * (252**0.5) # Annualized volatility
-
-    # --- Convert Proxies to a final "Quality Score" ---
-    capped_vol = min(realized_volatility_90d, 0.50)
-    quality_score = (1 - (capped_vol / 0.50)) * 100
-    
-    return {
-        "valuation_proxy": f"{valuation_range_score:.1f}% of 52-Week Range",
-        "quality_proxy_volatility": f"{realized_volatility_90d:.2%}",
-        "quality_score": int(quality_score)
-    }
-
 def get_all_technicals(data: pd.DataFrame) -> dict:
     """
-    Calculates a comprehensive set of technical indicators from historical data.
-    This logic is ported from main_orchestrator.py to ensure parity.
+    Calculates a comprehensive set of technical indicators, now including volume analysis.
     """
-    log.info(f"Calculating technical indicators...")
+    log.info("Calculating comprehensive technical indicators...")
     if data is None or len(data) < 50:
         return {"error": "Insufficient historical data for technical analysis."}
 
-    # Use a copy to avoid modifying the original DataFrame
     data = data.copy()
-    failed_indicators = []
     
-    try:
-        # --- Calculate all indicators first ---
-        try:
-            data.ta.macd(append=True)
-        except Exception: failed_indicators.append("MACD")
-        
-        try:
-            data.ta.bbands(append=True)
-        except Exception: failed_indicators.append("Bollinger Bands")
-        
-        try:
-            data.ta.supertrend(append=True)
-        except Exception: failed_indicators.append("Supertrend")
-            
-        try:
-            data.ta.rsi(length=14, append=True)
-        except Exception: failed_indicators.append("RSI")
+    # --- Calculate all indicators ---
+    data.ta.macd(append=True)
+    data.ta.bbands(append=True)
+    data.ta.supertrend(append=True)
+    data.ta.rsi(length=14, append=True)
+    data.ta.adx(length=14, append=True)
+    data.ta.atr(length=14, append=True)
+    data['volume_20d_avg'] = data['volume'].rolling(window=20).mean()
+    
+    latest_row = data.iloc[-1]
+    
+    # --- Build the technicals dictionary ---
+    technicals = {"daily_close": latest_row.get("close", None)}
+    
+    # Standard Indicators
+    if "RSI_14" in data.columns: technicals["RSI_14"] = f"{latest_row['RSI_14']:.2f}"
+    if "ADX_14" in data.columns: technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
+    if "ATRr_14" in data.columns: technicals["ATR_14_volatility"] = f"{latest_row['ATRr_14']:.2f}"
+    
+    # Volume Surge Analysis
+    if "volume" in data.columns and "volume_20d_avg" in data.columns:
+        surge_ratio = latest_row['volume'] / latest_row['volume_20d_avg'] if latest_row['volume_20d_avg'] > 0 else 0
+        technicals["volume_analysis"] = {
+            "latest_volume": f"{latest_row['volume']:,}",
+            "20d_avg_volume": f"{latest_row['volume_20d_avg']:,}",
+            "surge_factor": f"{surge_ratio:.2f}x",
+            "interpretation": "Significant Volume Surge" if surge_ratio > 1.8 else "Normal Volume"
+        }
 
-        try:
-            data.ta.adx(length=14, append=True)
-        except Exception: failed_indicators.append("ADX")
+    # Enhanced MACD Interpretation
+    if all(k in data.columns for k in ["MACD_12_26_9", "MACDs_12_26_9", "MACDh_12_26_9"]):
+        status = "Neutral"
+        if latest_row['MACD_12_26_9'] > latest_row['MACDs_12_26_9']:
+            status = "Bullish Crossover"
+            if latest_row['MACDh_12_26_9'] > data['MACDh_12_26_9'].iloc[-2]:
+                status = "Bullish Momentum Accelerating"
+        else:
+            status = "Bearish Crossover"
+            if latest_row['MACDh_12_26_9'] < data['MACDh_12_26_9'].iloc[-2]:
+                status = "Bearish Momentum Accelerating"
+        
+        technicals["MACD_status"] = {
+            "value": f"{latest_row['MACD_12_26_9']:.2f}",
+            "signal_line": f"{latest_row['MACDs_12_26_9']:.2f}",
+            "histogram": f"{latest_row['MACDh_12_26_9']:.2f}",
+            "interpretation": status
+        }
+    
+    # Bollinger Bands
+    if all(k in data.columns for k in ["BBU_20_2.0", "BBL_20_2.0", "BBM_20_2.0"]):
+        band_width = ((latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0']) * 100
+        technicals["bollinger_bands"] = {
+            "price_position": "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0'] else "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0'] else "Inside Bands",
+            "band_width_pct": f"{band_width:.2f}%",
+            "interpretation": "Volatility Squeeze" if band_width < 5.0 else "Volatility Expansion"
+        }
             
-        try:
-            data.ta.atr(length=14, append=True)
-        except Exception: failed_indicators.append("ATR")
-
-        latest_row = data.iloc[-1]
-        
-        # --- Build the technicals dictionary ---
-        technicals = {"daily_close": latest_row.get("close", None)}
-        
-        if "RSI_14" in data.columns: technicals["RSI_14"] = f"{latest_row['RSI_14']:.2f}"
-        if "ADX_14" in data.columns: technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
-        if "ATRr_14" in data.columns: technicals["ATR_14"] = latest_row['ATRr_14']
-        
-        if all(k in data.columns for k in ["MACD_12_26_9", "MACDs_12_26_9"]):
-            technicals["MACD_status"] = {
-                "value": f"{latest_row['MACD_12_26_9']:.2f}",
-                "signal_line": f"{latest_row['MACDs_12_26_9']:.2f}",
-                "interpretation": "Bullish Crossover" if latest_row['MACD_12_26_9'] > latest_row['MACDs_12_26_9'] else "Bearish Crossover"
-            }
-        
-        if all(k in data.columns for k in ["BBU_20_2.0", "BBL_20_2.0", "BBM_20_2.0"]):
-            technicals["bollinger_bands"] = {
-                "price_position": "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0'] else "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0'] else "Inside Bands",
-                "upper_band": f"{latest_row['BBU_20_2.0']:.2f}",
-                "lower_band": f"{latest_row['BBL_20_2.0']:.2f}",
-                "band_width_pct": f"{((latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0']) * 100:.2f}%"
-            }
+    # Supertrend
+    if all(k in data.columns for k in ["SUPERT_7_3.0", "SUPERTd_7_3.0"]):
+        technicals["supertrend_7_3"] = {
+            "trend": "Uptrend" if latest_row['SUPERTd_7_3.0'] == 1 else "Downtrend",
+            "value": f"{latest_row['SUPERT_7_3.0']:.2f}"
+        }
             
-        if all(k in data.columns for k in ["SUPERT_7_3.0", "SUPERTd_7_3.0"]):
-            technicals["supertrend_7_3"] = {
-                "trend": "Uptrend" if latest_row['SUPERTd_7_3.0'] == 1 else "Downtrend",
-                "value": f"{latest_row['SUPERT_7_3.0']:.2f}"
-            }
-            
-        if failed_indicators:
-            technicals["errors"] = f"Failed to calculate: {', '.join(failed_indicators)}"
-            
-        return technicals
-        
-    except Exception as e:
-        log.error(f"Critical error during indicator calculation: {e}", exc_info=True)
-        return {"error": f"Calculation failed. Missing indicators: {', '.join(failed_indicators)}"}
+    return technicals
 
 def get_relative_strength(stock_data: pd.DataFrame) -> str:
     """
@@ -297,35 +260,44 @@ def build_analysis_context(
 ) -> dict:
     """
     Builds the ultimate, institutional-grade context packet for the AI.
-    This is the single source of truth for the AI's data.
+    This version uses consistent, real data for both backtesting and live analysis.
     """
-    log.info(f"Building ULTIMATE context for {ticker} (Backtest Mode: {is_backtest})...")
+    log.info(f"Building INSTITUTIONAL-GRADE context for {ticker} (Backtest Mode: {is_backtest})...")
 
-    # --- Initialize all data components ---
-    technicals, fundamentals, options, news, market_depth = {}, {}, {}, {}, {}
-
-    # --- Fetch Data (Adapts for backtest vs. live) ---
+    # --- Fetch Core Data Components ---
     technicals = get_all_technicals(historical_data)
     
+    # --- FIX: Fetch REAL fundamentals for both backtest and live ---
+    # This ensures backtest results are representative of live performance.
+    # Assumes `get_stored_fundamentals` can fetch point-in-time data.
+    fundamentals = data_retriever.get_stored_fundamentals(ticker, historical_data.index[-1])
+    if not fundamentals:
+        fundamentals = {"error": "No fundamental data found for this date."}
+
+    # --- Fetch Live-Only or Placeholder Data ---
+    options_sentiment, news, market_depth = {}, {}, {}
+
     if is_backtest:
-        # For backtesting, we use proxies and placeholders
-        fundamentals = get_fundamental_proxies(historical_data)
-        options = {"status": "Unavailable in backtest"}
+        # For backtesting, we use placeholders for data that cannot be reliably recreated.
+        options_sentiment = {"status": "Unavailable in backtest"}
         news = {"status": "Unavailable in backtest"}
         market_depth = {"status": "Unavailable in backtest"}
     else:
-        # For live runs, we fetch from our rich data sources
-        fundamentals = data_retriever.get_stored_fundamentals(ticker)
-        options = data_retriever.get_options_data(ticker)
+        # For live runs, we fetch from our rich, real-time data sources.
+        # --- FIX: Fetch REAL option greeks, not just placeholder data ---
+        options_sentiment = angelone_retriever.get_option_greeks(ticker)
+        if not options_sentiment:
+            options_sentiment = {"status": "Option greeks data not available for this ticker."}
+            
         news = data_retriever.get_news_articles_for_ticker(ticker)
         market_depth = data_retriever.get_live_market_depth(ticker)
 
-    # --- Assemble the Final Context ---
+    # --- Assemble the Final Context Dictionary ---
     context = {
         "ticker": ticker,
         "macro_context": {
-            "overall_market_regime": market_state.get("market_regime"),
-            "volatility_regime": market_state.get("volatility_regime"),
+            "overall_market_regime": market_state.get("market_regime", {}).get("regime_status"),
+            "volatility_regime": market_state.get("volatility_regime", {}).get("volatility_status"),
             "market_breadth": market_state.get("market_breadth"),
             "global_benchmarks": market_state.get("benchmark_performance")
         },
@@ -336,7 +308,7 @@ def build_analysis_context(
         "fundamental_analysis": fundamentals,
         "technical_analysis": technicals,
         "market_internals": {
-            "options_sentiment": options,
+            "options_sentiment_greeks": options_sentiment,
             "live_order_book": market_depth
         },
         "news_and_events": news

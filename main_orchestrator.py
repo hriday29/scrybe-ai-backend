@@ -133,7 +133,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
             signals_for_today = list(database_manager.predictions_collection.find({
                 "batch_id": batch_id,
                 "prediction_date": current_day.to_pydatetime(),
-                "signal": {"$in": ["BUY", "SELL"]}
+                "signal": {"$in": ["BUY", "SHORT"]} # FIX: Replaced "SELL" with "SHORT"
             }))
             before_entries = len(portfolio['open_positions'])
             _manage_entries_for_day(portfolio, signals_for_today, current_day)
@@ -229,7 +229,9 @@ def _manage_exits_for_day(portfolio: dict, point_in_time: pd.Timestamp, data_cac
                 close_reason, closing_price = "Stop-Loss Hit (Intraday)", position['stop_loss']
             elif position['target'] and day_data.high >= position['target']:
                 close_reason, closing_price = "Target Hit", position['target']
-        elif position['signal'] == 'SELL':
+        
+        # --- FIX: Corrected the indentation and signal name ---
+        elif position['signal'] == 'SHORT':
             if day_data.open >= position['stop_loss']:
                 close_reason, closing_price = "Stop-Loss Hit (Gap Up)", day_data.open
             elif day_data.high >= position['stop_loss']:
@@ -288,8 +290,10 @@ def _calculate_closed_trade(position: dict, closing_price: float, closing_reason
 
     if signal == 'BUY':
         gross_pnl = (closing_price - entry_price) * num_shares
-    else:
+    elif signal == 'SHORT':
         gross_pnl = (entry_price - closing_price) * num_shares
+    else:
+        gross_pnl = 0 # Or handle other signals if they exist
 
     costs = config.BACKTEST_CONFIG
     turnover = (entry_price * num_shares) + (closing_price * num_shares)

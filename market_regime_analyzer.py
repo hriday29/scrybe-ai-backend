@@ -8,33 +8,55 @@ import config
 
 def calculate_regime_from_data(historical_data: pd.DataFrame) -> str:
     """
-    Calculates the market regime from a given DataFrame of historical index data.
-    Returns 'Bullish', 'Bearish', or 'Neutral'.
+    Calculates a more nuanced market regime from historical index data.
+    This logic first identifies the primary trend and then the short-term state.
     """
     if historical_data is None or len(historical_data) < 100:
-        return "Neutral" # Not enough data to determine
+        return "Sideways" # Default to a safe, non-trending state
 
     try:
-        # Use a copy to avoid SettingWithCopyWarning
         data = historical_data.copy()
         data.ta.ema(length=20, append=True)
         data.ta.ema(length=50, append=True)
         data.ta.ema(length=100, append=True)
         data.dropna(inplace=True)
 
-        latest_emas = data.iloc[-1]
-        ema_20 = latest_emas['EMA_20']
-        ema_50 = latest_emas['EMA_50']
-        ema_100 = latest_emas['EMA_100']
+        latest = data.iloc[-1]
+        close = latest['close']
+        ema_20 = latest['EMA_20']
+        ema_50 = latest['EMA_50']
+        ema_100 = latest['EMA_100']
 
-        if ema_20 > ema_50 > ema_100:
-            return "Bullish"
-        elif ema_20 < ema_50 < ema_100:
-            return "Bearish"
+        # 1. Determine the Primary Trend (using the slower 50 and 100 EMAs)
+        primary_trend_is_up = ema_50 > ema_100
+        primary_trend_is_down = ema_50 < ema_100
+
+        # 2. Determine the Short-Term State (using the faster 20 and 50 EMAs)
+        short_term_is_up = ema_20 > ema_50
+        short_term_is_down = ema_20 < ema_50
+
+        # 3. Combine them into a nuanced regime
+        if primary_trend_is_up:
+            if short_term_is_up:
+                # Both long and short term are aligned upwards. Strongest bull case.
+                return "Uptrend"
+            else:
+                # Primary trend is up, but short term is pulling back. A potential dip-buying opportunity.
+                return "Bullish Pullback"
+        elif primary_trend_is_down:
+            if short_term_is_down:
+                # Both long and short term are aligned downwards. Strongest bear case.
+                return "Downtrend"
+            else:
+                # Primary trend is down, but short term is rallying. A potential shorting opportunity.
+                return "Bearish Rally"
         else:
-            return "Neutral"
-    except Exception:
-        return "Neutral" # Default to Neutral on any error
+            # The primary trend indicators are crossed or flat. The market is directionless.
+            return "Sideways"
+            
+    except Exception as e:
+        log.error(f"Error calculating regime: {e}")
+        return "Sideways" # Default to a safe, non-trending state on any error
     
 def get_volatility_regime(historical_vix_data: pd.DataFrame) -> str:
     """

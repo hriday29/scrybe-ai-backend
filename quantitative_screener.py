@@ -7,6 +7,8 @@ import pandas_ta as ta
 import yfinance as yf
 import os
 import database_manager
+import sector_analyzer
+import market_regime_analyzer
 
 # --- Sector Mapping ---
 SECTOR_NAME_MAPPING = {
@@ -188,6 +190,18 @@ def _check_mean_reversion_rules(df: pd.DataFrame) -> bool:
     latest = df.iloc[-1]
     return latest['close'] > latest['EMA_200'] and latest['EMA_50'] > latest['EMA_200'] and latest['RSI_14'] < 40 and latest['ADX_14'] < 25
 
+def _check_breakdown_rules(df: pd.DataFrame) -> bool:
+    """Contains the specific technical rules for a Bearish Breakdown."""
+    latest = df.iloc[-1]
+    # Price is below 50 EMA, RSI shows weakness, and ADX confirms a strong trend.
+    return latest['close'] < latest['EMA_50'] and latest['RSI_14'] < 40 and latest['ADX_14'] > config.ADX_THRESHOLD
+
+def _check_rejection_rules(df: pd.DataFrame) -> bool:
+    """Contains the specific technical rules for a Bearish Rejection."""
+    latest = df.iloc[-1]
+    # In a long-term downtrend (price < 50EMA < 200EMA) but has rallied weakly into resistance (RSI > 40).
+    return latest['close'] < latest['EMA_50'] < latest['EMA_200'] and latest['RSI_14'] > 40
+
 def check_strategy_candidate(
     ticker: str, data: pd.DataFrame, stock_sector: str, strong_sectors: list[str],
     market_regime: str, volatility_regime: str, point_in_time: pd.Timestamp
@@ -310,26 +324,84 @@ def screen_for_mean_reversion(strong_sectors: list[str], full_data_cache: dict, 
     log.info(f"✅ Mean Reversion Screener Result: {len(watchlist)} candidates")
     return watchlist
 
-def get_analyzable_universe(full_data_cache: dict, point_in_time: pd.Timestamp) -> list[str]:
-    """
-    Performs basic pre-flight checks to filter for a universe of stocks that are
-    healthy and liquid enough for AI analysis.
-    """
-    log.info("--- Filtering for a broad, analyzable universe ---")
-    
-    universe = [t for t in full_data_cache.keys() if ".NS" in t]
-    qualified_tickers = []
-    
-    for ticker in universe:
-        data = full_data_cache.get(ticker)
-        if data is None: continue
-        
-        df_slice = data.loc[:point_in_time]
-        if df_slice.empty or len(df_slice) < 252: continue
-        if df_slice['volume'].tail(20).mean() < MIN_AVG_VOLUME: continue
-        if not _passes_fundamental_health_check(ticker, point_in_time): continue
-        
-        qualified_tickers.append(ticker)
+def screen_for_breakdowns(strong_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[tuple[str, str]]:
+    """Strong, trending bearish stocks."""
+    log.info("--- Screening for Breakdown Setups (SHORT) ---")
+    # Note: For shorts, 'strong_sectors' should be interpreted as 'weak_sectors'.
+    # The pipeline will need to be updated to pass weak sectors here in a future step if desired.
+    # For now, we screen the same universe.
+    tickers = _prepare_filtered_universe(strong_sectors, full_data_cache, point_in_time)
+    watchlist = []
+    for ticker in tickers:
+        df = full_data_cache[ticker].loc[:point_in_time].copy()
+        df.ta.ema(length=50, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.ta.adx(length=14, append=True)
+        df.dropna(inplace=True)
+        if df.empty: continue
+        if _check_breakdown_rules(df):
+            watchlist.append((ticker, "Breakdown (Short)"))
+            log.info(f"     -> ✅ Breakdown Candidate (SHORT): {ticker}")
+    log.info(f"✅ Breakdown Screener Result: {len(watchlist)} candidates")
+    return watchlist
 
-    log.info(f"✅ Found {len(qualified_tickers)} liquid and healthy stocks for AI analysis.")
-    return qualified_tickers
+def screen_for_rejections(strong_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[tuple[str, str]]:
+    """Weak rallies into resistance in a downtrend."""
+    log.info("--- Screening for Rejection Setups (SHORT) ---")
+    tickers = _prepare_filtered_universe(strong_sectors, full_data_cache, point_in_time)
+    watchlist = []
+    for ticker in tickers:
+        df = full_data_cache[ticker].loc[:point_in_time].copy()
+        df.ta.ema(length=50, append=True)
+        df.ta.ema(length=200, append=True)
+        df.ta.rsi(length=14, append=True)
+        df.dropna(inplace=True)
+        if df.empty: continue
+        if _check_rejection_rules(df):
+            watchlist.append((ticker, "Rejection (Short)"))
+            log.info(f"     -> ✅ Rejection Candidate (SHORT): {ticker}")
+    log.info(f"✅ Rejection Screener Result: {len(watchlist)} candidates")
+    return watchlist
+
+def get_analyzable_universe(market_state: dict, full_data_cache: dict, point_in_time: pd.Timestamp) -> list[tuple[str, str]]:
+    """
+    This is the master dispatcher for the backtester.
+    It intelligently selects and runs the appropriate technical screeners
+    based on the NUANCED market regime.
+    """
+    regime = market_state.get('market_regime', {}).get('regime_status', 'Sideways')
+    # This is the correct variable we need to use
+    actionable_sectors = market_state.get('actionable_sectors', []) 
+    
+    log.info(f"--- Master Screener Dispatching for NUANCED Regime: {regime} ---")
+    
+    candidates = []
+    
+    if regime == "Uptrend":
+        log.info("Dispatching to: Long Momentum Screener")
+        # FIX: Use actionable_sectors instead of strong_sectors
+        candidates.extend(screen_for_momentum(actionable_sectors, full_data_cache, point_in_time))
+        
+    elif regime == "Bullish Pullback":
+        log.info("Dispatching to: Long Pullback ('Buy the Dip') Screener")
+        # FIX: Use actionable_sectors instead of strong_sectors
+        candidates.extend(screen_for_pullbacks(actionable_sectors, full_data_cache, point_in_time))
+        
+    elif regime == "Downtrend":
+        log.info("Dispatching to: Short Breakdown Screener")
+        # FIX: Use actionable_sectors instead of strong_sectors
+        candidates.extend(screen_for_breakdowns(actionable_sectors, full_data_cache, point_in_time))
+        
+    elif regime == "Bearish Rally":
+        log.info("Dispatching to: Short Rejection ('Short the Rip') Screener")
+        # FIX: Use actionable_sectors instead of strong_sectors
+        candidates.extend(screen_for_rejections(actionable_sectors, full_data_cache, point_in_time))
+        
+    else: # Sideways or any other unhandled state
+        log.warning(f"Market regime is '{regime}'. No candidates will be generated to avoid low-probability trades.")
+        return []
+
+    # Remove duplicates if a stock qualifies for multiple reasons
+    unique_candidates = list({t[0]: t for t in candidates}.values())
+    log.info(f"✅ Master Screener found {len(unique_candidates)} unique, high-probability candidates.")
+    return unique_candidates

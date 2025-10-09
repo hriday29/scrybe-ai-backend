@@ -97,10 +97,13 @@ class AnalysisPipeline:
         log.info("✅ Pipeline setup complete.")
 
     def _diagnose_market(self, point_in_time, full_data_cache):
-        """Determines the overall market state, including deep macro context."""
-        log.info("--- Diagnosing Market State (Deep Macro Analysis) ---")
+        """
+        Determines the overall market state and now symmetrically selects the
+        strongest or weakest sectors based on the market regime.
+        """
+        log.info("--- Diagnosing Market State (Symmetrical Analysis) ---")
         
-        # 1. Analyze VIX and Market Trend/Volatility (Existing Logic)
+        # 1. Analyze VIX and Market Trend
         vix_data = full_data_cache.get("^INDIAVIX")
         latest_vix = 0.0
         market_is_high_risk = False
@@ -112,40 +115,52 @@ class AnalysisPipeline:
             log.warning("Could not determine VIX risk level from data.")
 
         market_regime_context = market_regime_analyzer.get_market_regime_context()
-        market_regime = market_regime_context.get('market_regime', {}).get('regime_status', 'Neutral')
+        market_regime = market_regime_context.get('market_regime', {}).get('regime_status', 'Sideways')
         volatility_regime = market_regime_context.get('volatility_regime', {}).get('volatility_status', 'Normal')
 
-        # 2. NEW: Fetch deep macro, breadth, and sector data
+        # 2. Fetch Macro and Breadth Data
         benchmark_performance = _fetch_benchmark_performance(full_data_cache, point_in_time)
         market_breadth = _calculate_market_breadth(full_data_cache, point_in_time)
-        strong_sectors = sector_analyzer.get_top_performing_sectors(full_data_cache, point_in_time)
 
-        # 3. Package into the upgraded 'market_state' object
+        # 3. --- NEW: Symmetrical Sector Analysis ---
+        actionable_sectors = []
+        if market_regime in ["Uptrend", "Bullish Pullback"]:
+            log.info(f"Bullish regime ('{market_regime}') detected. Identifying STRONGEST sectors...")
+            actionable_sectors = sector_analyzer.get_top_performing_sectors(full_data_cache, point_in_time)
+        elif market_regime in ["Downtrend", "Bearish Rally"]:
+            log.info(f"Bearish regime ('{market_regime}') detected. Identifying WEAKEST sectors for shorting...")
+            actionable_sectors = sector_analyzer.get_bottom_performing_sectors(full_data_cache, point_in_time)
+        else:
+            log.info(f"Neutral/Sideways regime ('{market_regime}'). No sector bias will be applied.")
+
+        # 4. Package into the final 'market_state' object
         market_state = {
-            "market_regime": market_regime,
-            "volatility_regime": volatility_regime,
+            "market_regime": market_regime_context.get('market_regime'), # Pass the full dict
+            "volatility_regime": market_regime_context.get('volatility_regime'),
             "market_is_high_risk": market_is_high_risk,
             "latest_vix": latest_vix,
-            "strong_sectors": strong_sectors,
-            "benchmark_performance": benchmark_performance, # <-- NEW
-            "market_breadth": market_breadth # <-- NEW
+            "actionable_sectors": actionable_sectors, # Use the new generic, actionable key
+            "benchmark_performance": benchmark_performance,
+            "market_breadth": market_breadth
         }
         
-        log.info(f"✅ Market Diagnosis: Trend={market_regime}, Breadth(>50D): {market_breadth.get('pct_above_50dma')}%, HighRisk={market_is_high_risk}")
+        log.info(f"✅ Market Diagnosis: Trend={market_regime}, ActionableSectors={len(actionable_sectors)}, HighRisk={market_is_high_risk}")
         return market_state
 
     def _generate_candidates(self, market_state, full_data_cache, point_in_time):
-        """Runs basic filters to find all stocks worth analyzing."""
-        log.info("--- Generating Analyzable Universe ---")
+        """
+        Calls the upgraded quantitative screener, which now acts as a master
+        dispatcher to get a list of high-probability, regime-aligned candidates.
+        """
+        log.info("--- Generating Candidates via Master Screener Dispatcher ---")
         
-        # In our new workflow, the "candidates" are all healthy, liquid stocks.
-        # The AI will do the actual screening for trade setups.
+        # This now calls our upgraded function and passes the market state.
+        # It directly returns the (ticker, reason) tuples we need.
         candidates = quantitative_screener.get_analyzable_universe(
-            full_data_cache, point_in_time
+            market_state, full_data_cache, point_in_time
         )
         
-        # The output is now a simple list of tickers, not a tuple with a reason.
-        return [(ticker, "Unbiased Analysis") for ticker in candidates]
+        return candidates
 
     def _run_ai_analysis(self, candidates, full_data_cache, market_state, point_in_time, is_backtest, batch_id=None):
         """
@@ -218,6 +233,7 @@ class AnalysisPipeline:
         """
         Filters the AI's unbiased analysis to find high-probability trades
         that align with our master strategy (market regime, risk, etc.).
+        This is the Portfolio Manager's final decision gate.
         """
         log.info("--- Filtering AI Analysis with Strategy Overlay ---")
         
@@ -234,38 +250,47 @@ class AnalysisPipeline:
             result['final_signal'] = 'HOLD' # Default to HOLD
             veto_reason = None
             
+            # --- PROCESS BUY SIGNALS ---
             if ai_signal == 'BUY' and scrybe_score >= self.active_strategy['min_conviction_score']:
                 if market_state['market_is_high_risk']:
-                    veto_reason = f"FILTERED: High VIX ({market_state['latest_vix']:.2f})"
+                    veto_reason = f"FILTERED (BUY): High VIX ({market_state['latest_vix']:.2f})"
                 elif market_state['market_regime'] == 'Bearish':
-                    veto_reason = "FILTERED: Does not align with Bearish market"
+                    veto_reason = "FILTERED (BUY): Does not align with Bearish market"
                 
-                # --- !! CRITICAL FIX: LIVE FUNDAMENTAL VETO !! ---
+                # Live fundamental check (optional but good practice)
                 elif not is_backtest:
                     try:
                         company_info = yf.Ticker(ticker).info
                         roe = company_info.get('returnOnEquity')
                         margins = company_info.get('profitMargins')
                         if (roe is not None and roe < 0.15) or (margins is not None and margins < 0.10):
-                            veto_reason = f"FILTERED: Weak Live Fundamentals (ROE: {roe:.2%}, Margins: {margins:.2%})"
+                            veto_reason = f"FILTERED (BUY): Weak Live Fundamentals (ROE: {roe:.2%}, Margins: {margins:.2%})"
                     except Exception as e:
                         log.error(f"Error during live fundamental check for {ticker}: {e}")
-                # --- END OF FIX ---
 
                 if not veto_reason:
                     result['final_signal'] = 'BUY'
 
-            elif ai_signal == 'SELL' and scrybe_score <= -self.active_strategy['min_conviction_score']:
-                # Only veto if the strategy config explicitly disallows short-selling
+            # --- PROCESS SHORT SIGNALS (NEW LOGIC) ---
+            elif ai_signal == 'SHORT' and scrybe_score <= -self.active_strategy['min_conviction_score']:
                 if not self.active_strategy.get('allow_short_selling', False):
-                    veto_reason = "FILTERED: Short-selling disabled by strategy config"
+                    veto_reason = "FILTERED (SHORT): Short-selling disabled by strategy config"
+                elif market_state['market_regime'] in ['Bullish', 'Uptrend']:
+                    veto_reason = "FILTERED (SHORT): Does not align with Bullish market"
+                
+                if not veto_reason:
+                    result['final_signal'] = 'SHORT'
+            
+            # Deprecated 'SELL' can be treated as a low-priority exit signal if needed, but for now we ignore it.
 
             if veto_reason:
                 result['veto_reason'] = veto_reason
 
-            if result['final_signal'] in ['BUY', 'SELL']:
+            # --- GENERATE TRADE PLAN FOR ACTIONABLE SIGNALS ---
+            if result['final_signal'] in ['BUY', 'SHORT']:
                 point_in_time_data.ta.atr(length=14, append=True)
                 atr = point_in_time_data['ATRr_14'].iloc[-1]
+                
                 if atr and atr > 0:
                     entry_price = point_in_time_data['close'].iloc[-1]
                     risk_per_share = self.active_strategy['stop_loss_atr_multiplier'] * atr
@@ -274,7 +299,7 @@ class AnalysisPipeline:
                     if result['final_signal'] == 'BUY':
                         stop_loss = entry_price - risk_per_share
                         target = entry_price + reward_per_share
-                    else: # SELL
+                    else: # SHORT
                         stop_loss = entry_price + risk_per_share
                         target = entry_price - reward_per_share
 
@@ -282,11 +307,11 @@ class AnalysisPipeline:
                     log.info(f"✅ {ticker} AI signal '{result['final_signal']}' passed strategy filters. Trade plan generated.")
                 else:
                     result['final_signal'] = 'HOLD'
-                    result['veto_reason'] = "FILTERED: Invalid ATR for trade plan"
+                    result['veto_reason'] = "FILTERED: Invalid ATR for trade plan generation"
 
             final_trade_signals.append(result)
 
-        actionable_signals = [s for s in final_trade_signals if s.get('final_signal') in ['BUY', 'SELL']]
+        actionable_signals = [s for s in final_trade_signals if s.get('final_signal') in ['BUY', 'SHORT']]
         log.info(f"✅ Strategy overlay complete. {len(actionable_signals)} signal(s) are actionable.")
         return final_trade_signals
     
@@ -295,25 +320,32 @@ class AnalysisPipeline:
         log.info(f"--- Persisting {len(final_signals)} Final Signal(s) to Database ---")
         
         if is_backtest:
-            # --- BACKTEST PERSISTENCE LOGIC ---
             for result in final_signals:
+                final_signal = result['final_signal']
+                
+                # Determine status based on the final signal and any veto reason
+                status = 'open'
+                if final_signal not in ['BUY', 'SHORT']:
+                    status = 'hold'
+                if result.get('veto_reason'):
+                    status = 'vetoed'
+
                 prediction_doc = {
                     **result['ai_analysis'],
                     'ticker': result['ticker'],
                     'prediction_date': result['point_in_time_data'].index[-1].to_pydatetime(),
                     'price_at_prediction': result['point_in_time_data']['close'].iloc[-1],
-                    'status': 'vetoed' if result.get('veto_reason') else ('hold' if result['final_signal'] != 'BUY' else 'open'),
+                    'status': status,
                     'strategy': self.active_strategy['name'],
-                    'signal': result['final_signal'],
+                    'signal': final_signal,  # This will now correctly be 'BUY', 'SHORT', or 'HOLD'
                     'veto_reason': result.get('veto_reason'),
                     'tradePlan': result.get('trade_plan')
                 }
                 database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
         else:
-            # --- LIVE PERSISTENCE LOGIC ---
+            # LIVE PERSISTENCE LOGIC
             for result in final_signals:
                 ticker = result['ticker']
-                # 1. Combine all results into a single document for saving
                 analysis_to_save = result['ai_analysis']
                 analysis_to_save['strategy_signal'] = {
                     "type": result.get('screener_reason', 'Daily Review'),
@@ -321,14 +353,13 @@ class AnalysisPipeline:
                     "veto_reason": result.get('veto_reason'),
                     "trade_plan": result.get('trade_plan')
                 }
-                # For the live app, we save the full analysis for user review
                 database_manager.save_vst_analysis(ticker, analysis_to_save, {"ticker": ticker})
 
-                # 2. If the signal is an actionable BUY, set it as an active trade
-                if result['final_signal'] == 'BUY':
+                # If the signal is actionable, set it as an active trade
+                if result['final_signal'] in ['BUY', 'SHORT']:
                     trade_plan = result.get('trade_plan', {})
                     active_trade_object = {
-                        'signal': 'BUY',
+                        'signal': result['final_signal'],
                         'entry_date': datetime.now(timezone.utc),
                         'expiry_date': datetime.now(timezone.utc) + pd.Timedelta(days=self.active_strategy['holding_period']),
                         'entry_price': trade_plan.get('entryPrice'),

@@ -104,7 +104,7 @@ def get_historical_stock_data(ticker_symbol: str, end_date=None):
             from_date_str = from_date_obj.strftime('%Y-%m-%d')
             
             # Use the clean_ticker for the API call
-            df = angelone_retriever.get_historical_data(clean_ticker, f"{from_date_str} 09:15", f"{to_date_str} 15:30", "ONE_DAY")
+            df = angelone_retriever.get_historical_data(clean_ticker, from_date_obj, to_date_obj, "ONE_DAY")
             
             if df is not None and not df.empty:
                 log.info(f"✅ Successfully fetched data for {clean_ticker} from Angel One.")
@@ -310,20 +310,41 @@ def get_intraday_data(ticker_symbol: str):
             log.error(f"Error fetching yfinance intraday data for {ticker_symbol}: {e}")
             return None
 
-def get_stored_fundamentals(ticker: str) -> dict:
-    """Fetches curated fundamental data from the 'fundamentals' MongoDB collection."""
+def get_stored_fundamentals(ticker: str, point_in_time: datetime = None) -> dict:
+    """
+    Fetches curated fundamental data from the 'fundamentals' MongoDB collection,
+    ensuring it's the latest data available as of a specific point in time.
+    """
     if database_manager.db is None:
         log.warning("Cannot fetch fundamentals, DB not initialized.")
         return {"error": "Database not initialized."}
     
     try:
+        # If no date is provided, default to now (for live runs)
+        if point_in_time is None:
+            point_in_time = datetime.now(timezone.utc)
+        
+        # Ensure the timestamp is timezone-aware for correct comparison in MongoDB
+        if point_in_time.tzinfo is None:
+            point_in_time = point_in_time.replace(tzinfo=timezone.utc)
+
         fundamentals_collection = database_manager.db.fundamentals
-        data = fundamentals_collection.find_one({'ticker': ticker})
+        
+        # Query for the most recent document ON OR BEFORE the point_in_time
+        query = {
+            'ticker': ticker,
+            'asOfDate': {'$lte': point_in_time}
+        }
+        
+        # Sort by date descending and get the first result
+        data = fundamentals_collection.find_one(query, sort=[('asOfDate', -1)])
+        
         if data:
             data.pop('_id', None) # Remove the MongoDB-specific ID
             return data
         else:
-            return {"status": "Data not found in fundamentals collection."}
+            return {"status": f"Data not found for {ticker} on or before {point_in_time.date()}."}
+            
     except Exception as e:
         log.error(f"Error fetching stored fundamentals for {ticker}: {e}")
         return {"error": str(e)}

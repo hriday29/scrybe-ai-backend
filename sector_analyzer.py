@@ -78,3 +78,57 @@ def get_top_performing_sectors(full_data_cache: dict, point_in_time: pd.Timestam
 
     log.info(f"✅ Sector analysis complete. Identified {len(top_sector_names)} strong sector(s).")
     return top_sector_names
+
+def get_bottom_performing_sectors(full_data_cache: dict, point_in_time: pd.Timestamp) -> list[str]:
+    """
+    Calculates the performance of core sectors and identifies the WEAKEST performers
+    that are underperforming the Nifty 50 benchmark. This is used to find
+    candidates for shorting in a bearish market regime.
+    """
+    log.info("--- Analyzing Sector Relative Weakness for Shorting Bias ---")
+    
+    all_tickers = list(CORE_SECTOR_INDICES.values()) + [BENCHMARK_INDEX]
+    performance = {}
+
+    for ticker in all_tickers:
+        if ticker not in full_data_cache:
+            log.warning(f"Data for index {ticker} not found in cache. Skipping.")
+            continue
+        
+        data_slice = full_data_cache[ticker].loc[:point_in_time]
+
+        if len(data_slice) < LOOKBACK_PERIOD_DAYS + 5:
+            log.warning(f"Not enough data for {ticker}. Skipping.")
+            continue
+
+        price_now = data_slice['close'].iloc[-1]
+        price_then = data_slice['close'].iloc[-1 - LOOKBACK_PERIOD_DAYS]
+        performance[ticker] = ((price_now - price_then) / price_then) * 100 if price_then != 0 else 0
+
+    if BENCHMARK_INDEX not in performance:
+        log.error(f"Benchmark {BENCHMARK_INDEX} performance not calculated. Cannot proceed.")
+        return []
+
+    benchmark_performance = performance.pop(BENCHMARK_INDEX, 0)
+    log.info(f"Benchmark ({BENCHMARK_INDEX}) {LOOKBACK_PERIOD_DAYS}-day performance: {benchmark_performance:.2f}%")
+
+    # --- KEY CHANGE: Sort by performance ASCENDING ---
+    sorted_sectors = sorted(performance.items(), key=lambda item: item[1], reverse=False)
+    
+    bottom_sector_names = []
+    log.info(f"Filtering for sectors underperforming the benchmark ({benchmark_performance:.2f}%)...")
+    for ticker, perf in sorted_sectors:
+        # --- KEY CHANGE: Look for sectors that are WEAKER than the benchmark ---
+        if perf < benchmark_performance:
+            sector_name = next((name for name, t in CORE_SECTOR_INDICES.items() if t == ticker), ticker)
+            bottom_sector_names.append(sector_name)
+            log.info(f"  -> Weak Sector Found: {sector_name} ({perf:+.2f}%)")
+        
+        if len(bottom_sector_names) >= TOP_N_SECTORS:
+            break
+
+    if not bottom_sector_names:
+        log.warning("No sectors were found to be underperforming the market benchmark.")
+
+    log.info(f"✅ Sector analysis complete. Identified {len(bottom_sector_names)} weak sector(s).")
+    return bottom_sector_names

@@ -14,10 +14,25 @@ import os
 import logging  # Make sure logging is imported
 import pyotp  # ADDED: For dynamic TOTP generation
 import requests  # ADDED: For downloading instrument list
+from functools import wraps
+from py_vollib_vectorized import vectorized_implied_volatility, vectorized_greeks
 
 # You must install the Angel One SDK first:
 # pip install smartapi-python
 from smartapi_client.smartConnect import SmartConnect
+
+# --- Rate Limiting Decorator ---
+API_CALL_DELAY = 0.2  # Delay of 200ms between calls
+
+def rate_limited(func):
+    """
+    Decorator to enforce a delay between API calls to prevent hitting rate limits.
+    """
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        time.sleep(API_CALL_DELAY)
+        return func(*args, **kwargs)
+    return wrapper
 
 # --- Module-Level API Session & Cache Management ---
 smart_api_session = None
@@ -105,10 +120,24 @@ def initialize_angelone_session() -> bool:
             except Exception as e:
                 log.warning(f"Could not fetch user profile: {e}")
 
-            # Download and cache the instrument list upon successful login
-            INSTRUMENT_LIST = _download_instrument_list()
-            if INSTRUMENT_LIST:
-                log.info(f"✅ Successfully cached {len(INSTRUMENT_LIST)} instruments.")
+            # --- Download and PROCESS the instrument list for fast lookups ---
+            raw_instrument_list = _download_instrument_list()
+            if raw_instrument_list:
+                INSTRUMENT_MAP = {}
+                for item in raw_instrument_list:
+                    if not isinstance(item, dict): continue
+                    symbol = item.get('symbol')
+                    name = item.get('name')
+                    exch = item.get('exch_seg')
+                    token = item.get('token')
+                    
+                    if symbol and exch and token:
+                        INSTRUMENT_MAP[f"{symbol.upper()}_{exch}"] = item
+                    if name and exch and token:
+                        INSTRUMENT_MAP[f"{name.upper()}_{exch}"] = item
+                
+                INSTRUMENT_LIST = INSTRUMENT_MAP
+                log.info(f"✅ Successfully processed and cached {len(INSTRUMENT_LIST)} instruments for fast lookups.")
             else:
                 log.warning("⚠️ Could not download instrument list. Token lookups will fail.")
 
@@ -126,59 +155,35 @@ def initialize_angelone_session() -> bool:
 
 def _get_symbol_token(symbol: str, exchange: str = "NSE") -> str | None:
     """
-    Finds the Angel One instrument token for a given ticker symbol.
-    Uses an in-memory cache to avoid repeated lookups.
-    
-    IMPORTANT: For indices, the 'symbol' field in Angel One uses format like 'Nifty 50',
-    while the 'name' field uses 'NIFTY'. This function searches both fields.
+    Finds the instrument token using a pre-processed dictionary for O(1) lookups.
     """
-    cache_key = f"{symbol}_{exchange}"
+    # Use the global map instead of the list
+    if not isinstance(INSTRUMENT_LIST, dict):
+        log.error("Instrument map is not initialized. Cannot look up token.")
+        return None
+
+    search_symbol = symbol.replace('.NS', '').strip().upper()
+    cache_key = f"{search_symbol}_{exchange}"
+    
     if cache_key in TOKEN_CACHE:
         return TOKEN_CACHE[cache_key]
 
-    if not INSTRUMENT_LIST:
-        log.error("Cannot get symbol token, instrument list is not available.")
-        return None
+    instrument = INSTRUMENT_LIST.get(cache_key)
+    if instrument:
+        token = instrument.get('token')
+        if token:
+            TOKEN_CACHE[cache_key] = token
+            log.info(f"✅ Found token {token} for {symbol} via fast lookup.")
+            return token
 
-    try:
-        # Clean the input symbol
-        search_symbol = symbol.replace('.NS', '').strip()
-        
-        # Search through instruments
-        for instrument in INSTRUMENT_LIST:
-            if not isinstance(instrument, dict):
-                continue
-            
-            inst_symbol = instrument.get('symbol', '')
-            inst_name = instrument.get('name', '')
-            inst_exchange = instrument.get('exch_seg', '')
-            
-            # Match exchange
-            if inst_exchange != exchange:
-                continue
-            
-            # Try matching against both 'symbol' and 'name' fields (case-insensitive)
-            if (inst_symbol.upper() == search_symbol.upper() or 
-                inst_name.upper() == search_symbol.upper()):
-                
-                token = instrument.get('token')
-                if token:
-                    TOKEN_CACHE[cache_key] = token
-                    log.info(f"✅ Found token {token} for {symbol} (matched: {inst_symbol or inst_name})")
-                    return token
-
-        log.warning(f"Token not found for {symbol} in exchange {exchange}")
-        log.debug(f"Searched for: '{search_symbol}' in exchange '{exchange}'")
-        return None
-        
-    except Exception as e:
-        log.error(f"Error finding token for {symbol}: {e}", exc_info=True)
-        return None
+    log.warning(f"Token not found for {symbol} in exchange {exchange}")
+    return None
 
 # ===================================================================
 # SECTION 1: COMPREHENSIVE TECHNICAL DATA
 # ===================================================================
 
+@rate_limited
 def get_historical_data(symbol: str, from_date: str, to_date: str, interval: str = "ONE_DAY") -> pd.DataFrame | None:
     """
     Fetches historical OHLCV data. Interval can be: ONE_MINUTE, THREE_MINUTE,
@@ -186,6 +191,7 @@ def get_historical_data(symbol: str, from_date: str, to_date: str, interval: str
     from_date and to_date should be strings acceptable to the API (example: "01-Jan-2023").
     """
     log.info(f"[AO] Fetching '{interval}' historical data for {symbol}...")
+
     if not smart_api_session and not initialize_angelone_session():
         return None
 
@@ -194,13 +200,21 @@ def get_historical_data(symbol: str, from_date: str, to_date: str, interval: str
         return None
 
     try:
+        # Build base params
         params = {
             "exchange": "NSE",
             "symboltoken": token,
             "interval": interval,
-            "fromdate": from_date,
-            "todate": to_date
         }
+
+        # Add date formatting based on interval
+        if interval == "ONE_DAY":
+            params["fromdate"] = from_date.strftime('%Y-%m-%d')
+            params["todate"] = to_date.strftime('%Y-%m-%d')
+        else:  # For intraday intervals
+            params["fromdate"] = from_date.strftime('%Y-%m-%d %H:%M')
+            params["todate"] = to_date.strftime('%Y-%m-%d %H:%M')
+
         raw_data = smart_api_session.getCandleData(params)
 
         if not raw_data or raw_data.get('status') is False:
@@ -215,6 +229,7 @@ def get_historical_data(symbol: str, from_date: str, to_date: str, interval: str
         df = pd.DataFrame(raw_data['data'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['date'] = pd.to_datetime(df['timestamp'])
         df.set_index('date', inplace=True)
+
         log.info(f"Successfully fetched {len(df)} candles for {symbol}.")
         return df.drop(columns=['timestamp'])
 
@@ -222,6 +237,7 @@ def get_historical_data(symbol: str, from_date: str, to_date: str, interval: str
         log.error(f"Error in get_historical_data for {symbol}: {e}", exc_info=True)
         return None
 
+@rate_limited
 def get_full_quote(symbol: str, exchange: str = "NSE", token: str = None) -> dict | None:
     """
     Fetches a full quote including LTP, open, high, low, close, and volume.
@@ -302,6 +318,7 @@ def get_index_quote(index_name: str) -> dict | None:
 # SECTION 2: COMPREHENSIVE OPTIONS DATA (IMPLEMENTED)
 # ===================================================================
 
+@rate_limited
 def get_option_chain_data(symbol: str, exchange: str = "NFO") -> dict | None:
     """
     Fetches the nearest expiry date and the full option chain for that date.
@@ -316,7 +333,7 @@ def get_option_chain_data(symbol: str, exchange: str = "NFO") -> dict | None:
     # Step 1: Find all expiry dates for the given stock from the cached instrument list
     try:
         expiry_dates = set()
-        for inst in INSTRUMENT_LIST:
+        for inst in INSTRUMENT_LIST.values():
             if (isinstance(inst, dict) and
                 inst.get('instrumenttype') == 'OPTSTK' and
                 inst.get('name') == underlying_symbol and
@@ -372,42 +389,69 @@ def get_option_chain_data(symbol: str, exchange: str = "NFO") -> dict | None:
 
 def get_option_greeks(symbol: str) -> dict | None:
     """
-    Fetches option greeks (Delta, IV, etc.) for near-the-money (NTM) strikes.
-    This provides deep insight into option market positioning.
-
-    NOTE: Angel One SDK doesn't provide greeks directly; this function returns
-    a placeholder pointing to required next steps (manual calculation or another API).
+    Fetches the option chain and calculates IV and Greeks for near-the-money strikes.
+    This provides critical sentiment and volatility data for the AI.
     """
-    log.info(f"[AO] Fetching Option Greeks for {symbol}...")
+    log.info(f"[AO] Fetching and calculating Option Greeks for {symbol}...")
     try:
-        # First, we need the option chain to find the strikes.
         chain_data = get_option_chain_data(symbol)
         if not chain_data or not chain_data.get('chain'):
             return None
 
         ltp = chain_data.get('underlying_price')
         if ltp is None:
-            log.warning(f"Could not get underlying LTP for {symbol} to find NTM strikes.")
+            log.warning(f"Could not get underlying LTP for {symbol} to calculate greeks.")
             return None
 
         df = pd.DataFrame(chain_data['chain'])
-        if 'strikePrice' not in df.columns:
-            log.warning("Option chain items do not contain 'strikePrice'.")
+        required_cols = ['strikePrice', 'optionType', 'lastPrice', 'expiryDate']
+        if not all(col in df.columns for col in required_cols):
+            log.warning(f"Option chain for {symbol} is missing required columns for greeks calculation.")
             return None
 
+        # --- Data Cleaning and Preparation ---
         df['strikePrice'] = pd.to_numeric(df['strikePrice'], errors='coerce')
-        df = df.dropna(subset=['strikePrice'])
+        df['lastPrice'] = pd.to_numeric(df['lastPrice'], errors='coerce')
+        df = df.dropna(subset=['strikePrice', 'lastPrice'])
 
-        # Find the 3 nearest strikes to the current price
-        ntm_strikes = df.iloc[(df['strikePrice'] - ltp).abs().argsort()[:3]]['strikePrice'].unique().tolist()
+        # Calculate Time to Expiry in years
+        expiry_dt = pd.to_datetime(df['expiryDate'].iloc[0], format='%d%b%Y')
+        time_to_expiry = (expiry_dt - datetime.now()).days / 365.25
+        if time_to_expiry <= 0:
+            log.warning(f"Expiry for {symbol} is in the past. Cannot calculate greeks.")
+            return None
+        
+        # --- Find 3 ATM Strikes ---
+        atm_strikes_df = df.iloc[(df['strikePrice'] - ltp).abs().argsort()[:3]]
 
-        greeks_data = {
-            "status": "Placeholder",
-            "note": "Angel One SDK lacks a direct greeks endpoint. Manual calculation or another API is needed.",
-            "ntm_strikes_analyzed": ntm_strikes,
-        }
-        log.warning("Angel One SDK does not provide direct option greeks. Returning placeholder data.")
-        return greeks_data
+        # --- Vectorized Calculations ---
+        price_array = atm_strikes_df['lastPrice'].values
+        strike_array = atm_strikes_df['strikePrice'].values
+        flag_array = atm_strikes_df['optionType'].apply(lambda x: 'c' if x == 'CE' else 'p').values
+        
+        # Calculate Implied Volatility
+        iv_array = vectorized_implied_volatility(
+            price=price_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, flag=flag_array, return_as='numpy', on_error='warn'
+        )
+        
+        # Calculate Greeks using the calculated IV
+        greeks = vectorized_greeks(
+            flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, sigma=iv_array, return_as='dict'
+        )
+
+        # --- Format Output ---
+        results = {}
+        for i, strike in enumerate(strike_array):
+            results[f"strike_{strike}"] = {
+                "optionType": atm_strikes_df.iloc[i]['optionType'],
+                "implied_volatility": round(iv_array[i], 4) if iv_array[i] > 0 else "N/A",
+                "delta": round(greeks['delta'][i], 4) if iv_array[i] > 0 else "N/A",
+                "theta": round(greeks['theta'][i], 4) if iv_array[i] > 0 else "N/A",
+                "gamma": round(greeks['gamma'][i], 4) if iv_array[i] > 0 else "N/A",
+            }
+        
+        log.info(f"✅ Successfully calculated greeks for {len(results)} NTM strikes for {symbol}.")
+        return results
 
     except Exception as e:
         log.error(f"Error in get_option_greeks for {symbol}: {e}", exc_info=True)
@@ -417,6 +461,7 @@ def get_option_greeks(symbol: str) -> dict | None:
 # SECTION 3: ADVANCED MARKET DATA
 # ===================================================================
 
+@rate_limited
 def get_market_depth(symbol: str, exchange: str = "NSE") -> dict | None:
     """
     Fetches Level 2 market depth (top 5 bids and asks with orders).
