@@ -184,41 +184,44 @@ def _get_symbol_token(symbol: str, exchange: str = "NSE") -> str | None:
 # ===================================================================
 
 @rate_limited
-def get_historical_data(symbol: str, from_date: str, to_date: str, interval: str = "ONE_DAY") -> pd.DataFrame | None:
+def get_historical_data(symbol: str, from_date: datetime, to_date: datetime, interval: str = "ONE_DAY") -> pd.DataFrame | None:
     """
-    Fetches historical OHLCV data. Interval can be: ONE_MINUTE, THREE_MINUTE,
-    FIVE_MINUTE, TEN_MINUTE, FIFTEEN_MINUTE, THIRTY_MINUTE, ONE_HOUR, ONE_DAY.
-    from_date and to_date should be strings acceptable to the API (example: "01-Jan-2023").
+    Fetches historical OHLCV data. Now correctly handles datetime objects and
+    formats them into the full timestamp string required by the Angel One API.
     """
     log.info(f"[AO] Fetching '{interval}' historical data for {symbol}...")
-
     if not smart_api_session and not initialize_angelone_session():
         return None
 
     token = _get_symbol_token(symbol)
     if not token:
-        return None
+        # For indices, Angel One uses names like "NIFTY 50", not tickers like "^NSEI"
+        # Let's try a lookup on the symbol name itself if it's an index.
+        if symbol.startswith('^'):
+            clean_symbol = symbol.replace('^', '').replace('CNX', '') # e.g. ^CNXIT -> IT
+            log.info(f"Retrying token lookup for index using cleaned name: {clean_symbol}")
+            token = _get_symbol_token(clean_symbol)
+            if not token and "BANK" in clean_symbol: # Handle Nifty Bank case
+                 token = _get_symbol_token("NIFTY BANK")
+
+        if not token:
+             log.warning(f"Final token lookup failed for {symbol}")
+             return None
 
     try:
-        # Build base params
+        # Angel One API requires "YYYY-MM-DD HH:MM" format for all intervals.
         params = {
             "exchange": "NSE",
             "symboltoken": token,
             "interval": interval,
+            "fromdate": from_date.strftime('%Y-%m-%d 09:15'),
+            "todate": to_date.strftime('%Y-%m-%d 15:30')
         }
-
-        # Add date formatting based on interval
-        if interval == "ONE_DAY":
-            params["fromdate"] = from_date.strftime('%Y-%m-%d')
-            params["todate"] = to_date.strftime('%Y-%m-%d')
-        else:  # For intraday intervals
-            params["fromdate"] = from_date.strftime('%Y-%m-%d %H:%M')
-            params["todate"] = to_date.strftime('%Y-%m-%d %H:%M')
 
         raw_data = smart_api_session.getCandleData(params)
 
         if not raw_data or raw_data.get('status') is False:
-            err_msg = raw_data.get('message') if isinstance(raw_data, dict) else "Unknown API error"
+            err_msg = raw_data.get('message', 'Unknown API error')
             log.error(f"[AO] API error for {symbol}: {err_msg}")
             return None
 
@@ -229,8 +232,7 @@ def get_historical_data(symbol: str, from_date: str, to_date: str, interval: str
         df = pd.DataFrame(raw_data['data'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
         df['date'] = pd.to_datetime(df['timestamp'])
         df.set_index('date', inplace=True)
-
-        log.info(f"Successfully fetched {len(df)} candles for {symbol}.")
+        log.info(f"Successfully fetched {len(df)} candles for {symbol} from Angel One.")
         return df.drop(columns=['timestamp'])
 
     except Exception as e:
