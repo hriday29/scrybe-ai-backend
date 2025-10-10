@@ -156,7 +156,7 @@ class AnalysisPipeline:
         
         # This now calls our upgraded function and passes the market state.
         # It directly returns the (ticker, reason) tuples we need.
-        candidates = quantitative_screener.get_analyzable_universe(
+        candidates = quantitative_screener.get_strategy_candidates(
             market_state, full_data_cache, point_in_time
         )
         
