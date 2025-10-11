@@ -69,16 +69,9 @@ jobs:
           GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
         
         run: |
-          # This script conditionally adds the --tickers argument
-          # only if the user provides a value in the input field.
-          TICKER_ARGS=""
-          if [ -n "${{ github.event.inputs.tickers }}" ]; then
-            TICKER_ARGS="--tickers ${{ github.event.inputs.tickers }}"
-          fi
-
           python main_orchestrator.py \
             --batch_id ${{ github.event.inputs.batch_id }} \
             --start_date ${{ github.event.inputs.start_date }} \
             --end_date ${{ github.event.inputs.end_date }} \
             --fresh_run ${{ github.event.inputs.fresh_run }} \
-            $TICKER_ARGS
+            ${{ github.event.inputs.tickers && '--tickers' }} ${{ github.event.inputs.tickers }}
