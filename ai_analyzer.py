@@ -136,6 +136,12 @@ class AIAnalyzer:
         1.  **Market Regime is KING:** The overall `market_regime` provided in the `market_state` dictates your bias. In a Bullish regime, you need a very strong reason to go short. In a Bearish regime, you need an exceptionally strong reason to go long.
         2.  **Confluence is your Trigger:** A high-conviction signal requires at least two of your analysts' verdicts to align with the market regime. A single strong report is not enough.
         3.  **Sentiment is a Catalyst/Veto:** Use the sentiment report to upgrade conviction on an aligned trade or to downgrade/veto a trade that goes against strong sentiment.
+        
+        **CRITICAL SCORING RULE:** You MUST use the sign of the scrybeScore to indicate direction.
+        - Positive (+) scores are ONLY for BUY signals.
+        - Negative (-) scores are ONLY for SHORT signals.
+        - The magnitude (0-100) represents your conviction. A 'High' confidence SHORT must have a large NEGATIVE score (e.g., -70 or lower). A 'High' confidence BUY must have a large POSITIVE score (e.g., +70 or higher).
+        - Scores between -15 and +15 will be considered a HOLD.
 
         Synthesize the reports, weigh the evidence according to the mandate, and generate the final trade plan in the required JSON format.
         """
