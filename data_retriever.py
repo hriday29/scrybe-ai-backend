@@ -11,6 +11,7 @@ import json
 import os
 from datetime import datetime, timezone, timedelta
 import database_manager
+import time
 
 from logger_config import log
 import config  # Reads the new DATA_SOURCE flag
@@ -687,3 +688,36 @@ def get_news_articles_for_ticker(ticker_symbol: str, company_info: dict = None) 
     except Exception as e:
         log.error(f"❌ yfinance Fallback also failed for {ticker_symbol}: {e}")
         return {"type": "News Fetch Error", "articles": []}
+    
+def get_stock_sector_map(tickers: list[str]) -> dict:
+    """
+    Efficiently builds a stock-to-sector map using a cache-first approach.
+    """
+    log.info("Building stock-to-sector map...")
+    sector_cache = load_sector_cache()
+    stock_sector_map = {}
+    
+    # First, load all cached tickers into the map
+    for ticker in tickers:
+        if ticker in sector_cache:
+            stock_sector_map[ticker] = sector_cache[ticker]
+
+    # Then, identify which tickers are missing from the cache
+    tickers_to_fetch = [t for t in tickers if t not in sector_cache]
+
+    if tickers_to_fetch:
+        log.info(f"Fetching sector info for {len(tickers_to_fetch)} new/uncached tickers...")
+        for i, ticker in enumerate(tickers_to_fetch):
+            try:
+                info = yf.Ticker(ticker).info
+                sector = info.get('sector', 'Other')
+                stock_sector_map[ticker] = sector
+                sector_cache[ticker] = sector # Update cache for next time
+                log.info(f"({i+1}/{len(tickers_to_fetch)}) Fetched {ticker}: {sector}")
+                time.sleep(0.5) # Small delay to be polite to yfinance API
+            except Exception:
+                stock_sector_map[ticker] = 'Other'
+        save_sector_cache(sector_cache) # Save the updated cache to disk
+
+    log.info("✅ Stock-to-sector map complete.")
+    return stock_sector_map

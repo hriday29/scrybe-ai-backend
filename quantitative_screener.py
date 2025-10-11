@@ -1,11 +1,11 @@
-# quantitative_screener.py
+# quantitative_screener.py (Correct, Restored Version)
 import pandas as pd
 import config
 from logger_config import log
 import pandas_ta as ta
 import database_manager
 
-# --- Constants (No changes needed) ---
+# --- Constants ---
 SECTOR_NAME_MAPPING = {
     "NIFTY Bank": "Financial Services", "NIFTY IT": "Technology",
     "NIFTY Auto": "Consumer Cyclical", "NIFTY Pharma": "Healthcare",
@@ -23,7 +23,7 @@ MIN_AVG_VOLUME = 500000
 # ==============================================================================
 
 def _passes_fundamental_health_check(ticker: str, point_in_time: pd.Timestamp) -> bool:
-    """Performs a robust, ADAPTIVE, score-based fundamental health check."""
+    """Performs a robust, adaptive, score-based fundamental health check."""
     try:
         point_in_time_utc = pd.to_datetime(point_in_time, utc=True).to_pydatetime()
         cursor = database_manager.db.fundamentals.find({
@@ -43,31 +43,25 @@ def _passes_fundamental_health_check(ticker: str, point_in_time: pd.Timestamp) -
             if fundamentals["profitMargins"] > FUNDAMENTAL_THRESHOLDS["MIN_PROFIT_MARGIN"]: score += 1
         if fundamentals.get("debtToEquity") is not None:
             available_metrics += 1
+            # yfinance provides D/E as a percentage, so 2.0 is 200.
             if fundamentals["debtToEquity"] < (FUNDAMENTAL_THRESHOLDS["MAX_DEBT_TO_EQUITY"] * 100): score += 1
         
         if available_metrics == 0: return False
+        # Stock must pass at least half of the available checks
         required_score = available_metrics / 2.0
-        is_healthy = score >= required_score
-        
-        log_func = log.info if is_healthy else log.warning
-        status_icon = "✅" if is_healthy else "->"
-        log_func(
-            f"{status_icon} {ticker} fundamental check for {point_in_time.date()}: "
-            f"Score {score}/{available_metrics} (Required: {required_score:.1f})"
-        )
-        return is_healthy
+        return score >= required_score
     except Exception: return False
 
 def _prepare_filtered_universe(actionable_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[str]:
     """Pre-filters the universe by sector, liquidity, and fundamental health."""
-    import data_retriever # Local import to avoid circular dependency
+    import data_retriever # Local import to avoid circular dependency issues
     target_sectors = {SECTOR_NAME_MAPPING[name] for name in actionable_sectors if name in SECTOR_NAME_MAPPING}
     if not target_sectors: return []
 
     universe = [t for t in full_data_cache.keys() if ".NS" in t]
     stock_sector_map = data_retriever.get_stock_sector_map(universe)
     
-    sector_filtered = [t for t, s in stock_sector_map.items() if s in target_sectors]
+    sector_filtered = [t for t in universe if stock_sector_map.get(t) in target_sectors]
     
     qualified = []
     for ticker in sector_filtered:
@@ -94,30 +88,28 @@ def _add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     df.dropna(inplace=True)
     return df
 
-# --- PLAY #1 (CORE STRATEGY) RULESET ---
 def _check_long_momentum_rules(df: pd.DataFrame) -> bool:
-    """MODIFIED: Softer rules. Requires trend OR momentum, not a strict AND."""
+    """Rules for long momentum in an uptrend."""
     latest = df.iloc[-1]
     is_trending = latest['ADX_14'] > 22
     has_momentum = latest['RSI_14'] > 60
     return latest['close'] > latest['EMA_50'] and (is_trending or has_momentum)
 
 def _check_short_breakdown_rules(df: pd.DataFrame) -> bool:
-    """MODIFIED: Softer rules for breakdown."""
+    """Rules for short breakdown in a downtrend."""
     latest = df.iloc[-1]
     is_trending = latest['ADX_14'] > 22
     has_momentum = latest['RSI_14'] < 40
     return latest['close'] < latest['EMA_50'] and (is_trending or has_momentum)
 
-# --- PLAY #2 (CONTRARIAN STRATEGY) RULESET ---
 def _check_long_mean_reversion_rules(df: pd.DataFrame) -> bool:
-    """Rule for 'buy the dip' setups."""
+    """Rule for 'buy the dip' setups in a bullish pullback."""
     latest = df.iloc[-1]
     # Primary trend is up, but stock is oversold and not in a strong short-term trend
     return latest['EMA_50'] > latest['EMA_200'] and latest['RSI_14'] < 40 and latest['ADX_14'] < 25
 
 def _check_short_mean_reversion_rules(df: pd.DataFrame) -> bool:
-    """Rule for 'short the rip' setups."""
+    """Rule for 'short the rip' setups in a bearish rally."""
     latest = df.iloc[-1]
     # Primary trend is down, but stock is overbought and not in a strong short-term trend
     return latest['EMA_50'] < latest['EMA_200'] and latest['RSI_14'] > 60 and latest['ADX_14'] < 25
@@ -137,65 +129,60 @@ def get_strategy_candidates(market_state: dict, full_data_cache: dict, point_in_
 
     log.info(f"--- Running Strategic Playbook for Regime: {regime} ---")
     
-    # Prepare a single, pre-filtered universe of healthy stocks in the right sectors
     base_universe = _prepare_filtered_universe(actionable_sectors, full_data_cache, point_in_time)
     log.info(f"Found {len(base_universe)} healthy, liquid stocks in actionable sectors to screen.")
 
     # --- Execute Plays Based on Market Regime ---
     if regime == "Uptrend":
-        log.info("Executing Play #1: Long Momentum/Trend Confluence")
+        log.info("Executing Play: Long Momentum")
         for ticker in base_universe:
             df = _add_indicators(full_data_cache[ticker].loc[:point_in_time].copy())
             if not df.empty and _check_long_momentum_rules(df):
                 candidates.append((ticker, "Long Momentum"))
 
     elif regime == "Bullish Pullback":
-        log.info("Executing Play #2: Long Mean Reversion (Buy the Dip)")
+        log.info("Executing Play: Long Mean Reversion (Buy the Dip)")
         for ticker in base_universe:
             df = _add_indicators(full_data_cache[ticker].loc[:point_in_time].copy())
             if not df.empty and _check_long_mean_reversion_rules(df):
                 candidates.append((ticker, "Long Mean Reversion"))
 
     elif regime == "Downtrend":
-        log.info("Executing Play #1: Short Breakdown/Trend Confluence")
+        log.info("Executing Play: Short Breakdown")
         for ticker in base_universe:
             df = _add_indicators(full_data_cache[ticker].loc[:point_in_time].copy())
             if not df.empty and _check_short_breakdown_rules(df):
                 candidates.append((ticker, "Short Breakdown"))
 
     elif regime == "Bearish Rally":
-        log.info("Executing Play #2: Short Mean Reversion (Short the Rip)")
+        log.info("Executing Play: Short Mean Reversion (Short the Rip)")
         for ticker in base_universe:
             df = _add_indicators(full_data_cache[ticker].loc[:point_in_time].copy())
             if not df.empty and _check_short_mean_reversion_rules(df):
                 candidates.append((ticker, "Short Mean Reversion"))
 
-    # --- Play #3: The AI Wildcard (if no candidates were found by rules) ---
+    # --- AI Wildcard Play (Fallback) ---
     if not candidates and base_universe:
-        log.warning("No candidates found from standard plays. Executing Play #3: AI Wildcard.")
-        best_performer, max_perf = None, -100
-        
-        # Determine direction based on regime
+        log.warning("No rule-based candidates found. Executing 'AI Wildcard' play.")
+        # As a simple fallback, let's select the stock with the highest 5-day momentum in the regime's direction.
+        best_performer, performance = None, -float('inf')
         is_bullish = regime in ["Uptrend", "Bullish Pullback"]
         
         for ticker in base_universe:
             df = full_data_cache[ticker].loc[:point_in_time]
             if len(df) > 5:
-                # Calculate 5-day performance
                 perf = (df['close'].iloc[-1] / df['close'].iloc[-6] - 1) * 100
                 
-                # In bullish regime, find best performer. In bearish, find worst performer.
-                if is_bullish and perf > max_perf:
-                    max_perf = perf
-                    best_performer = ticker
-                elif not is_bullish and perf < -max_perf: # Using -max_perf to find the most negative
-                    max_perf = -perf 
+                # In bullish regime, find max positive perf. In bearish, find max negative perf (i.e., min perf).
+                current_metric = perf if is_bullish else -perf
+                if current_metric > performance:
+                    performance = current_metric
                     best_performer = ticker
 
         if best_performer:
-            log.info(f"AI Wildcard selected: {best_performer} (5-day perf: {max_perf if is_bullish else -max_perf:.2f}%)")
+            log.info(f"AI Wildcard selected: {best_performer}")
             candidates.append((best_performer, "AI Wildcard Review"))
 
-    unique_candidates = list({t[0]: t for t in candidates}.values())
+    unique_candidates = list(dict.fromkeys(candidates)) # Preserve order and get unique
     log.info(f"✅ Playbook complete. Found {len(unique_candidates)} final candidate(s).")
     return unique_candidates
