@@ -1,4 +1,4 @@
-# quantitative_screener.py (FINAL & COMPLETE VERSION)
+# quantitative_screener.py
 import pandas as pd
 import config
 from logger_config import log

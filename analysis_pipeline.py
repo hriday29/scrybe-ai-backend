@@ -114,7 +114,12 @@ class AnalysisPipeline:
         except (TypeError, IndexError, KeyError):
             log.warning("Could not determine VIX risk level from data.")
 
-        market_regime_context = market_regime_analyzer.get_market_regime_context()
+        # Fetch the correct point-in-time data from the cache
+        nifty_df = full_data_cache.get("^NSEI")
+        vix_df = full_data_cache.get("^INDIAVIX")
+        
+        # Pass the data into the analyzer function
+        market_regime_context = market_regime_analyzer.get_market_regime_context(nifty_df, vix_df)
         market_regime = market_regime_context.get('market_regime', {}).get('regime_status', 'Sideways')
         volatility_regime = market_regime_context.get('volatility_regime', {}).get('volatility_status', 'Normal')
 
@@ -164,70 +169,72 @@ class AnalysisPipeline:
 
     def _run_ai_analysis(self, candidates, full_data_cache, market_state, point_in_time, is_backtest, batch_id=None):
         """
-        Performs a deep-dive AI analysis on candidates with robust, multi-key retry logic.
-        For each stock, it tries each API key up to 3 times before falling back.
+        Runs the new "Committee of Experts" AI analysis pipeline.
+        1. Gathers verdicts from specialized technical, fundamental, and sentiment analysts.
+        2. Passes those verdicts to a final "Head of Strategy" synthesizer for the trade decision.
         """
-        log.info(f"--- Running Deep-Dive AI Analysis for {len(candidates)} Candidate(s) ---")
+        log.info(f"--- Running 'Committee of Experts' AI Analysis for {len(candidates)} Candidate(s) ---")
         
-        ai_results = []
+        final_synthesized_results = []
         for ticker, screener_reason in candidates:
-            log.info(f"--- Analyzing {ticker} (Reason: {screener_reason}) ---")
+            log.info(f"--- Convening Committee for {ticker} (Reason: {screener_reason}) ---")
             
-            # --- Build Context (remains the same) ---
+            # --- Build Full Context ---
+            # This part remains the same, as it gathers all necessary data.
             point_in_time_data = full_data_cache.get(ticker).loc[:point_in_time].copy()
             if len(point_in_time_data) < 252:
-                log.warning(f"Skipping {ticker} due to insufficient data.")
+                log.warning(f"Skipping {ticker}: Insufficient historical data for analysis.")
                 continue
             
             full_context = technical_analyzer.build_analysis_context(
                 ticker=ticker, historical_data=point_in_time_data,
                 market_state=market_state, is_backtest=is_backtest
             )
-            sanitized_context = sanitize_context(full_context)
             
-            if is_backtest:
-                strategic_review = performance_context.get_strategy_performance_summary(batch_id, point_in_time)
-                per_stock_history = performance_context.get_ticker_trade_history(ticker, batch_id, point_in_time)
-            else:
-                strategic_review = per_stock_history = "Not applicable in live mode."
-    
-            # --- Simplified AI Call with Fallback ---
-            analysis = None
+            # --- Call Specialist Analysts ---
+            # Each specialist gets only the part of the context they are qualified to analyze.
+            log.info(f"[AI Committee] Getting Technical Verdict for {ticker}...")
+            tech_verdict = self.ai_analyzer.get_technical_verdict(full_context.get('technical_indicators', {}), ticker)
+
+            log.info(f"[AI Committee] Getting Fundamental Verdict for {ticker}...")
+            fund_verdict = self.ai_analyzer.get_fundamental_verdict(full_context.get('fundamental_data', {}), ticker)
+
+            log.info(f"[AI Committee] Getting Sentiment Verdict for {ticker}...")
+            sent_verdict = self.ai_analyzer.get_sentiment_verdict(full_context.get('sentiment_data', {}), ticker)
+
+            # --- Sanity Check on Specialist Reports ---
+            if "error" in tech_verdict or "error" in fund_verdict or "error" in sent_verdict:
+                log.error(f"Could not proceed with final synthesis for {ticker} due to an error in a specialist analysis. Skipping.")
+                continue
+
+            # --- Call Head of Strategy for Final Synthesis ---
+            # The synthesizer gets the market state and all three specialist reports.
             try:
-                analysis = self.ai_analyzer.get_apex_analysis(
-                    ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
-                    strategic_review=strategic_review, tactical_lookback=None,
-                    per_stock_history=per_stock_history, model_name=config.PRO_MODEL
+                log.info(f"[AI Committee] Passing reports to Head of Strategy for {ticker}...")
+                final_analysis = self.ai_analyzer.get_apex_analysis(
+                    ticker=ticker,
+                    technical_verdict=tech_verdict,
+                    fundamental_verdict=fund_verdict,
+                    sentiment_verdict=sent_verdict,
+                    market_state=market_state,
+                    screener_reason=screener_reason
                 )
+
+                if final_analysis:
+                    final_synthesized_results.append({
+                        "ticker": ticker,
+                        "ai_analysis": final_analysis,
+                        "point_in_time_data": point_in_time_data
+                    })
+                else:
+                    log.error(f"Final synthesis for {ticker} returned no result.")
+
             except Exception as e:
-                log.error(f"Primary model failed for {ticker} after trying all API keys. Error: {e}")
-                # 'analysis' remains None, which triggers the fallback logic below.
-    
-            # --- Final Fallback Logic ---
-            if analysis:
-                ai_results.append({
-                    "ticker": ticker, "ai_analysis": analysis,
-                    "point_in_time_data": point_in_time_data
-                })
-            else:
-                log.warning(f"🚨 All attempts with the primary model failed for {ticker}. Now attempting fallback with {config.FLASH_MODEL}...")
-                try:
-                    fallback_analysis = self.ai_analyzer.get_apex_analysis(
-                        ticker=ticker, full_context=sanitized_context, screener_reason=screener_reason,
-                        strategic_review=strategic_review, tactical_lookback=None,
-                        per_stock_history=per_stock_history, model_name=config.FLASH_MODEL
-                    )
-                    if fallback_analysis:
-                        ai_results.append({
-                            "ticker": ticker, "ai_analysis": fallback_analysis,
-                            "point_in_time_data": point_in_time_data
-                        })
-                        log.info(f"✅ Successfully received analysis from FALLBACK model for {ticker}.")
-                    else:
-                        log.error(f"❌ CRITICAL: The fallback model also failed for {ticker}.")
-                except Exception as final_e:
-                    log.error(f"❌ CRITICAL: The fallback model failed with an unexpected error for {ticker}: {final_e}")
-        return ai_results
+                log.critical(f"The Head of Strategy (APEX Synthesis) failed critically for {ticker}: {e}", exc_info=True)
+                continue
+                
+        log.info(f"--- AI Committee Concluded. {len(final_synthesized_results)} stocks have a final verdict. ---")
+        return final_synthesized_results
     
     def _apply_strategy_overlay(self, ai_results, market_state, is_backtest):
         """

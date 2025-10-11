@@ -25,41 +25,122 @@ class AIAnalyzer:
         genai.configure(api_key=self.api_keys[self.current_key_index])
         log.info(f"AIAnalyzer initialized with {len(self.api_keys)} API keys.")
 
-    def get_apex_analysis(self, ticker: str, full_context: dict, strategic_review: str, tactical_lookback: str, per_stock_history: str, model_name: str, screener_reason: str) -> dict:
-        """
-        Generates a definitive, institutional-grade analysis using the "Apex" multi-layered model.
-        This version has the simplified error handling (fallback removed).
-        """
-        log.info(f"Generating APEX analysis for {ticker}...")
-    
+    def get_technical_verdict(self, technical_data: dict, ticker: str) -> dict:
+        """Analyzes ONLY technical data to form a directional bias."""
+        log.info(f"Getting technical verdict for {ticker}...")
+        
         system_instruction = """
-        You are "Scrybe," an expert-level quantitative AI analyst executing trades for a top-tier hedge fund. Your function is to conduct a rigorous, unbiased, multi-layered analysis of a stock to find a high-probability swing trade opportunity (5-10 day holding period). Your primary goal is capital appreciation while managing risk.
+        You are a Chartered Market Technician (CMT). Your sole focus is price action, volume, and technical indicators.
+        Based ONLY on the data provided, determine the most probable 5-10 day directional bias.
+        State your confidence and identify the primary technical pattern or reason for your conclusion.
+        Ignore all fundamental or news-based context. Your analysis must be purely chart-based.
+        """
+        
+        output_schema = {
+            "type": "OBJECT", "properties": {
+                "bias": {"type": "STRING", "enum": ["Bullish", "Bearish", "Neutral"]},
+                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High"]},
+                "primary_pattern": {"type": "STRING", "description": "e.g., 'Bull Flag Breakout', 'RSI Divergence', '200DMA Rejection'"},
+                "rationale": {"type": "STRING", "description": "A brief, one-sentence justification based only on the technicals."}
+            }, "required": ["bias", "confidence", "primary_pattern", "rationale"]
+        }
+
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+
+        prompt = f"Provide a pure technical analysis for {ticker} using the following data:\n{json.dumps(technical_data, indent=2)}"
+
+        try:
+            response = model.generate_content(prompt, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Technical verdict for {ticker} failed: {e}")
+            return {"error": "Failed to generate technical verdict."}
+
+
+    def get_fundamental_verdict(self, fundamental_data: dict, ticker: str) -> dict:
+        """Analyzes ONLY fundamental data to assess financial health."""
+        log.info(f"Getting fundamental verdict for {ticker}...")
+        
+        system_instruction = """
+        You are a CFA charterholder and fundamental analyst. Your task is to assess a company's financial health and growth trajectory based purely on the provided financial data.
+        Ignore the stock's price chart and any market sentiment. Your conclusion must be grounded in financial metrics like revenue growth, profitability, and shareholder patterns.
+        """
+        
+        output_schema = {
+            "type": "OBJECT", "properties": {
+                "health": {"type": "STRING", "enum": ["Strong", "Average", "Weak"]},
+                "growth_trajectory": {"type": "STRING", "enum": ["Accelerating", "Stable", "Decelerating"]},
+                "valuation": {"type": "STRING", "enum": ["Attractive", "Fair", "Stretched"]},
+                "rationale": {"type": "STRING", "description": "A brief, one-sentence justification based only on the fundamentals."}
+            }, "required": ["health", "growth_trajectory", "valuation", "rationale"]
+        }
+
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+
+        prompt = f"Provide a pure fundamental analysis for {ticker} using the following data:\n{json.dumps(fundamental_data, indent=2)}"
+
+        try:
+            response = model.generate_content(prompt, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Fundamental verdict for {ticker} failed: {e}")
+            return {"error": "Failed to generate fundamental verdict."}
+
+
+    def get_sentiment_verdict(self, sentiment_data: dict, ticker: str) -> dict:
+        """Analyzes ONLY sentiment data (news, options) to gauge market emotion."""
+        log.info(f"Getting sentiment verdict for {ticker}...")
+        
+        system_instruction = """
+        You are a market sentiment analyst. Your job is to gauge the prevailing emotion and potential catalysts from news and options market data.
+        Determine if the current mood is driven by fear, greed, or neutrality. Identify the most significant piece of information driving this sentiment.
+        Ignore the company's financials and the long-term technical chart.
+        """
+        
+        output_schema = {
+            "type": "OBJECT", "properties": {
+                "prevailing_emotion": {"type": "STRING", "enum": ["Greed", "Fear", "Neutral"]},
+                "key_catalyst": {"type": "STRING", "description": "e.g., 'High call option volume', 'Negative earnings pre-announcement'"},
+                "strength": {"type": "STRING", "enum": ["Low", "Medium", "High"]},
+                "rationale": {"type": "STRING", "description": "A brief, one-sentence justification based only on sentiment indicators."}
+            }, "required": ["prevailing_emotion", "key_catalyst", "strength", "rationale"]
+        }
+
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+
+        prompt = f"Provide a pure sentiment analysis for {ticker} using the following data:\n{json.dumps(sentiment_data, indent=2)}"
+
+        try:
+            response = model.generate_content(prompt, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Sentiment verdict for {ticker} failed: {e}")
+            return {"error": "Failed to generate sentiment verdict."}
+        
+    def get_apex_analysis(self, ticker: str, technical_verdict: dict, fundamental_verdict: dict, sentiment_verdict: dict, market_state: dict, screener_reason: str) -> dict:
+        """
+        Synthesizes expert verdicts into a final, institutional-grade trade decision.
+        This is the "Head of Strategy" that makes the final call.
+        """
+        log.info(f"Generating APEX Synthesis for {ticker}...")
+
+        system_instruction = """
+        You are "Scrybe," the Head of Strategy for a top-tier hedge fund. You have just received reports from your specialist analyst team: a technical analyst (CMT), a fundamental analyst (CFA), and a sentiment strategist.
+
+        Your task is to synthesize these expert, and sometimes conflicting, reports into a single, decisive trade recommendation. Your decision is governed by the iron-clad Fund Mandate.
 
         **FUND MANDATE & DECISION HIERARCHY:**
-        Your analysis is not a simple summary; it is a decisive trade recommendation governed by this hierarchy. You must weigh evidence according to these rules:
-        1.  **Market Regime is KING:** The overall `market_regime` dictates your bias.
-            - In a **'Bullish'** or **'Uptrend'** regime: You are actively seeking BUY opportunities. Acknowledge bearish signals as potential risks, but prioritize bullish confluence. Favorable technicals can override neutral fundamentals.
-            - In a **'Bearish'** or **'Downtrend'** regime: Your default stance is risk-off. You are primarily seeking SHORT opportunities. A BUY signal requires an exceptionally strong, multi-factor setup to be considered. Weak fundamentals or technicals are grounds for an immediate SHORT signal if other factors align.
-            - In a **'Sideways'** or **'Choppy'** regime: Be highly selective. Require pristine technical setups (e.g., clear breakout from a range) and avoid chasing momentum. Low conviction is expected.
-        2.  **Confluence is your Trigger:** A trade signal requires at least two of the primary analytical layers (Macro, Sector, Fundamentals, Technicals) to be in agreement. Do not issue a high-conviction signal on a single factor (e.g., just a strong RSI).
-        3.  **News & Internals are Catalysts:** Use news, options sentiment, and order book data as accelerators or invalidators for your thesis. A strong technical setup with a sudden negative news catalyst should be downgraded or flipped to a SHORT.
+        1.  **Market Regime is KING:** The overall `market_regime` provided in the `market_state` dictates your bias. In a Bullish regime, you need a very strong reason to go short. In a Bearish regime, you need an exceptionally strong reason to go long.
+        2.  **Confluence is your Trigger:** A high-conviction signal requires at least two of your analysts' verdicts to align with the market regime. A single strong report is not enough.
+        3.  **Sentiment is a Catalyst/Veto:** Use the sentiment report to upgrade conviction on an aligned trade or to downgrade/veto a trade that goes against strong sentiment.
 
-        **ANALYTICAL MANDATE:**
-        Your analysis must be a masterclass in synthesis. You will receive a comprehensive data packet. Weigh all evidence according to the Mandate above, identify points of confluence and contradiction, and generate a definitive "BUY", "SHORT", or "HOLD" signal with a clear, justifiable thesis.
-
-        **ADVANCED DATA SYNTHESIS INSTRUCTIONS:**
-        -   **Macro Context:** Do not just state the regime. Explain **how** it directly informs your BUY or SHORT bias according to the Fund Mandate.
-        -   **Fundamentals:** Correlate your thesis with **quarterly growth and shareholder changes**. A bullish technical pattern is stronger if backed by accelerating earnings. A bearish breakdown is more likely if institutional holdings are decreasing.
-        -   **Risk Assessment:** You must think in terms of risk vs. reward. A good trade offers an asymmetric payoff (e.g., potential for 3R gain vs 1R loss).
-
-        **FINAL OUTPUT REQUIREMENTS:**
-        1.  **scrybeScore:** Your final conviction score from **-100 (max conviction SHORT)** to **+100 (max conviction BUY)**. A score between -15 and +15 is neutral (HOLD). This narrower range forces a decision.
-        2.  **signal:** "BUY", "SHORT", or "HOLD". This must be a direct consequence of your score and the Fund Mandate.
-        3.  **thesisType:** Your classification of the setup (e.g., "Bullish Momentum in Strong Sector", "Bearish Breakdown on Weak Fundamentals", "Range Rejection SHORT").
-        4.  **analystVerdict:** Your master narrative. This must be a concise, powerful summary that starts with your conclusion and then justifies it by synthesizing the most critical data points according to the hierarchy.
-        5.  **keyInsight:** The single most important takeaway for a human fund manager to read.
+        Synthesize the reports, weigh the evidence according to the mandate, and generate the final trade plan in the required JSON format.
         """
 
+        # This is the original, rich output schema you designed.
         output_schema = {
             "type": "OBJECT",
             "properties": {
@@ -67,109 +148,82 @@ class AIAnalyzer:
                 "signal": {"type": "STRING", "enum": ["BUY", "SHORT", "HOLD"]},
                 "thesisType": {"type": "STRING"},
                 "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]},
-                "estimated_risk_reward": {"type": "STRING", "description": "The estimated risk/reward ratio of the trade, e.g., '1:3' or '1:2.5'."},
+                "estimated_risk_reward": {"type": "STRING"},
                 "predicted_gain_pct": {"type": "NUMBER"},
                 "gain_prediction_rationale": {"type": "STRING"},
                 "keyInsight": {"type": "STRING"},
                 "analystVerdict": {"type": "STRING"},
                 "keyRisks_and_Mitigants": {
                     "type": "OBJECT",
-                    "properties": {
-                        "risk_1": {"type": "STRING"},
-                        "risk_2": {"type": "STRING"},
-                        "mitigant": {"type": "STRING"}
-                    },
+                    "properties": { "risk_1": {"type": "STRING"}, "risk_2": {"type": "STRING"}, "mitigant": {"type": "STRING"} },
                     "required": ["risk_1", "risk_2", "mitigant"]
                 },
                 "thesisInvalidationPoint": {"type": "STRING"},
                 "keyObservations": {
                     "type": "OBJECT",
-                    "properties": {
-                        "confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}},
-                        "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}}
-                    },
+                    "properties": { "confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}}, "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}} },
                     "required": ["confluencePoints", "contradictionPoints"]
                 }
             },
             "required": [
-                "scrybeScore", "signal", "confidence", "estimated_risk_reward", "predicted_gain_pct", "gain_prediction_rationale",
-                "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "thesisInvalidationPoint", "keyObservations", "thesisType"
+                "scrybeScore", "signal", "thesisType", "confidence", "estimated_risk_reward", "predicted_gain_pct", "gain_prediction_rationale",
+                "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "thesisInvalidationPoint", "keyObservations"
             ]
         }
-    
+        
         generation_config = genai.types.GenerationConfig(
             response_mime_type="application/json",
             response_schema=output_schema,
             max_output_tokens=8192
         )
-    
-        safety_settings = {
-            HarmCategory.HARM_CATEGORY_HARASSMENT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_HATE_SPEECH: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_SEXUALLY_EXPLICIT: HarmBlockThreshold.BLOCK_NONE,
-            HarmCategory.HARM_CATEGORY_DANGEROUS_CONTENT: HarmBlockThreshold.BLOCK_NONE,
-        }
-    
-        formatted_context = "\n## Today's Full Data Packet ##\n" + json.dumps(full_context, indent=2)
+
+        model = genai.GenerativeModel(
+            config.PRO_MODEL,
+            system_instruction=system_instruction,
+            generation_config=generation_config
+        )
+
         prompt_parts = [
-            f"Performance Feedback (Strategy): {strategic_review or 'Data Not Available'}",
-            f"Performance Feedback ({ticker}): {per_stock_history or 'Data Not Available'}",
-            f"Tactical Lookback Notes: {tactical_lookback or 'Data Not Available'}",
-            f"Screener Reason for selecting {ticker}: **{screener_reason}**",
-            formatted_context
+            "## Analyst Reports & Market State ##",
+            f"Ticker: {ticker}",
+            f"Screener Reason: {screener_reason}",
+            f"Market State: {json.dumps(market_state, indent=2)}",
+            f"Technical Verdict: {json.dumps(technical_verdict, indent=2)}",
+            f"Fundamental Verdict: {json.dumps(fundamental_verdict, indent=2)}",
+            f"Sentiment Verdict: {json.dumps(sentiment_verdict, indent=2)}",
+            "\nSynthesize these reports into the final trade decision as per the Fund Mandate."
         ]
-    
+
+        # Using the robust retry logic from your original code
         MAX_RETRIES_PER_KEY = 3
         total_keys = len(self.api_keys)
-
-        # --- Key Rotation and Retry Logic ---
-        # Outer loop to iterate through each available API key
         for i in range(total_keys):
             key_to_use = self.api_keys[self.current_key_index]
-            log.info(f"--- Attempting analysis with API Key #{self.current_key_index + 1}/{total_keys} ---")
+            log.info(f"--- Attempting APEX synthesis with API Key #{self.current_key_index + 1}/{total_keys} ---")
             genai.configure(api_key=key_to_use)
-        
-            # Inner loop for retries with the current key
             for attempt in range(MAX_RETRIES_PER_KEY):
                 try:
-                    model = genai.GenerativeModel(
-                        model_name,
-                        system_instruction=system_instruction,
-                        generation_config=generation_config,
-                        safety_settings=safety_settings
-                    )
                     response = model.generate_content(prompt_parts, request_options={"timeout": 300})
-        
                     if not response.parts:
                         raise ValueError(f"Empty or blocked response. Feedback: {response.prompt_feedback}")
-        
                     analysis_result = json.loads(response.text)
-                    analysis_result["model_used"] = model_name
+                    analysis_result["model_used"] = config.PRO_MODEL
                     log.info(f"✅ Success on attempt {attempt + 1} with Key #{self.current_key_index + 1}.")
-                    return analysis_result # Success, exit the function
-        
+                    return analysis_result
                 except Exception as e:
-                    # Check for a quota error
                     if "429" in str(e) or "quota" in str(e).lower():
-                        log.warning(f"Quota exceeded for Key #{self.current_key_index + 1}. Rotating to next key.")
+                        log.warning(f"Quota exceeded for Key #{self.current_key_index + 1}. Rotating key.")
                         self.current_key_index = (self.current_key_index + 1) % total_keys
-                        break  # Break the INNER loop to switch to the next key
-                    
-                    # Handle other transient errors
+                        break
                     log.warning(f"Attempt {attempt + 1} with Key #{self.current_key_index + 1} failed: {e}")
                     if attempt < MAX_RETRIES_PER_KEY - 1:
                         time.sleep(5)
                     else:
-                        log.error(f"All {MAX_RETRIES_PER_KEY} retries failed for Key #{self.current_key_index + 1}. Trying next key.")
+                        log.error(f"All {MAX_RETRIES_PER_KEY} retries failed for Key #{self.current_key_index + 1}.")
                         self.current_key_index = (self.current_key_index + 1) % total_keys
         
-            # If the inner loop was broken by a quota error, the outer loop will continue with the next key.
-            # If the inner loop finished all retries, the outer loop will also continue with the next key.
-        
-        # If the outer loop completes, it means all keys failed
-        log.error(f"A non-quota, unrecoverable error occurred for {ticker}: Primary model ({model_name}) failed after all attempts with all {total_keys} keys.")
-        # Here you would trigger your fallback to the 'flash' model. For now, we raise an exception.
-        raise Exception(f"All {total_keys} API keys failed for model {model_name}.")
+        log.critical(f"CRITICAL: All API keys failed for APEX synthesis on {ticker}.")
+        raise Exception(f"All {total_keys} API keys failed for model {config.PRO_MODEL}.")
 
     def get_single_news_impact_analysis(self, article: dict) -> dict:
         """
@@ -213,139 +267,7 @@ class AIAnalyzer:
             log.error(f"Single news impact analysis call failed. Error: {e}")
             return None
 
-    def get_simple_momentum_signal(self, ticker: str, technical_indicators: dict) -> dict:
-        """
-        Analyzes a stock's technical indicators to generate a simple, rules-based momentum signal.
-        """
-        log.info(f"Generating simple momentum signal for {ticker}...")
 
-        system_instruction = """
-        You are a technical analyst specializing in identifying high-probability momentum swing trades. Your task is to analyze a stock's daily technical indicators and determine if it is in a strong, established trend suitable for a trade.
-
-        **YOUR CRITERIA:**
-        1.  **Trend Confirmation (ADX):** A strong trend is indicated by an ADX value above 25.
-        2.  **Momentum (RSI):** In an uptrend, the RSI should be above 50, showing bullish momentum. In a downtrend, it should be below 50.
-        3.  **Trend Alignment (Moving Averages):** The closing price must be above the 20-day and 50-day moving averages for a BUY signal, and below for a SELL signal.
-
-        **YOUR RESPONSE:**
-        You must respond with a JSON object. Based ONLY on the criteria above, determine the signal. If all criteria for a BUY or SELL are met, provide a high `convictionScore`. If some but not all are met, provide a lower score. If criteria are contradictory, the signal must be HOLD.
-        """
-
-        output_schema = {
-            "type": "OBJECT",
-            "properties": {
-                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
-                "convictionScore": {"type": "NUMBER", "description": "A score from 0-100 based on how well the criteria are met."},
-                "rationale": {"type": "STRING", "description": "A brief, one-sentence explanation of your decision based on the criteria."}
-            },
-            "required": ["signal", "convictionScore", "rationale"]
-        }
-
-        generation_config = genai.types.GenerationConfig(
-            response_mime_type="application/json", 
-            response_schema=output_schema
-        )
-        
-        # Using FLASH model for efficiency on this simple task
-        model = genai.GenerativeModel(
-            config.FLASH_MODEL, 
-            system_instruction=system_instruction, 
-            generation_config=generation_config
-        )
-
-        prompt_parts = [
-            f"Analyze the following technical data for {ticker} based ONLY on the rules provided in the system instruction.",
-            json.dumps(technical_indicators)
-        ]
-
-        max_retries = 4
-        delay = 2
-        for attempt in range(max_retries):
-            try:
-                response = model.generate_content(prompt_parts, request_options={"timeout": 120})
-                
-                if not response.parts:
-                    finish_reason = "Unavailable"
-                    if hasattr(response, "candidates") and response.candidates:
-                        finish_reason = getattr(response.candidates[0], "finish_reason", "Unknown")
-                    
-                    log.warning(
-                        f"[AI] Attempt {attempt + 1} for {ticker} returned an empty response "
-                        f"(finish_reason: {finish_reason}). Retrying..."
-                    )
-                    raise ValueError("Empty response from API")
-                
-                return json.loads(response.text)
-            except Exception as e:
-                log.warning(f"[AI] Attempt {attempt + 1} for {ticker} failed. Error: {e}")
-                if "429" in str(e) and "quota" in str(e).lower():
-                    log.error("Quota exceeded. Raising exception to trigger key rotation.")
-                    raise e
-                if attempt < max_retries - 1:
-                    log.info(f"Waiting for {delay} seconds before retrying...")
-                    time.sleep(delay)
-                    delay *= 2
-                else:
-                    log.error(f"[AI] Final attempt failed for {ticker}. Skipping analysis.")
-                    return None
-
-    def get_mean_reversion_signal(self, ticker: str, technical_indicators: dict) -> dict:
-        """
-        Analyzes technicals to find mean-reversion trades in non-trending markets.
-        """
-        log.info(f"Generating mean-reversion signal for {ticker}...")
-
-        system_instruction = """
-        You are a technical analyst specializing in identifying high-probability mean-reversion swing trades in choppy or range-bound markets. Your task is to identify when a stock is oversold or overbought and likely to revert to its average price.
-
-        **YOUR CRITERIA:**
-        1.  **Non-Trending Confirmation (ADX):** The market must be choppy. This is indicated by an ADX value BELOW 22. This is the most important rule. If ADX is 22 or higher, there is a trend, and you must HOLD.
-        2.  **Oversold/Overbought (RSI):** For a BUY signal, the RSI should be in an 'oversold' territory (below 40). For a SELL signal, the RSI must be in an 'overbought' territory (above 60).
-        3.  **Price Location (Bollinger Bands):** For a BUY signal, the closing price should be NEAR or below the Lower Bollinger Band. For a SELL signal, the closing price should be NEAR or above the Upper Bollinger Band.
-
-        **YOUR RESPONSE:**
-        You must respond with a JSON object. Based ONLY on the criteria above, determine the signal. A signal is only valid if the ADX is LOW. Provide a high `convictionScore` if all criteria are met.
-        """
-
-        output_schema = {
-            "type": "OBJECT",
-            "properties": {
-                "signal": {"type": "STRING", "enum": ["BUY", "SELL", "HOLD"]},
-                "convictionScore": {"type": "NUMBER", "description": "A score from 0-100 based on how well the criteria are met."},
-                "rationale": {"type": "STRING", "description": "A brief, one-sentence explanation of your decision based on the criteria."}
-            },
-            "required": ["signal", "convictionScore", "rationale"]
-        }
-
-        generation_config = genai.types.GenerationConfig(
-            response_mime_type="application/json", 
-            response_schema=output_schema
-        )
-        
-        model = genai.GenerativeModel(
-            config.FLASH_MODEL, 
-            system_instruction=system_instruction, 
-            generation_config=generation_config
-        )
-
-        prompt_parts = [
-            f"Analyze the following technical data for {ticker} for a mean-reversion opportunity based ONLY on the rules provided in the system instruction.",
-            json.dumps(technical_indicators)
-        ]
-
-        try:
-            response = model.generate_content(prompt_parts, request_options={"timeout": 120})
-            return json.loads(response.text)
-        except Exception as e:
-            # --- THIS IS THE FIX ---
-            # If it's a quota error, we MUST raise it so the runner can catch it and rotate the key.
-            if "429" in str(e):
-                raise e
-            # For any other error, we log it and return None so the script can continue.
-            else:
-                log.error(f"[AI] Mean reversion analysis for {ticker} failed with a non-quota error: {e}")
-                return None
-            # --- END OF FIX ---
     
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
         """

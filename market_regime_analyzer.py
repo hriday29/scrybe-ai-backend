@@ -77,19 +77,16 @@ def get_volatility_regime(historical_vix_data: pd.DataFrame) -> str:
     except Exception:
         return "Normal"
     
-def get_market_regime_context() -> dict:
+def get_market_regime_context(nifty_data: pd.DataFrame, vix_data: pd.DataFrame) -> dict:
     """
-    Determines the current market regime context including trend and volatility.
+    Determines the market regime context from pre-fetched, point-in-time data
+    to prevent lookahead bias.
     """
     log.info("--- Determining Market Regime Context ---")
     
     try:
-        # Fetch the required historical data using the centralized retriever
-        nifty_data = data_retriever.get_historical_stock_data("^NSEI")
-        vix_data = data_retriever.get_historical_stock_data("^INDIAVIX")
-
-        # Calculate the regimes using helper functions from data_retriever
-        market_regime_status = calculate_regime_from_data(nifty_data)     
+        # The function no longer fetches its own data. It receives it as an argument.
+        market_regime_status = calculate_regime_from_data(nifty_data)      
         volatility_regime_status = get_volatility_regime(vix_data)
 
         log.info(f"Market Regime: {market_regime_status}, Volatility Regime: {volatility_regime_status}")

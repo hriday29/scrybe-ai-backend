@@ -86,19 +86,27 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
             
     return technicals
 
-def get_relative_strength(stock_data: pd.DataFrame) -> str:
+def get_relative_strength(stock_data: pd.DataFrame, full_nifty_data: pd.DataFrame) -> str:
     """
-    Calculates the 5-day relative strength of a stock vs. the Nifty 50.
+    Calculates the 5-day relative strength of a stock vs. the Nifty 50
+    using a point-in-time slice to prevent lookahead bias.
     """
     try:
-        nifty_data = data_retriever.get_historical_stock_data("^NSEI")
-        if nifty_data is None or len(nifty_data) < 6 or stock_data is None or len(stock_data) < 6:
+        # Ensure we have enough data to proceed
+        if full_nifty_data is None or stock_data is None or len(stock_data) < 6:
             return "Data Not Available"
 
-        nifty_slice = nifty_data.loc[:stock_data.index[-1]]
-        if len(nifty_slice) < 6: return "Data Not Available"
+        # Get the current point-in-time from the stock's data
+        point_in_time = stock_data.index[-1]
 
-        nifty_5d_change = (nifty_slice['close'].iloc[-1] / nifty_slice['close'].iloc[-6] - 1) * 100
+        # Create a slice of the Nifty data that ends at the same point in time
+        nifty_slice = full_nifty_data.loc[:point_in_time].tail(6)
+        
+        if len(nifty_slice) < 6:
+            return "Not enough Nifty data for comparison."
+
+        # Now calculate the 5-day change for both
+        nifty_5d_change = (nifty_slice['close'].iloc[-1] / nifty_slice['close'].iloc[0] - 1) * 100
         stock_5d_change = (stock_data['close'].iloc[-1] / stock_data['close'].iloc[-6] - 1) * 100
         
         if stock_5d_change > nifty_5d_change:
@@ -256,61 +264,50 @@ def build_analysis_context(
     ticker: str, 
     historical_data: pd.DataFrame, 
     market_state: dict,
-    is_backtest: bool = False
+    is_backtest: bool = False,
+    full_nifty_data: pd.DataFrame = None # Pass in Nifty data to avoid re-fetching
 ) -> dict:
     """
-    Builds the ultimate, institutional-grade context packet for the AI.
-    This version uses consistent, real data for both backtesting and live analysis.
+    Builds a clean, structured context packet with keys that directly map 
+    to the 'Committee of Experts' AI analysts.
     """
-    log.info(f"Building INSTITUTIONAL-GRADE context for {ticker} (Backtest Mode: {is_backtest})...")
+    log.info(f"Building context for {ticker} (Backtest Mode: {is_backtest})...")
 
-    # --- Fetch Core Data Components ---
+    # --- 1. Technical Data Packet ---
     technicals = get_all_technicals(historical_data)
-    
-    # --- FIX: Fetch REAL fundamentals for both backtest and live ---
-    # This ensures backtest results are representative of live performance.
-    # Assumes `get_stored_fundamentals` can fetch point-in-time data.
-    fundamentals = data_retriever.get_stored_fundamentals(ticker, historical_data.index[-1])
+    technicals["relative_strength_vs_nifty50"] = get_relative_strength(historical_data, full_nifty_data)
+
+    # --- 2. Fundamental Data Packet ---
+    # Fetches point-in-time fundamentals to ensure backtest accuracy.
+    fundamentals = data_retriever.get_stored_fundamentals(ticker, point_in_time=historical_data.index[-1])
     if not fundamentals:
-        fundamentals = {"error": "No fundamental data found for this date."}
+        fundamentals = {"status": "Fundamental data not available for this date."}
 
-    # --- Fetch Live-Only or Placeholder Data ---
-    options_sentiment, news, market_depth = {}, {}, {}
-
+    # --- 3. Sentiment Data Packet ---
+    # In backtesting, we use placeholders for data that is ephemeral and cannot be reliably recreated.
     if is_backtest:
-        # For backtesting, we use placeholders for data that cannot be reliably recreated.
-        options_sentiment = {"status": "Unavailable in backtest"}
-        news = {"status": "Unavailable in backtest"}
-        market_depth = {"status": "Unavailable in backtest"}
+        options_data = {"status": "Unavailable in backtest"}
+        news_data = {"status": "Unavailable in backtest"}
     else:
-        # For live runs, we fetch from our rich, real-time data sources.
-        # --- FIX: Fetch REAL option greeks, not just placeholder data ---
-        options_sentiment = angelone_retriever.get_option_greeks(ticker)
-        if not options_sentiment:
-            options_sentiment = {"status": "Option greeks data not available for this ticker."}
-            
-        news = data_retriever.get_news_articles_for_ticker(ticker)
-        market_depth = data_retriever.get_live_market_depth(ticker)
+        # For live runs, fetch rich, real-time data.
+        options_data = angelone_retriever.get_option_greeks(ticker)
+        if not options_data:
+            options_data = {"status": "No options data for this ticker."}
+        
+        news_data = data_retriever.get_news_articles_for_ticker(ticker)
+
+    sentiment = {
+        "options_market_sentiment": options_data,
+        "recent_news_flow": news_data
+    }
 
     # --- Assemble the Final Context Dictionary ---
+    # This structure is now clean and directly usable by the analysis_pipeline.
     context = {
-        "ticker": ticker,
-        "macro_context": {
-            "overall_market_regime": market_state.get("market_regime", {}).get("regime_status"),
-            "volatility_regime": market_state.get("volatility_regime", {}).get("volatility_status"),
-            "market_breadth": market_state.get("market_breadth"),
-            "global_benchmarks": market_state.get("benchmark_performance")
-        },
-        "sector_and_relative_strength": {
-            "strong_sectors_of_day": market_state.get("strong_sectors"),
-            "stock_vs_nifty50_rs": get_relative_strength(historical_data)
-        },
-        "fundamental_analysis": fundamentals,
-        "technical_analysis": technicals,
-        "market_internals": {
-            "options_sentiment_greeks": options_sentiment,
-            "live_order_book": market_depth
-        },
-        "news_and_events": news
+        "technical_indicators": technicals,
+        "fundamental_data": fundamentals,
+        "sentiment_data": sentiment
     }
+    
+    log.info(f"Successfully built context for {ticker}.")
     return context
