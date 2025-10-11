@@ -52,7 +52,46 @@ def _passes_fundamental_health_check(ticker: str, point_in_time: pd.Timestamp) -
         return score >= required_score
     except Exception: return False
 
-def _prepare_filtered_universe(actionable_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[str]:
+def _is_fundamentally_vulnerable(ticker: str, point_in_time: pd.Timestamp) -> bool:
+    """
+    Performs a score-based check to identify fundamentally WEAK companies for shorting.
+
+    A stock is considered vulnerable if it fails a minimum number of fundamental
+    criteria, indicating financial weakness.
+    """
+    try:
+        point_in_time_utc = pd.to_datetime(point_in_time, utc=True).to_pydatetime()
+        cursor = database_manager.db.fundamentals.find({
+            "ticker": ticker, "asOfDate": {"$lte": point_in_time_utc}
+        }).sort("asOfDate", -1).limit(1)
+        results = list(cursor)
+        if not results: return False
+        
+        fundamentals = results[0]
+        failure_score, available_metrics = 0, 0
+        
+        # Check for LOW Return on Equity (a sign of inefficiency)
+        if fundamentals.get("returnOnEquity") is not None:
+            available_metrics += 1
+            if fundamentals["returnOnEquity"] < 0.10: failure_score += 1
+            
+        # Check for LOW Profit Margins (a sign of weak pricing power or high costs)
+        if fundamentals.get("profitMargins") is not None:
+            available_metrics += 1
+            if fundamentals["profitMargins"] < 0.05: failure_score += 1
+
+        # Check for HIGH Debt-to-Equity (a sign of financial risk)
+        if fundamentals.get("debtToEquity") is not None:
+            available_metrics += 1
+            if fundamentals["debtToEquity"] > (FUNDAMENTAL_THRESHOLDS["MAX_DEBT_TO_EQUITY"] * 100): failure_score += 1
+        
+        if available_metrics == 0: return False
+        # If the company fails at least half of the available checks, it's vulnerable.
+        required_failures = available_metrics / 2.0
+        return failure_score >= required_failures
+    except Exception: return False
+
+def _prepare_filtered_universe(actionable_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp, market_state: dict) -> list[str]:
     """Pre-filters the universe by sector, liquidity, and fundamental health."""
     import data_retriever # Local import to avoid circular dependency issues
     target_sectors = {SECTOR_NAME_MAPPING[name] for name in actionable_sectors if name in SECTOR_NAME_MAPPING}
@@ -71,7 +110,15 @@ def _prepare_filtered_universe(actionable_sectors: list[str], full_data_cache: d
         df_slice = data.loc[:point_in_time]
         if len(df_slice) < 252: continue
         if df_slice['volume'].tail(20).mean() < MIN_AVG_VOLUME: continue
-        if not _passes_fundamental_health_check(ticker, point_in_time): continue
+        # Apply the correct fundamental filter based on the market regime.
+        is_shorting_regime = market_state.get('market_regime', {}).get('regime_status') in ["Downtrend", "Bearish Rally"]
+
+        if is_shorting_regime:
+            # For shorting, we look for FUNDAMENTALLY VULNERABLE companies.
+            if not _is_fundamentally_vulnerable(ticker, point_in_time): continue
+        else:
+            # For longs, we look for FUNDAMENTALLY HEALTHY companies.
+            if not _passes_fundamental_health_check(ticker, point_in_time): continue
         qualified.append(ticker)
     return qualified
 
@@ -129,7 +176,7 @@ def get_strategy_candidates(market_state: dict, full_data_cache: dict, point_in_
 
     log.info(f"--- Running Strategic Playbook for Regime: {regime} ---")
     
-    base_universe = _prepare_filtered_universe(actionable_sectors, full_data_cache, point_in_time)
+    base_universe = _prepare_filtered_universe(actionable_sectors, full_data_cache, point_in_time, market_state)
     log.info(f"Found {len(base_universe)} healthy, liquid stocks in actionable sectors to screen.")
 
     # --- Execute Plays Based on Market Regime ---

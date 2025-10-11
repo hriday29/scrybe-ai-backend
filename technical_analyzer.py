@@ -280,6 +280,9 @@ def build_analysis_context(
     # --- 2. Fundamental Data Packet ---
     # Fetches point-in-time fundamentals to ensure backtest accuracy.
     fundamentals = data_retriever.get_stored_fundamentals(ticker, point_in_time=historical_data.index[-1])
+    # FIX: Convert the datetime object to a string to make it JSON serializable
+    if fundamentals and 'asOfDate' in fundamentals and hasattr(fundamentals['asOfDate'], 'isoformat'):
+        fundamentals['asOfDate'] = fundamentals['asOfDate'].isoformat()
     if not fundamentals:
         fundamentals = {"status": "Fundamental data not available for this date."}
 
