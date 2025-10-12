@@ -1,3 +1,4 @@
+#config.py
 import os
 from dotenv import load_dotenv
 
@@ -55,8 +56,8 @@ APEX_SWING_STRATEGY = {
     "allow_short_selling": True, # A master switch for SELL signals
     "holding_period": 10,
     "stop_loss_atr_multiplier": 2.5,
-    "profit_target_rr_multiple": 2.0,
-    "min_conviction_score": 40, # We can use a higher threshold for higher quality signals
+    "profit_target_rr_multiple": 3.0,
+    "min_conviction_score": 25, # We can use a higher threshold for higher quality signals
     "use_trailing_stop": False,
     "trailing_stop_atr_multiplier": 1.5,
 }

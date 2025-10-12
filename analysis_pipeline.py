@@ -254,14 +254,12 @@ class AnalysisPipeline:
             ai_signal = ai_analysis.get('signal')
             scrybe_score = ai_analysis.get('scrybeScore', 0)
             
-            result['final_signal'] = 'HOLD' # Default to HOLD
+            result['final_signal'] = 'HOLD'  # Default to HOLD
             veto_reason = None
             
             # --- PROCESS BUY SIGNALS ---
             if ai_signal == 'BUY' and scrybe_score >= self.active_strategy['min_conviction_score']:
-                if market_state['market_is_high_risk']:
-                    veto_reason = f"FILTERED (BUY): High VIX ({market_state['latest_vix']:.2f})"
-                elif market_state['market_regime'] == 'Bearish':
+                if market_state['market_regime'] == 'Bearish':  # This line should now be the first check
                     veto_reason = "FILTERED (BUY): Does not align with Bearish market"
                 
                 # Live fundamental check (optional but good practice)
@@ -271,7 +269,10 @@ class AnalysisPipeline:
                         roe = company_info.get('returnOnEquity')
                         margins = company_info.get('profitMargins')
                         if (roe is not None and roe < 0.15) or (margins is not None and margins < 0.10):
-                            veto_reason = f"FILTERED (BUY): Weak Live Fundamentals (ROE: {roe:.2%}, Margins: {margins:.2%})"
+                            veto_reason = (
+                                f"FILTERED (BUY): Weak Live Fundamentals (ROE: {roe:.2%}, "
+                                f"Margins: {margins:.2%})"
+                            )
                     except Exception as e:
                         log.error(f"Error during live fundamental check for {ticker}: {e}")
 
@@ -306,11 +307,15 @@ class AnalysisPipeline:
                     if result['final_signal'] == 'BUY':
                         stop_loss = entry_price - risk_per_share
                         target = entry_price + reward_per_share
-                    else: # SHORT
+                    else:  # SHORT
                         stop_loss = entry_price + risk_per_share
                         target = entry_price - reward_per_share
 
-                    result['trade_plan'] = {"entryPrice": round(entry_price, 2), "target": round(target, 2), "stopLoss": round(stop_loss, 2)}
+                    result['trade_plan'] = {
+                        "entryPrice": round(entry_price, 2),
+                        "target": round(target, 2),
+                        "stopLoss": round(stop_loss, 2),
+                    }
                     log.info(f"✅ {ticker} AI signal '{result['final_signal']}' passed strategy filters. Trade plan generated.")
                 else:
                     result['final_signal'] = 'HOLD'
