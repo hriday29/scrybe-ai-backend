@@ -1,78 +1,29 @@
 #ai_analyzer.py
 import time
-import os
-from openai import AzureOpenAI # Replaced google.generativeai
+import google.generativeai as genai
 import config
 import json
 import base64
 import pandas as pd
 import data_retriever
 from logger_config import log
-# Removed google.generativeai.types as it's no longer needed
+from google.generativeai.types import HarmCategory, HarmBlockThreshold
 import pandas_ta as ta
 
 class AIAnalyzer:
-    """A class to handle all interactions with the Azure OpenAI model."""
+    """A class to handle all interactions with the Generative AI model."""
 
     def __init__(self, model_name: str = None):
-        # Expecting Azure credentials from environment variables now
-        try:
-            self.azure_endpoint = os.getenv("AZURE_AI_ENDPOINT")
-            self.api_key = os.getenv("AZURE_AI_API_KEY")
-            if not self.azure_endpoint or not self.api_key:
-                raise ValueError("AZURE_AI_ENDPOINT and AZURE_AI_API_KEY environment variables must be set.")
-        except ValueError as e:
-            log.critical(f"Azure credentials error: {e}")
-            raise
-
-        # Initialize the AzureOpenAI client
-        self.client = AzureOpenAI(
-            azure_endpoint=self.azure_endpoint,
-            api_key=self.api_key,
-            api_version="2024-02-01"  # Or your desired API version
-        )
+        # Expecting a list of keys from config now
+        if not config.GEMINI_API_KEY_POOL or not isinstance(config.GEMINI_API_KEY_POOL, list):
+            raise ValueError("GEMINI_API_KEY_POOL not configured in config.py or is not a list.")
+        self.api_keys = config.GEMINI_API_KEY_POOL
+        self.current_key_index = 0
+        self.model_name = model_name or config.PRO_MODEL
         
-        # The model names in config.py should now correspond to your Azure deployment names
-        # e.g., config.PRO_MODEL = "gpt-4-deployment"
-        # e.g., config.FLASH_MODEL = "gpt-35-turbo-deployment"
-        self.pro_deployment = config.PRO_MODEL
-        self.flash_deployment = config.FLASH_MODEL
-        
-        log.info(f"AIAnalyzer initialized with Azure endpoint: {self.azure_endpoint}")
-
-    def _make_azure_call(self, system_instruction: str, user_prompt: str, deployment_name: str, output_schema: dict, timeout: int = 120, max_tokens: int = None):
-        """Helper function to make calls to Azure OpenAI, enforcing JSON output."""
-        
-        # Azure's JSON mode requires instructing the model in the prompt.
-        prompt_with_schema = f"""
-        {user_prompt}
-
-        Your response MUST be a JSON object that strictly adheres to the following schema. Do not include any other text or explanations outside of the JSON object.
-        Schema:
-        {json.dumps(output_schema, indent=2)}
-        """
-        
-        messages = [
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": prompt_with_schema}
-        ]
-
-        try:
-            response = self.client.chat.completions.create(
-                model=deployment_name,
-                messages=messages,
-                response_format={"type": "json_object"},
-                temperature=0.1, # Added for more deterministic JSON outputs
-                timeout=timeout,
-                max_tokens=max_tokens
-            )
-            response_text = response.choices[0].message.content
-            return json.loads(response_text)
-        except Exception as e:
-            # Catch API errors, JSON parsing errors, etc.
-            log.error(f"Azure API call failed for deployment {deployment_name}: {e}")
-            return {"error": f"Failed to generate response from Azure AI: {e}"}
-
+        # Configure with the first key initially
+        genai.configure(api_key=self.api_keys[self.current_key_index])
+        log.info(f"AIAnalyzer initialized with {len(self.api_keys)} API keys.")
 
     def get_technical_verdict(self, technical_data: dict, ticker: str) -> dict:
         """Analyzes ONLY technical data to form a directional bias."""
@@ -94,14 +45,18 @@ class AIAnalyzer:
             }, "required": ["bias", "confidence", "primary_pattern", "rationale"]
         }
 
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+
         prompt = f"Provide a pure technical analysis for {ticker} using the following data:\n{json.dumps(technical_data, indent=2)}"
 
-        return self._make_azure_call(
-            system_instruction=system_instruction,
-            user_prompt=prompt,
-            deployment_name=self.flash_deployment,
-            output_schema=output_schema
-        )
+        try:
+            response = model.generate_content(prompt, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Technical verdict for {ticker} failed: {e}")
+            return {"error": "Failed to generate technical verdict."}
+
 
     def get_fundamental_verdict(self, fundamental_data: dict, ticker: str) -> dict:
         """Analyzes ONLY fundamental data to assess financial health."""
@@ -121,14 +76,18 @@ class AIAnalyzer:
             }, "required": ["health", "growth_trajectory", "valuation", "rationale"]
         }
 
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+
         prompt = f"Provide a pure fundamental analysis for {ticker} using the following data:\n{json.dumps(fundamental_data, indent=2)}"
-        
-        return self._make_azure_call(
-            system_instruction=system_instruction,
-            user_prompt=prompt,
-            deployment_name=self.flash_deployment,
-            output_schema=output_schema
-        )
+
+        try:
+            response = model.generate_content(prompt, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Fundamental verdict for {ticker} failed: {e}")
+            return {"error": "Failed to generate fundamental verdict."}
+
 
     def get_sentiment_verdict(self, sentiment_data: dict, ticker: str) -> dict:
         """Analyzes ONLY sentiment data (news, options) to gauge market emotion."""
@@ -149,14 +108,17 @@ class AIAnalyzer:
             }, "required": ["prevailing_emotion", "key_catalyst", "strength", "rationale"]
         }
 
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+
         prompt = f"Provide a pure sentiment analysis for {ticker} using the following data:\n{json.dumps(sentiment_data, indent=2)}"
 
-        return self._make_azure_call(
-            system_instruction=system_instruction,
-            user_prompt=prompt,
-            deployment_name=self.flash_deployment,
-            output_schema=output_schema
-        )
+        try:
+            response = model.generate_content(prompt, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Sentiment verdict for {ticker} failed: {e}")
+            return {"error": "Failed to generate sentiment verdict."}
         
     def get_apex_analysis(self, ticker: str, technical_verdict: dict, fundamental_verdict: dict, sentiment_verdict: dict, market_state: dict, screener_reason: str) -> dict:
         """
@@ -164,6 +126,8 @@ class AIAnalyzer:
         This is the "Head of Strategy" that makes the final call.
         """
         log.info(f"Generating APEX Synthesis for {ticker}...")
+
+        # In ai_analyzer.py -> get_apex_analysis -> REPLACE WITH THIS
 
         system_instruction = """
         You are "Scrybe," the Head of Strategy for a top-tier hedge fund. You have just received reports from your specialist analyst team: a technical analyst (CMT), a fundamental analyst (CFA), and a sentiment strategist.
@@ -184,6 +148,7 @@ class AIAnalyzer:
         Synthesize the reports, weigh the evidence according to the mandate, and generate the final trade plan in the required JSON format.
         """
 
+        # This is the original, rich output schema you designed.
         output_schema = {
             "type": "OBJECT",
             "properties": {
@@ -214,7 +179,19 @@ class AIAnalyzer:
             ]
         }
         
-        prompt_content = "\n".join([
+        generation_config = genai.types.GenerationConfig(
+            response_mime_type="application/json",
+            response_schema=output_schema,
+            max_output_tokens=8192
+        )
+
+        model = genai.GenerativeModel(
+            config.PRO_MODEL,
+            system_instruction=system_instruction,
+            generation_config=generation_config
+        )
+
+        prompt_parts = [
             "## Analyst Reports & Market State ##",
             f"Ticker: {ticker}",
             f"Screener Reason: {screener_reason}",
@@ -223,29 +200,38 @@ class AIAnalyzer:
             f"Fundamental Verdict: {json.dumps(fundamental_verdict, indent=2)}",
             f"Sentiment Verdict: {json.dumps(sentiment_verdict, indent=2)}",
             "\nSynthesize these reports into the final trade decision as per the Fund Mandate."
-        ])
+        ]
 
-        # Removed the complex key rotation and retry logic. Now using a single, robust call.
-        log.info(f"--- Attempting APEX synthesis with Azure deployment '{self.pro_deployment}' ---")
-        try:
-            analysis_result = self._make_azure_call(
-                system_instruction=system_instruction,
-                user_prompt=prompt_content,
-                deployment_name=self.pro_deployment,
-                output_schema=output_schema,
-                timeout=300,
-                max_tokens=8192
-            )
-            
-            if "error" in analysis_result:
-                 raise Exception(analysis_result["error"])
-
-            analysis_result["model_used"] = self.pro_deployment
-            log.info(f"✅ Success on APEX synthesis for {ticker}.")
-            return analysis_result
-        except Exception as e:
-            log.critical(f"CRITICAL: APEX synthesis failed for {ticker}. Error: {e}")
-            raise Exception(f"APEX synthesis failed for deployment {self.pro_deployment}.")
+        # Using the robust retry logic from your original code
+        MAX_RETRIES_PER_KEY = 3
+        total_keys = len(self.api_keys)
+        for i in range(total_keys):
+            key_to_use = self.api_keys[self.current_key_index]
+            log.info(f"--- Attempting APEX synthesis with API Key #{self.current_key_index + 1}/{total_keys} ---")
+            genai.configure(api_key=key_to_use)
+            for attempt in range(MAX_RETRIES_PER_KEY):
+                try:
+                    response = model.generate_content(prompt_parts, request_options={"timeout": 300})
+                    if not response.parts:
+                        raise ValueError(f"Empty or blocked response. Feedback: {response.prompt_feedback}")
+                    analysis_result = json.loads(response.text)
+                    analysis_result["model_used"] = config.PRO_MODEL
+                    log.info(f"✅ Success on attempt {attempt + 1} with Key #{self.current_key_index + 1}.")
+                    return analysis_result
+                except Exception as e:
+                    if "429" in str(e) or "quota" in str(e).lower():
+                        log.warning(f"Quota exceeded for Key #{self.current_key_index + 1}. Rotating key.")
+                        self.current_key_index = (self.current_key_index + 1) % total_keys
+                        break
+                    log.warning(f"Attempt {attempt + 1} with Key #{self.current_key_index + 1} failed: {e}")
+                    if attempt < MAX_RETRIES_PER_KEY - 1:
+                        time.sleep(5)
+                    else:
+                        log.error(f"All {MAX_RETRIES_PER_KEY} retries failed for Key #{self.current_key_index + 1}.")
+                        self.current_key_index = (self.current_key_index + 1) % total_keys
+        
+        log.critical(f"CRITICAL: All API keys failed for APEX synthesis on {ticker}.")
+        raise Exception(f"All {total_keys} API keys failed for model {config.PRO_MODEL}.")
 
     def get_single_news_impact_analysis(self, article: dict) -> dict:
         """
@@ -279,13 +265,16 @@ class AIAnalyzer:
         **Description:** {article.get('description', 'N/A')}
         """
 
-        result = self._make_azure_call(
-            system_instruction=system_instruction,
-            user_prompt=prompt,
-            deployment_name=self.flash_deployment,
-            output_schema=output_schema
-        )
-        return result if "error" not in result else None
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+
+        try:
+            response = model.generate_content(prompt, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Single news impact analysis call failed. Error: {e}")
+            return None
+
 
     
     def get_intraday_short_signal(self, prompt_data: dict) -> dict:
@@ -329,79 +318,85 @@ class AIAnalyzer:
         
         prompt = f"Analyze the following data for {ticker} and provide your signal: {json.dumps(prompt_data)}"
 
-        result = self._make_azure_call(
-            system_instruction=system_instruction,
-            user_prompt=prompt,
-            deployment_name=self.flash_deployment,
-            output_schema=output_schema
-        )
-        return result if "error" not in result else None
+        generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+        
+        # --- Using the FLASH_MODEL as requested ---
+        model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+
+        try:
+            response = model.generate_content(prompt, request_options={"timeout": 120})
+            return json.loads(response.text)
+        except Exception as e:
+            log.error(f"Intraday short analysis call failed for {ticker}. Error: {e}")
+            return None
 
     def get_index_analysis(self, index_name: str, index_ticker: str, macro_context: dict) -> dict:
-        """
-        Generates a CIO-grade, in-depth analysis for a market index, including a fallback for deriving key levels from technicals if options data is unavailable.
-        """
-        log.info(f"Generating definitive CIO-grade index analysis for {index_name}...")
-        
-        system_instruction = """
-        You are the Chief Investment Officer (CIO) of a global macro fund. Your task is to synthesize technical, macroeconomic, and (when available) options market data into a clear, institutional-grade strategic report on a major stock market index.
+            """
+            Generates a CIO-grade, in-depth analysis for a market index, including a fallback for deriving key levels from technicals if options data is unavailable.
+            """
+            log.info(f"Generating definitive CIO-grade index analysis for {index_name}...")
+            
+            system_instruction = """
+            You are the Chief Investment Officer (CIO) of a global macro fund. Your task is to synthesize technical, macroeconomic, and (when available) options market data into a clear, institutional-grade strategic report on a major stock market index.
 
-        **Multi-Factor Synthesis Protocol:**
-        1.  **Technical Health Assessment:** Analyze the provided technical indicator data (Price vs. MAs, RSI) to determine the current trend strength and momentum.
-        2.  **Key Levels Analysis (CRITICAL):**
-            - If options data (Max OI) is provided, you MUST use the high OI strike prices as the primary psychological support/resistance levels.
-            - **If options data is "Not Available", you MUST derive the Key Support and Resistance levels from the technical data provided (e.g., recent swing highs/lows, significant moving averages).** The report must contain key levels.
-        **3. Correlation & Context Check:**
+            **Multi-Factor Synthesis Protocol:**
+            1.  **Technical Health Assessment:** Analyze the provided technical indicator data (Price vs. MAs, RSI) to determine the current trend strength and momentum.
+            2.  **Key Levels Analysis (CRITICAL):**
+                - If options data (Max OI) is provided, you MUST use the high OI strike prices as the primary psychological support/resistance levels.
+                - **If options data is "Not Available", you MUST derive the Key Support and Resistance levels from the technical data provided (e.g., recent swing highs/lows, significant moving averages).** The report must contain key levels.
+            **3. Correlation & Context Check:**
             - Analyze the stock's correlation to the NIFTY 50. Is it moving with the market (high positive correlation) or against it?
             - A 'BUY' signal in a stock that is strongly correlated with a bearish NIFTY 50 requires extra caution and a pristine setup. Acknowledge this context in your verdict.
-        4.  **Sentiment Analysis:** Use the Put-Call Ratio (PCR) and Volatility Index (VIX) to gauge current market sentiment.
-        5.  **Macroeconomic Overlay:** Interpret how the macro data influences the index's trajectory.
-        6.  **Final Synthesis:** Combine all factors to produce a cohesive report, completing all fields in the required JSON format with detailed, well-reasoned insights.
-        """
+            4.  **Sentiment Analysis:** Use the Put-Call Ratio (PCR) and Volatility Index (VIX) to gauge current market sentiment.
+            5.  **Macroeconomic Overlay:** Interpret how the macro data influences the index's trajectory.
+            6.  **Final Synthesis:** Combine all factors to produce a cohesive report, completing all fields in the required JSON format with detailed, well-reasoned insights.
+            """
 
-        output_schema = {
-            "type": "OBJECT", "properties": {
-                "marketPulse": {"type": "OBJECT", "properties": {"overallBias": {"type": "STRING"}, "volatilityIndexStatus": {"type": "STRING"}}, "required": ["overallBias", "volatilityIndexStatus"]},
-                "trendAnalysis": {"type": "OBJECT", "properties": {"shortTermTrend": {"type": "STRING"}, "mediumTermTrend": {"type": "STRING"}, "keyTrendIndicators": {"type": "STRING"}}, "required": ["shortTermTrend", "mediumTermTrend", "keyTrendIndicators"]},
-                "keyLevels": {"type": "OBJECT", "properties": {"resistance": {"type": "ARRAY", "items": {"type": "STRING"}}, "support": {"type": "ARRAY", "items": {"type": "STRING"}}}, "required": ["resistance", "support"]},
-                "optionsMatrix": {"type": "OBJECT", "properties": {"maxOpenInterestCall": {"type": "STRING"}, "maxOpenInterestPut": {"type": "STRING"}, "putCallRatioAnalysis": {"type": "STRING"}}, "required": ["maxOpenInterestCall", "maxOpenInterestPut", "putCallRatioAnalysis"]},
-                "forwardOutlook": {"type": "OBJECT", "properties": {"next7Days": {"type": "STRING"}, "primaryRisk": {"type": "STRING"}}, "required": ["next7Days", "primaryRisk"]}
-            }, "required": ["marketPulse", "trendAnalysis", "keyLevels", "optionsMatrix", "forwardOutlook"]
-        }
-        
-        historical_data = data_retriever.get_historical_stock_data(index_ticker)
-        vix_data = data_retriever.get_historical_stock_data("^INDIAVIX")
-        options_data = data_retriever.get_index_option_data(index_ticker)
-        
-        if historical_data is None or len(historical_data) < 50:
-            return {"error": "Not enough historical data to analyze the index."}
+            output_schema = {
+                "type": "OBJECT", "properties": {
+                    "marketPulse": {"type": "OBJECT", "properties": {"overallBias": {"type": "STRING"}, "volatilityIndexStatus": {"type": "STRING"}}, "required": ["overallBias", "volatilityIndexStatus"]},
+                    "trendAnalysis": {"type": "OBJECT", "properties": {"shortTermTrend": {"type": "STRING"}, "mediumTermTrend": {"type": "STRING"}, "keyTrendIndicators": {"type": "STRING"}}, "required": ["shortTermTrend", "mediumTermTrend", "keyTrendIndicators"]},
+                    "keyLevels": {"type": "OBJECT", "properties": {"resistance": {"type": "ARRAY", "items": {"type": "STRING"}}, "support": {"type": "ARRAY", "items": {"type": "STRING"}}}, "required": ["resistance", "support"]},
+                    "optionsMatrix": {"type": "OBJECT", "properties": {"maxOpenInterestCall": {"type": "STRING"}, "maxOpenInterestPut": {"type": "STRING"}, "putCallRatioAnalysis": {"type": "STRING"}}, "required": ["maxOpenInterestCall", "maxOpenInterestPut", "putCallRatioAnalysis"]},
+                    "forwardOutlook": {"type": "OBJECT", "properties": {"next7Days": {"type": "STRING"}, "primaryRisk": {"type": "STRING"}}, "required": ["next7Days", "primaryRisk"]}
+                }, "required": ["marketPulse", "trendAnalysis", "keyLevels", "optionsMatrix", "forwardOutlook"]
+            }
             
-        historical_data.ta.rsi(length=14, append=True)
-        historical_data.ta.ema(length=20, append=True)
-        historical_data.ta.ema(length=50, append=True)
-        historical_data.dropna(inplace=True)
-        latest_data = historical_data.iloc[-1]
-        
-        vix_value_str = f"{vix_data.iloc[-1]['close']:.2f}" if vix_data is not None and not vix_data.empty else "Not Available"
-        options_data_str = json.dumps(options_data) if options_data else "Not Available"
+            historical_data = data_retriever.get_historical_stock_data(index_ticker)
+            vix_data = data_retriever.get_historical_stock_data("^INDIAVIX")
+            options_data = data_retriever.get_index_option_data(index_ticker)
+            
+            if historical_data is None or len(historical_data) < 50:
+                return {"error": "Not enough historical data to analyze the index."}
+                
+            historical_data.ta.rsi(length=14, append=True)
+            historical_data.ta.ema(length=20, append=True)
+            historical_data.ta.ema(length=50, append=True)
+            historical_data.dropna(inplace=True)
+            latest_data = historical_data.iloc[-1]
+            
+            vix_value_str = f"{vix_data.iloc[-1]['close']:.2f}" if vix_data is not None and not vix_data.empty else "Not Available"
+            options_data_str = json.dumps(options_data) if options_data else "Not Available"
 
-        
-        prompt = f"""
-        Generate a CIO-level strategic report for the {index_name}. Synthesize all of the following data:
-        - Latest Technicals: Price({latest_data['close']:.2f}), 20-EMA({latest_data['EMA_20']:.2f}), 50-EMA({latest_data['EMA_50']:.2f}), RSI({latest_data['RSI_14']:.2f})
-        - Latest Volatility Index (India VIX): {vix_value_str}
-        - Latest Options Data: {options_data_str}
-        - Macroeconomic Context: {json.dumps(macro_context)}
-        Provide your full analysis in the required JSON format. If options data is not available, you must still provide key support and resistance levels based on technicals.
-        """
-        
-        result = self._make_azure_call(
-            system_instruction=system_instruction,
-            user_prompt=prompt,
-            deployment_name=self.flash_deployment,
-            output_schema=output_schema
-        )
-        return result if "error" not in result else None
+            
+            prompt = f"""
+            Generate a CIO-level strategic report for the {index_name}. Synthesize all of the following data:
+            - Latest Technicals: Price({latest_data['close']:.2f}), 20-EMA({latest_data['EMA_20']:.2f}), 50-EMA({latest_data['EMA_50']:.2f}), RSI({latest_data['RSI_14']:.2f})
+            - Latest Volatility Index (India VIX): {vix_value_str}
+            - Latest Options Data: {options_data_str}
+            - Macroeconomic Context: {json.dumps(macro_context)}
+            Provide your full analysis in the required JSON format. If options data is not available, you must still provide key support and resistance levels based on technicals.
+            """
+            
+            generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+            model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+            
+            try:
+                response = model.generate_content(prompt, request_options={"timeout": 120})
+                return json.loads(response.text)
+            except Exception as e:
+                log.error(f"Index analysis AI call failed for {index_name}. Error: {e}")
+                return None
 
     def get_volatility_qualifier(self, technical_indicators: dict) -> str:
         """
@@ -429,72 +424,67 @@ class AIAnalyzer:
     def get_dvm_scores(self, live_financial_data: dict, technical_indicators: dict) -> dict:
         """A method to generate Durability, Valuation, and Momentum scores."""
         log.info("Generating DVM scores...")
-        
-        system_instruction = """
-        You are a stringent quantitative financial analyst. Your job is to generate three scores (Durability, Valuation, Momentum) and a corresponding descriptive phrase for each.
-
-        **CRITICAL RULES:**
-        1.  The `score` MUST be on a scale of 0 to 100, where 100 is the best possible outcome and 0 is the worst.
-        2.  The `phrase` MUST be logically consistent with the numeric `score`. A low score requires a cautious or negative phrase. A high score requires a positive phrase. There can be no contradictions.
-        3.  The `status` must also align. Scores below 40 are 'Poor', 40-60 are 'Neutral', and above 60 are 'Good'.
-
-        **Example of a GOOD, LOGICAL output:**
-        {
-        "durability": {
-            "score": 85,
-            "status": "Good",
-            "phrase": "The company shows excellent financial health with low debt and strong cash flow, indicating superior durability."
-        }
-        }
-
-        **Example of a BAD, CONTRADICTORY output (DO NOT DO THIS):**
-        {
-        "durability": {
-            "score": 15,
-            "status": "Poor",
-            "phrase": "The company shows excellent financial health."
-        }
-        }
-
-        Your analysis must be strict and the scores must directly reflect the data provided.
-        """
-        output_schema = {
-            "type": "OBJECT", "properties": {
-                "durability": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
-                "valuation": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
-                "momentum": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
-            }, "required": ["durability", "valuation", "momentum"]
-        }
-        prompt = "\n".join([
-            "Generate the DVM scores based on this data:",
-            f"Financial Data: {json.dumps(live_financial_data['curatedData'])}",
-            f"Technical Indicators: {json.dumps(technical_indicators)}"
-        ])
-
-        # Simplified retry logic for Azure
-        max_retries = 3
-        delay = 2
+        max_retries = 4
+        delay = 2 # Initial delay of 2 seconds
         for attempt in range(max_retries):
             try:
-                result = self._make_azure_call(
-                    system_instruction=system_instruction,
-                    user_prompt=prompt,
-                    deployment_name=self.flash_deployment,
-                    output_schema=output_schema
-                )
-                if "error" not in result:
-                    return result
-                
-                log.warning(f"[DVM Scoring] Attempt {attempt + 1} failed with API error: {result['error']}")
-            except Exception as e:
-                 log.warning(f"[DVM Scoring] Attempt {attempt + 1} failed with system error: {e}")
+                system_instruction = """
+                You are a stringent quantitative financial analyst. Your job is to generate three scores (Durability, Valuation, Momentum) and a corresponding descriptive phrase for each.
 
-            if attempt < max_retries - 1:
-                time.sleep(delay)
-                delay *= 2
-        
-        log.error(f"[DVM Scoring] Failed after {max_retries} attempts.")
-        return None
+                **CRITICAL RULES:**
+                1.  The `score` MUST be on a scale of 0 to 100, where 100 is the best possible outcome and 0 is the worst.
+                2.  The `phrase` MUST be logically consistent with the numeric `score`. A low score requires a cautious or negative phrase. A high score requires a positive phrase. There can be no contradictions.
+                3.  The `status` must also align. Scores below 40 are 'Poor', 40-60 are 'Neutral', and above 60 are 'Good'.
+
+                **Example of a GOOD, LOGICAL output:**
+                {
+                "durability": {
+                    "score": 85,
+                    "status": "Good",
+                    "phrase": "The company shows excellent financial health with low debt and strong cash flow, indicating superior durability."
+                }
+                }
+
+                **Example of a BAD, CONTRADICTORY output (DO NOT DO THIS):**
+                {
+                "durability": {
+                    "score": 15,
+                    "status": "Poor",
+                    "phrase": "The company shows excellent financial health."
+                }
+                }
+
+                Your analysis must be strict and the scores must directly reflect the data provided.
+                """
+                output_schema = {
+                    "type": "OBJECT", "properties": {
+                        "durability": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
+                        "valuation": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
+                        "momentum": {"type": "OBJECT", "properties": {"score": {"type": "NUMBER"}, "status": {"type": "STRING"}, "phrase": {"type": "STRING"}}, "required": ["score", "status", "phrase"]},
+                    }, "required": ["durability", "valuation", "momentum"]
+                }
+                prompt_parts = [
+                    "Generate the DVM scores based on this data:",
+                    f"Financial Data: {json.dumps(live_financial_data['curatedData'])}",
+                    f"Technical Indicators: {json.dumps(technical_indicators)}"
+                ]
+                generation_config = genai.types.GenerationConfig(response_mime_type="application/json", response_schema=output_schema)
+                model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction, generation_config=generation_config)
+                
+                response = model.generate_content(prompt_parts)
+                return json.loads(response.text) # Success: return and exit loop
+            except Exception as e:
+                if "429" in str(e) and "quota" in str(e).lower():
+                    log.error("Quota exceeded for DVM Scoring. Raising exception to trigger key rotation.")
+                    raise e # CRITICAL: Alert the main runner
+                log.warning(f"[DVM Scoring] Attempt {attempt + 1} failed. Error: {e}")
+                if attempt < max_retries - 1:
+                    log.info(f"Waiting for {delay} seconds before retrying...")
+                    time.sleep(delay)
+                    delay *= 2
+                else:
+                    log.error(f"[DVM Scoring] Failed after {max_retries} attempts.")
+                    return None
     
     def get_conversational_answer(self, question: str, analysis_context: dict) -> dict:
         """
@@ -523,20 +513,13 @@ class AIAnalyzer:
         Please provide your answer based on the rules.
         """
         
-        messages = [
-            {"role": "system", "content": system_instruction},
-            {"role": "user", "content": prompt}
-        ]
-        
+        # For conversational answers, we don't need a strict JSON output schema from the AI
+        model = genai.GenerativeModel(config.FLASH_MODEL, system_instruction=system_instruction)
+
         try:
-            response = self.client.chat.completions.create(
-                model=self.flash_deployment,
-                messages=messages,
-                temperature=0,
-                timeout=120
-            )
-            answer_text = response.choices[0].message.content
-            return {"answer": answer_text}
+            response = model.generate_content(prompt, request_options={"timeout": 120})
+            # We wrap the text response in our own JSON object for the frontend
+            return {"answer": response.text}
         except Exception as e:
             log.error(f"Conversational Q&A call failed. Error: {e}")
             return None

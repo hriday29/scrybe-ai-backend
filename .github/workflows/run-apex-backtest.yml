@@ -56,23 +56,11 @@ jobs:
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
           NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
           
-          # --- Gemini API Key Pool (Fully Mapped) ---
-          GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
-          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
-          GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
-          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
-          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
-          GOOGLE_API_KEY_6: ${{ secrets.GOOGLE_API_KEY_6 }}
-          GOOGLE_API_KEY_7: ${{ secrets.GOOGLE_API_KEY_7 }}
-          GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
-          GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
-          GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
-          GOOGLE_API_KEY_11: ${{ secrets.GOOGLE_API_KEY_11 }}
-          GOOGLE_API_KEY_12: ${{ secrets.GOOGLE_API_KEY_12 }}
-          GOOGLE_API_KEY_13: ${{ secrets.GOOGLE_API_KEY_13 }}
-          GOOGLE_API_KEY_14: ${{ secrets.GOOGLE_API_KEY_14 }}
-          GOOGLE_API_KEY_15: ${{ secrets.GOOGLE_API_KEY_15 }}
-          GOOGLE_API_KEY_16: ${{ secrets.GOOGLE_API_KEY_16 }}
+          # --- Azure AI Credentials & Deployments ---
+          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          AZURE_AI_API_KEY: ${{ secrets.AZURE_AI_API_KEY }}
+          AZURE_PRO_DEPLOYMENT: ${{ secrets.AZURE_PRO_DEPLOYMENT }}
+          AZURE_FLASH_DEPLOYMENT: ${{ secrets.AZURE_FLASH_DEPLOYMENT }}
           
         run: |
           python main_orchestrator.py \

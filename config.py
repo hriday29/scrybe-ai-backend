@@ -4,6 +4,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# --- Azure AI Credentials ---
+AZURE_AI_ENDPOINT = os.getenv("AZURE_AI_ENDPOINT")
+AZURE_AI_API_KEY = os.getenv("AZURE_AI_API_KEY")
+
 # --- Data Source Control ---
 # This is the master switch. Set to "angelone" or "yfinance".
 DATA_SOURCE = os.getenv("DATA_SOURCE", "angelone")
@@ -19,27 +23,8 @@ ANGELONE_CLIENT_ID = os.getenv("ANGELONE_CLIENT_ID")
 ANGELONE_PASSWORD = os.getenv("ANGELONE_PASSWORD")
 ANGELONE_TOTP_SECRET = os.getenv("ANGELONE_TOTP_SECRET")
 
-# --- Gemini API Key Pool ---
-GEMINI_API_KEY_POOL = [
-    key for key in [
-        os.getenv("GOOGLE_API_KEY_1"),
-        os.getenv("GOOGLE_API_KEY_2"),
-        os.getenv("GOOGLE_API_KEY_3"),
-        os.getenv("GOOGLE_API_KEY_4"),
-        os.getenv("GOOGLE_API_KEY_5"),
-        os.getenv("GOOGLE_API_KEY_6"),
-        os.getenv("GOOGLE_API_KEY_7"),
-        os.getenv("GOOGLE_API_KEY_8"),
-        os.getenv("GOOGLE_API_KEY_9"),
-        os.getenv("GOOGLE_API_KEY_10"),
-        os.getenv("GOOGLE_API_KEY_11"),
-        os.getenv("GOOGLE_API_KEY_12"),
-        os.getenv("GOOGLE_API_KEY_13"),
-        os.getenv("GOOGLE_API_KEY_14"),
-        os.getenv("GOOGLE_API_KEY_15"),
-        os.getenv("GOOGLE_API_KEY_16"),
-    ] if key
-]
+# --- Gemini API Key Pool (REMOVED) ---
+# This is no longer needed as we use a single Azure endpoint and key.
 
 # --- Email Configuration ---
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
@@ -52,20 +37,22 @@ EMAIL_RECIPIENTS = [email.strip() for email in EMAIL_RECIPIENTS.split(",") if em
 if not EMAIL_RECIPIENTS:
     EMAIL_RECIPIENTS = BETA_TESTER_EMAILS
 
-# --- Models ---
-PRO_MODEL = "gemini-2.5-pro"
-FLASH_MODEL = "gemini-2.5-flash"
+# --- Models (MODIFIED FOR AZURE) ---
+# These now refer to your DEPLOYMENT NAMES in Azure AI Studio.
+# Please set them in your .env file.
+PRO_MODEL = os.getenv("AZURE_PRO_DEPLOYMENT", "gpt-4o-deployment")
+FLASH_MODEL = os.getenv("AZURE_FLASH_DEPLOYMENT", "gpt-35-turbo-deployment")
 
 # --- Strategy & Portfolio ---
 APEX_SWING_STRATEGY = {
-    "name": "AI_Analyst_v1", # Reflects the new AI-driven strategy
-    "allow_short_selling": True, # A master switch for SELL signals
+    "name": "AI_Analyst_v1",
+    "allow_short_selling": True,
     "holding_period": 10,
     "stop_loss_atr_multiplier": 2.5,
     "profit_target_rr_multiple": 3.0,
-    "min_conviction_score": 25, # We can use a higher threshold for higher quality signals
-    "use_trailing_stop": False,
-    "trailing_stop_atr_multiplier": 1.5,
+    "min_conviction_score": 25,
+    "use_trailing_stop": True,
+    "trailing_stop_atr_multiplier": 1.5, 
 }
 
 PORTFOLIO_CONSTRAINTS = {

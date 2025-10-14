@@ -25,6 +25,7 @@ matplotlib
 # --- External Services & SDKs ---
 google-generativeai
 firebase-admin
+openai
 sentry-sdk[flask]
 # smartapi-python  # Using local smartapi_client instead
 pyotp

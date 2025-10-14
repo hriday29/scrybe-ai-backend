@@ -191,60 +191,92 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
 def _manage_exits_for_day(portfolio: dict, point_in_time: pd.Timestamp, data_cache: dict, batch_id: str):
     """
-    Manages exits for the current day using a realistic, sequential logic.
-    1. Checks for a gap at the open against the stop-loss.
-    2. Assumes Stop-Loss is hit before Target intraday (conservative approach).
-    3. Checks for the target being hit.
-    4. Checks for time-based exit at the close.
+    MODIFIED: Manages exits with a new, sophisticated trailing stop-loss logic.
     """
     for position in portfolio['open_positions'][:]:
         ticker = position['ticker']
         try:
             day_data = data_cache[ticker].loc[point_in_time]
         except (KeyError, IndexError):
-            continue # No data for this stock today, hold position and check tomorrow.
+            continue
 
         close_reason, closing_price = None, None
-        open_price = day_data['open']
-        high_price = day_data['high']
-        low_price = day_data['low']
-        close_price = day_data['close']
+        open_price, high_price, low_price, close_price = day_data['open'], day_data['high'], day_data['low'], day_data['close']
         stop_loss = position['stop_loss']
         target = position['target']
+        
+        # --- railing Stop Logic ---
+        use_trailing_stop = config.APEX_SWING_STRATEGY.get('use_trailing_stop', False)
+        
+        # On the first day of the trade, the trailing stop is the same as the initial stop.
+        if 'trailing_stop' not in position:
+            position['trailing_stop'] = stop_loss
 
-        # --- SEQUENTIAL EXIT LOGIC ---
+        trailing_stop = position['trailing_stop']
+
+        if use_trailing_stop:
+            try:
+                # Calculate the ATR for the current day to adjust the trail
+                atr_df = data_cache[ticker].loc[:point_in_time].copy()
+                atr_df.ta.atr(length=14, append=True)
+                current_atr = atr_df['ATRr_14'].iloc[-1]
+                trail_amount = current_atr * config.APEX_SWING_STRATEGY['trailing_stop_atr_multiplier']
+
+                if position['signal'] == 'BUY':
+                    # Ratchet the stop up if the price moves in our favor
+                    new_trail = close_price - trail_amount
+                    if new_trail > trailing_stop:
+                        position['trailing_stop'] = new_trail
+                        trailing_stop = new_trail # Update for this loop's check
+                
+                elif position['signal'] == 'SHORT':
+                    # Ratchet the stop down if the price moves in our favor
+                    new_trail = close_price + trail_amount
+                    if new_trail < trailing_stop:
+                        position['trailing_stop'] = new_trail
+                        trailing_stop = new_trail # Update for this loop's check
+            except Exception as e:
+                log.warning(f"Could not calculate trailing stop for {ticker}: {e}")
+        # --- End of Logic ---
+
+        # --- MODIFIED: Exit Priority ---
         if position['signal'] == 'BUY':
-            # Priority 1: Check for gap down at open hitting the stop-loss.
+            # Priority 1: Check for gap down against initial stop-loss
             if open_price <= stop_loss:
                 close_reason, closing_price = "Stop-Loss Hit (Gap Down)", open_price
-            # Priority 2: Check for intraday stop-loss hit (conservative: stop is always prioritized).
+            # Priority 2: Check against the TRAILING stop intraday
+            elif low_price <= trailing_stop:
+                close_reason, closing_price = "Trailing Stop Hit", trailing_stop
+            # Priority 3: Check against the initial hard stop-loss (safety net)
             elif low_price <= stop_loss:
                 close_reason, closing_price = "Stop-Loss Hit (Intraday)", stop_loss
-            # Priority 3: If no stop was hit, check for target.
+            # Priority 4: Check for fixed target hit
             elif target and high_price >= target:
                 close_reason, closing_price = "Target Hit", target
-        
+
         elif position['signal'] == 'SHORT':
-            # Priority 1: Check for gap up at open hitting the stop-loss.
+            # Priority 1: Check for gap up against initial stop-loss
             if open_price >= stop_loss:
                 close_reason, closing_price = "Stop-Loss Hit (Gap Up)", open_price
-            # Priority 2: Check for intraday stop-loss hit.
+            # Priority 2: Check against the TRAILING stop intraday
+            elif high_price >= trailing_stop:
+                close_reason, closing_price = "Trailing Stop Hit", trailing_stop
+            # Priority 3: Check against the initial hard stop-loss (safety net)
             elif high_price >= stop_loss:
                 close_reason, closing_price = "Stop-Loss Hit (Intraday)", stop_loss
-            # Priority 3: If no stop was hit, check for target.
+            # Priority 4: Check for fixed target hit
             elif target and low_price <= target:
                 close_reason, closing_price = "Target Hit", target
 
-        # Priority 4: If no price-based exit was triggered, check for time-based exit.
+        # Final Priority: Time-based exit
         if not close_reason and (point_in_time - position['open_date']).days >= position['holding_period']:
             close_reason, closing_price = "Time Exit", close_price
 
-        # If any exit condition was met, process the trade closure.
+        # Process the closure if any exit condition was met
         if close_reason:
             closed_trade_doc, net_pnl = _calculate_closed_trade(position, closing_price, close_reason, point_in_time)
             log.info(f"[EXIT] Closing {ticker} ({position['signal']}) → {close_reason}. Net P&L: ₹{net_pnl:.2f}")
             
-            # Using your original method of updating total equity with the PnL of the closed trade.
             portfolio['equity'] += net_pnl
             portfolio['closed_trades'].append(closed_trade_doc)
             portfolio['open_positions'].remove(position)
@@ -252,12 +284,10 @@ def _manage_exits_for_day(portfolio: dict, point_in_time: pd.Timestamp, data_cac
 
 def _manage_entries_for_day(portfolio: dict, signals_for_today: list, point_in_time: pd.Timestamp, data_cache: dict):
     """
-    Manages entries for the current simulation day using the OPEN price.
-    - Uses the actual open price for trade entry.
-    - Performs a pre-trade gap-risk check.
-    - Recalculates position size based on the actual entry price.
+    MODIFIED: Manages entries with a new, conviction-based dynamic position sizing model.
     """
-    sorted_signals = sorted(signals_for_today, key=lambda x: x.get('scrybeScore', 0), reverse=True)
+    # Sort signals by the absolute value of their score to prioritize highest conviction
+    sorted_signals = sorted(signals_for_today, key=lambda x: abs(x.get('scrybeScore', 0)), reverse=True)
     
     for signal in sorted_signals:
         if len(portfolio['open_positions']) >= PORTFOLIO_CONSTRAINTS['max_concurrent_trades']:
@@ -275,7 +305,6 @@ def _manage_entries_for_day(portfolio: dict, signals_for_today: list, point_in_t
             log.warning(f"[ENTRY] Skipping {ticker}: Signal has no stop-loss price.")
             continue
 
-        # --- REALISTIC ENTRY LOGIC ---
         try:
             day_data = data_cache[ticker].loc[point_in_time]
             actual_entry_price = day_data['open']
@@ -283,29 +312,45 @@ def _manage_entries_for_day(portfolio: dict, signals_for_today: list, point_in_t
             log.warning(f"[ENTRY] Skipping {ticker}: No simulation data available for today.")
             continue
 
-        # --- PRE-TRADE RISK CHECK ---
-        # If the market gaps against us at the open, abort the trade.
+        # Pre-trade gap risk check (no change here)
         if signal['signal'] == 'BUY' and actual_entry_price <= stop_loss_price:
-            log.warning(f"[ENTRY] VETO (BUY): {ticker} gapped down at open ({actual_entry_price:.2f}) below stop-loss ({stop_loss_price:.2f}).")
+            log.warning(f"[ENTRY] VETO (BUY): {ticker} gapped down at open below stop-loss.")
             continue
         elif signal['signal'] == 'SHORT' and actual_entry_price >= stop_loss_price:
-            log.warning(f"[ENTRY] VETO (SHORT): {ticker} gapped up at open ({actual_entry_price:.2f}) above stop-loss ({stop_loss_price:.2f}).")
+            log.warning(f"[ENTRY] VETO (SHORT): {ticker} gapped up at open above stop-loss.")
             continue
         
-        # --- DYNAMIC POSITION SIZING ---
+        # --- DYNAMIC POSITION SIZING LOGIC ---
+        scrybe_score = signal.get('scrybeScore', 0)
+        base_risk_pct = config.BACKTEST_PORTFOLIO_CONFIG['risk_per_trade_pct']
+        
+        # Define conviction tiers and corresponding risk multipliers
+        if abs(scrybe_score) >= 70:      # Very High Conviction
+            risk_multiplier = 1.0       # Risk the full 1%
+            conviction_level = "VERY HIGH"
+        elif abs(scrybe_score) >= 40:    # High Conviction
+            risk_multiplier = 0.75      # Risk 0.75%
+            conviction_level = "HIGH"
+        else:                            # Medium Conviction (score is between 25-39)
+            risk_multiplier = 0.5       # Risk only 0.5%
+            conviction_level = "MEDIUM"
+            
+        final_risk_pct = base_risk_pct * risk_multiplier
+        risk_amount = portfolio['equity'] * (final_risk_pct / 100.0)
+        log.info(f"Conviction for {ticker} is {conviction_level} (Score: {scrybe_score}). Adjusting risk to {final_risk_pct:.2f}%.")
+        # --- *** END OF NEW LOGIC *** ---
+
         risk_per_share = abs(actual_entry_price - stop_loss_price)
-        if risk_per_share <= 0.01: # Avoid division by zero
-            log.warning(f"[ENTRY] Skipping {ticker}: Risk per share is zero or negative.")
+        if risk_per_share <= 0.01:
+            log.warning(f"[ENTRY] Skipping {ticker}: Risk per share is zero.")
             continue
             
-        risk_amount = portfolio['equity'] * (config.BACKTEST_PORTFOLIO_CONFIG['risk_per_trade_pct'] / 100.0)
         num_shares = int(risk_amount / risk_per_share)
         
         if num_shares == 0:
             log.warning(f"[ENTRY] Skipping {ticker}: Position size is zero shares.")
             continue
 
-        # --- CREATE POSITION ---
         new_position = {
             'prediction_id': signal['_id'], 'ticker': ticker, 'signal': signal['signal'],
             'entry_price': actual_entry_price, 'num_shares': num_shares, 'stop_loss': stop_loss_price,

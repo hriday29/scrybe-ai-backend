@@ -127,16 +127,15 @@ class AnalysisPipeline:
         benchmark_performance = _fetch_benchmark_performance(full_data_cache, point_in_time)
         market_breadth = _calculate_market_breadth(full_data_cache, point_in_time)
 
-        # 3. --- NEW: Symmetrical Sector Analysis ---
-        actionable_sectors = []
-        if market_regime in ["Uptrend", "Bullish Pullback"]:
-            log.info(f"Bullish regime ('{market_regime}') detected. Identifying STRONGEST sectors...")
-            actionable_sectors = sector_analyzer.get_top_performing_sectors(full_data_cache, point_in_time)
-        elif market_regime in ["Downtrend", "Bearish Rally"]:
-            log.info(f"Bearish regime ('{market_regime}') detected. Identifying WEAKEST sectors for shorting...")
-            actionable_sectors = sector_analyzer.get_bottom_performing_sectors(full_data_cache, point_in_time)
-        else:
-            log.info(f"Neutral/Sideways regime ('{market_regime}'). No sector bias will be applied.")
+        # 3. --- NEW: All-Weather Sector Analysis ---
+        log.info(f"Regime is '{market_regime}'. Identifying both strongest and weakest sectors to find all opportunities.")
+        strong_sectors = sector_analyzer.get_top_performing_sectors(full_data_cache, point_in_time)
+        weak_sectors = sector_analyzer.get_bottom_performing_sectors(full_data_cache, point_in_time)
+
+        # Combine and remove duplicates to create a comprehensive list of actionable sectors
+        actionable_sectors = list(set(strong_sectors + weak_sectors))
+
+        log.info(f"Combined universe: {len(strong_sectors)} strong sectors and {len(weak_sectors)} weak sectors considered.")
 
         # 4. Package into the final 'market_state' object
         market_state = {
