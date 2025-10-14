@@ -16,7 +16,7 @@ SECTOR_NAME_MAPPING = {
 MIN_AVG_VOLUME = 500000
 
 # ==============================================================================
-# --- NEW UNIFIED FUNDAMENTAL SCORING FUNCTION ---
+# --- FUNDAMENTAL SCORING (No Changes Here) ---
 # ==============================================================================
 
 def get_fundamental_score(ticker: str, point_in_time: pd.Timestamp) -> float:
@@ -62,7 +62,6 @@ def get_fundamental_score(ticker: str, point_in_time: pd.Timestamp) -> float:
 
         if available_metrics == 0: return 0.0
         
-        # Normalize the score to be between -1 and +1
         max_possible_score = available_metrics
         return score / max_possible_score
 
@@ -71,15 +70,14 @@ def get_fundamental_score(ticker: str, point_in_time: pd.Timestamp) -> float:
         return 0.0
 
 # ==============================================================================
-# --- MODIFIED UNIVERSE PREPARATION ---
+# --- UNIVERSE PREPARATION (No Changes Here) ---
 # ==============================================================================
 
 def _prepare_filtered_universe(actionable_sectors: list[str], full_data_cache: dict, point_in_time: pd.Timestamp) -> list[str]:
     """
     Pre-filters the universe ONLY by sector and liquidity.
-    The rigid fundamental checks have been REMOVED.
     """
-    import data_retriever # Local import to avoid circular dependency issues
+    import data_retriever
     target_sectors = {SECTOR_NAME_MAPPING[name] for name in actionable_sectors if name in SECTOR_NAME_MAPPING}
     if not target_sectors: return []
 
@@ -97,19 +95,14 @@ def _prepare_filtered_universe(actionable_sectors: list[str], full_data_cache: d
         if len(df_slice) < 252: continue
         if df_slice['volume'].tail(20).mean() < MIN_AVG_VOLUME: continue
         
-        # *** THE CRITICAL CHANGE IS HERE: ***
-        # The calls to _is_fundamentally_vulnerable and _passes_fundamental_health_check
-        # have been completely removed.
-        
         qualified.append(ticker)
     return qualified
 
 # ==============================================================================
-# --- TECHNICAL RULESETS (UNCHANGED) ---
+# --- TECHNICAL RULESETS (No Changes Here) ---
 # ==============================================================================
 
 def _add_indicators(df: pd.DataFrame) -> pd.DataFrame:
-    """Helper to calculate all necessary indicators at once."""
     df.ta.ema(length=50, append=True)
     df.ta.ema(length=200, append=True)
     df.ta.rsi(length=14, append=True)
@@ -118,89 +111,92 @@ def _add_indicators(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def _check_long_momentum_rules(df: pd.DataFrame) -> bool:
-    """Rules for long momentum in an uptrend."""
     latest = df.iloc[-1]
     is_trending = latest['ADX_14'] > 22
     has_momentum = latest['RSI_14'] > 60
     return latest['close'] > latest['EMA_50'] and (is_trending or has_momentum)
 
 def _check_short_breakdown_rules(df: pd.DataFrame) -> bool:
-    """Rules for short breakdown in a downtrend."""
     latest = df.iloc[-1]
     is_trending = latest['ADX_14'] > 22
     has_momentum = latest['RSI_14'] < 40
     return latest['close'] < latest['EMA_50'] and (is_trending or has_momentum)
 
 def _check_long_mean_reversion_rules(df: pd.DataFrame) -> bool:
-    """Rule for 'buy the dip' setups in a bullish pullback."""
     latest = df.iloc[-1]
-    # Primary trend is up, but stock is oversold and not in a strong short-term trend
     return latest['EMA_50'] > latest['EMA_200'] and latest['RSI_14'] < 40 and latest['ADX_14'] < 25
 
 def _check_short_mean_reversion_rules(df: pd.DataFrame) -> bool:
-    """Rule for 'short the rip' setups in a bearish rally."""
     latest = df.iloc[-1]
-    # Primary trend is down, but stock is overbought and not in a strong short-term trend
     return latest['EMA_50'] < latest['EMA_200'] and latest['RSI_14'] > 60 and latest['ADX_14'] < 25
 
 # ==============================================================================
-# --- NEW UNIFIED, PLAYBOOK-DRIVEN CANDIDATE GENERATOR ---
+# --- MODIFIED: THE UNIFIED CANDIDATE GENERATOR & RANKING ENGINE ---
 # ==============================================================================
 
 def get_strategy_candidates(market_state: dict, full_data_cache: dict, point_in_time: pd.Timestamp) -> list[tuple[str, str]]:
     """
-    Generates a ranked list of candidates based on a combined fundamental
-    and technical score, aligned with the market regime.
+    MODIFIED: This function now runs ALL playbooks to generate a diverse pool of
+    both long and short candidates, then ranks them to find the best absolute
+    opportunities for the AI to analyze.
     """
-    regime = market_state.get('market_regime', {}).get('regime_status', 'Sideways')
     actionable_sectors = market_state.get('actionable_sectors', [])
     
-    # 1. Get base universe (now only filters by liquidity and sector)
+    # 1. Get base universe (filters by liquidity and active sectors)
     base_universe = _prepare_filtered_universe(actionable_sectors, full_data_cache, point_in_time)
     log.info(f"Found {len(base_universe)} liquid stocks in actionable sectors to screen.")
 
-    candidate_scores = []
+    # 2. *** NEW LOGIC ***
+    # Execute ALL relevant playbooks to generate a diverse, unfiltered candidate pool.
+    unranked_candidates = []
+    log.info("Executing both Bullish and Bearish playbooks to find all potential setups...")
+    
     for ticker in base_universe:
-        # 2. Calculate Fundamental Score for every stock
-        fundamental_score = get_fundamental_score(ticker, point_in_time)
-
-        # 3. Calculate Technical Score based on regime-specific rules
         df = _add_indicators(full_data_cache[ticker].loc[:point_in_time].copy())
-        if df.empty: continue
+        if not df.empty:
+            # Bullish Playbooks
+            if _check_long_momentum_rules(df):
+                unranked_candidates.append((ticker, "Long Momentum"))
+            if _check_long_mean_reversion_rules(df):
+                unranked_candidates.append((ticker, "Long Mean Reversion"))
+            # Bearish Playbooks
+            if _check_short_breakdown_rules(df):
+                unranked_candidates.append((ticker, "Short Breakdown"))
+            if _check_short_mean_reversion_rules(df):
+                unranked_candidates.append((ticker, "Short Mean Reversion"))
+
+    unique_unranked_candidates = list(dict.fromkeys(unranked_candidates))
+    log.info(f"Found {len(unique_unranked_candidates)} raw technical setups across all playbooks.")
+    
+    if not unique_unranked_candidates:
+        log.warning("No technical setups found across any playbook today.")
+        return []
+
+    # 3. *** NEW LOGIC ***
+    # Score and rank the combined pool of candidates to find the absolute best setups.
+    candidate_scores = []
+    for ticker, play_reason in unique_unranked_candidates:
+        fundamental_score = get_fundamental_score(ticker, point_in_time)
         
         technical_score = 0.0
-        play_reason = "N/A"
-        
-        if regime == "Uptrend" and _check_long_momentum_rules(df):
+        if "Long" in play_reason:
             technical_score = 1.0
-            play_reason = "Long Momentum"
-        elif regime == "Bullish Pullback" and _check_long_mean_reversion_rules(df):
-            technical_score = 1.0
-            play_reason = "Long Mean Reversion"
-        elif regime == "Downtrend" and _check_short_breakdown_rules(df):
-            technical_score = -1.0 # Negative score for short signals
-            play_reason = "Short Breakdown"
-        elif regime == "Bearish Rally" and _check_short_mean_reversion_rules(df):
-            technical_score = -1.0 # Negative score for short signals
-            play_reason = "Short Mean Reversion"
+        elif "Short" in play_reason:
+            technical_score = -1.0
 
-        # 4. Only consider stocks that match a technical play
-        if technical_score != 0.0:
-            # 5. Calculate Final Weighted Score
-            # Weights can be tuned. Start with 60% Technical, 40% Fundamental.
-            final_score = (technical_score * 0.6) + (fundamental_score * 0.4)
-            candidate_scores.append((ticker, play_reason, final_score))
+        # This final score now represents a blend of technical setup and fundamental health.
+        final_score = (technical_score * 0.6) + (fundamental_score * 0.4)
+        candidate_scores.append((ticker, play_reason, final_score))
 
-    # 6. Rank candidates by their final score
-    is_bullish_regime = regime in ["Uptrend", "Bullish Pullback"]
-    # For bullish, we want the highest positive scores. For bearish, the most negative scores.
-    sorted_candidates = sorted(candidate_scores, key=lambda x: x[2], reverse=is_bullish_regime)
-
-    log.info(f"Screened {len(candidate_scores)} potential plays. Top 5 scores: {[(c[0], c[2]) for c in sorted_candidates[:5]]}")
+    # 4. *** NEW LOGIC ***
+    # Sort by the ABSOLUTE value of the score. This finds the strongest signals,
+    # whether they are long (e.g., +1.5) or short (e.g., -1.5).
+    sorted_candidates = sorted(candidate_scores, key=lambda x: abs(x[2]), reverse=True)
+    log.info(f"Ranked {len(candidate_scores)} candidates. Top 5 scores: {[(c[0], c[2]) for c in sorted_candidates[:5]]}")
     
-    # 7. Return the top N candidates for the AI to analyze
+    # 5. Return the top N candidates for the AI to make the final decision.
     top_n = 5 
     final_candidates = [(ticker, reason) for ticker, reason, score in sorted_candidates[:top_n]]
     
-    log.info(f"✅ Playbook complete. Found {len(final_candidates)} final candidate(s).")
+    log.info(f"✅ Playbook complete. Forwarding {len(final_candidates)} final candidate(s) to AI Committee.")
     return final_candidates
