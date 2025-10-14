@@ -171,15 +171,17 @@ class AIAnalyzer:
         Your task is to synthesize these expert, and sometimes conflicting, reports into a single, decisive trade recommendation. Your decision is governed by the iron-clad Fund Mandate.
 
         **FUND MANDATE & DECISION HIERARCHY:**
-        1.  **Market Regime is your BIAS, not a VETO:** The `market_regime` provides your primary strategic leaning. You should favor trades that align with the trend. However, you are empowered to take a high-conviction counter-trend trade if the specific stock's technical and fundamental evidence is overwhelmingly strong (e.g., a fundamentally stellar company breaking out in a weak market).
-        2.  **Confluence Builds Conviction:** Your `scrybeScore` should reflect the degree of alignment between the specialist reports. If the technical, fundamental, and sentiment analysts all agree with the market regime, the conviction score should be very high (e.g., +/- 80). If only two align, the score should be moderate (e.g., +/- 50). A single strong verdict against the other two might still warrant a low-conviction signal (e.g., +/- 30).
-        3.  **Sentiment is a Modifier:** Use strong positive or negative sentiment to increase the magnitude of your score. A "Greed" signal on a Bullish setup could boost a score from 60 to 75. A "Fear" signal on a Bullish setup could reduce it from 60 to 45 or even veto it if the risk is too high.
+        1.  **Market Regime is KING:** Your primary goal is to trade in alignment with the `market_regime`. Counter-trend trades are forbidden unless ALL three specialist reports (Technical, Fundamental, Sentiment) show high-confidence agreement against the market regime.
+        2.  **Confluence Builds Conviction:** Your `confidence` level should reflect the degree of alignment. If technical and fundamental verdicts align with the market regime, confidence is 'High'. If only one aligns, it's 'Medium'. If sentiment also aligns, it becomes 'Very High'.
+        3.  **Sentiment is a Modifier:** Use sentiment to adjust confidence. A strong "Greed" signal on a Bullish setup boosts confidence. A "Fear" signal can downgrade confidence or veto the trade if the conflict is too severe.
 
         **CRITICAL SCORING RULE:** You MUST use the sign of the scrybeScore to indicate direction.
         - Positive (+) scores are ONLY for BUY signals.
         - Negative (-) scores are ONLY for SHORT signals.
-        - The magnitude (0-100) represents your conviction. A 'High' confidence SHORT must have a large NEGATIVE score (e.g., -70 or lower). A 'High' confidence BUY must have a large POSITIVE score (e.g., +70 or higher).
-        - Scores between -15 and +15 will be considered a HOLD.
+        - The magnitude (0-100) represents your conviction. A 'High' confidence SHORT must have a large NEGATIVE score (e.g., -70 or lower).
+        - Scores between -20 and +20 will be considered a HOLD.
+
+        Your role is to determine the qualitative direction (Signal), the conviction (Score & Confidence), and the justification (Thesis). You will NOT determine price targets, stop losses, or risk/reward ratios; the execution team will calculate those based on your high-level guidance.
 
         Synthesize the reports, weigh the evidence according to the mandate, and generate the final trade plan in the required JSON format.
         """
@@ -191,9 +193,6 @@ class AIAnalyzer:
                 "signal": {"type": "STRING", "enum": ["BUY", "SHORT", "HOLD"]},
                 "thesisType": {"type": "STRING"},
                 "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High", "Very High"]},
-                "estimated_risk_reward": {"type": "STRING"},
-                "predicted_gain_pct": {"type": "NUMBER"},
-                "gain_prediction_rationale": {"type": "STRING"},
                 "keyInsight": {"type": "STRING"},
                 "analystVerdict": {"type": "STRING"},
                 "keyRisks_and_Mitigants": {
@@ -201,7 +200,6 @@ class AIAnalyzer:
                     "properties": { "risk_1": {"type": "STRING"}, "risk_2": {"type": "STRING"}, "mitigant": {"type": "STRING"} },
                     "required": ["risk_1", "risk_2", "mitigant"]
                 },
-                "thesisInvalidationPoint": {"type": "STRING"},
                 "keyObservations": {
                     "type": "OBJECT",
                     "properties": { "confluencePoints": {"type": "ARRAY", "items": {"type": "STRING"}}, "contradictionPoints": {"type": "ARRAY", "items": {"type": "STRING"}} },
@@ -209,8 +207,8 @@ class AIAnalyzer:
                 }
             },
             "required": [
-                "scrybeScore", "signal", "thesisType", "confidence", "estimated_risk_reward", "predicted_gain_pct", "gain_prediction_rationale",
-                "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "thesisInvalidationPoint", "keyObservations"
+                "scrybeScore", "signal", "thesisType", "confidence", 
+                "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "keyObservations"
             ]
         }
         

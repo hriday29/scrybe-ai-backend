@@ -2,20 +2,23 @@
 import config
 from logger_config import log
 
-def sanitize_context(context: dict) -> dict:
-    """Sanitizes the context dictionary to replace null-like values."""
-    sanitized_context = {}
-    for layer, details in context.items():
-        if isinstance(details, dict):
-            sanitized_details = {}
-            for k, v in details.items():
-                # This check correctly handles only null values,
-                # preserving empty lists for the frontend.
-                if v is None or str(v).strip().lower() in ["unavailable", "n/a", "none", "null", "unavailable in backtest"]:
-                    sanitized_details[k] = "Data Not Available"
-                else:
-                    sanitized_details[k] = v
-            sanitized_context[layer] = sanitized_details
-        else:
-            sanitized_context[layer] = details
-    return sanitized_context
+def sanitize_context(context):
+    """
+    Recursively sanitizes a dictionary or list to replace null-like values
+    with a standard 'Data Not Available' string.
+    """
+    if isinstance(context, dict):
+        # If it's a dictionary, recurse on its values
+        return {k: sanitize_context(v) for k, v in context.items()}
+    
+    elif isinstance(context, list):
+        # If it's a list, recurse on its elements
+        return [sanitize_context(elem) for elem in context]
+        
+    elif context is None or str(context).strip().lower() in ["unavailable", "n/a", "none", "null", "unavailable in backtest"]:
+        # This is the base case: a value that needs to be replaced
+        return "Data Not Available"
+        
+    else:
+        # This is a valid primitive value (int, str, float, bool), return as is
+        return context

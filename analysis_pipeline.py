@@ -262,18 +262,18 @@ class AnalysisPipeline:
                     veto_reason = "FILTERED (BUY): Does not align with Bearish market"
                 
                 # Live fundamental check (optional but good practice)
-                elif not is_backtest:
-                    try:
-                        company_info = yf.Ticker(ticker).info
-                        roe = company_info.get('returnOnEquity')
-                        margins = company_info.get('profitMargins')
-                        if (roe is not None and roe < 0.15) or (margins is not None and margins < 0.10):
-                            veto_reason = (
-                                f"FILTERED (BUY): Weak Live Fundamentals (ROE: {roe:.2%}, "
-                                f"Margins: {margins:.2%})"
-                            )
-                    except Exception as e:
-                        log.error(f"Error during live fundamental check for {ticker}: {e}")
+                # elif not is_backtest:
+                #     try:
+                #         company_info = yf.Ticker(ticker).info
+                #         roe = company_info.get('returnOnEquity')
+                #         margins = company_info.get('profitMargins')
+                #         if (roe is not None and roe < 0.15) or (margins is not None and margins < 0.10):
+                #             veto_reason = (
+                #                 f"FILTERED (BUY): Weak Live Fundamentals (ROE: {roe:.2%}, "
+                #                 f"Margins: {margins:.2%})"
+                #             )
+                #     except Exception as e:
+                #         log.error(f"Error during live fundamental check for {ticker}: {e}")
 
                 if not veto_reason:
                     result['final_signal'] = 'BUY'

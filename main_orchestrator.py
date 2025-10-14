@@ -78,6 +78,11 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
     # --- Main Simulation Loop ---
     for i, current_day in enumerate(simulation_days):
+        # --- NEW: Daily Session Health Check ---
+        log.info(f"Performing daily session health check for Angel One...")
+        import angelone_retriever
+        angelone_retriever.initialize_angelone_session()
+        # --- END OF NEW CODE ---
         day_start = time.time()
         day_str = current_day.strftime('%Y-%m-%d')
         log.info("")
@@ -180,7 +185,40 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
     log.info("")
     log.info("=" * 80)
     log.info("--- ✅ UNIFIED SIMULATION FINISHED! Generating Final Report... ---")
-    
+
+    # --- NEW: Final Liquidation Step ---
+    log.info("--- Liquidating all open positions at the end of the backtest period... ---")
+    final_day = simulation_days[-1] if not simulation_days.empty else None
+    if final_day and portfolio['open_positions']:
+        # Important: Iterate over a copy of the list because we are modifying it
+        for position in portfolio['open_positions'][:]:
+            ticker = position['ticker']
+            close_reason = "End of Backtest Liquidation"
+            closing_price = None
+
+            try:
+                # Use the last available data cache to get the final closing price
+                if ticker in data_for_simulation and not data_for_simulation[ticker].empty:
+                    if final_day in data_for_simulation[ticker].index:
+                        closing_price = data_for_simulation[ticker].loc[final_day]['close']
+                    else:
+                        # Fallback if the stock didn't trade on the very last day
+                        closing_price = data_for_simulation[ticker]['close'].iloc[-1]
+                        log.warning(f"Ticker {ticker} had no data for final day {final_day.date()}. Using last available price: {closing_price}")
+
+                if closing_price is not None:
+                    closed_trade_doc, net_pnl = _calculate_closed_trade(position, closing_price, close_reason, final_day)
+                    log.info(f"[LIQUIDATE] Closing {ticker} ({position['signal']}) at {closing_price:.2f}. Net P&L: ₹{net_pnl:.2f}")
+                    
+                    portfolio['equity'] += net_pnl
+                    portfolio['closed_trades'].append(closed_trade_doc)
+                    portfolio['open_positions'].remove(position)
+                    database_manager.performance_collection.insert_one(closed_trade_doc)
+                else:
+                    log.error(f"[LIQUIDATE] Could not find final closing price for {ticker}.")
+            except Exception as e:
+                log.error(f"[LIQUIDATE] Error liquidating {ticker}: {e}", exc_info=True)
+
     # All reporting logic is now handled by the dedicated analyzer.
     generate_backtest_report(portfolio, batch_id)
 
