@@ -195,7 +195,7 @@ def get_strategy_candidates(market_state: dict, full_data_cache: dict, point_in_
     log.info(f"Ranked {len(candidate_scores)} candidates. Top 5 scores: {[(c[0], c[2]) for c in sorted_candidates[:5]]}")
     
     # 5. Return the top N candidates for the AI to make the final decision.
-    top_n = 5 
+    top_n = 8 
     final_candidates = [(ticker, reason) for ticker, reason, score in sorted_candidates[:top_n]]
     
     log.info(f"✅ Playbook complete. Forwarding {len(final_candidates)} final candidate(s) to AI Committee.")
