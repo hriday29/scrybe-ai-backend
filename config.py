@@ -48,11 +48,12 @@ APEX_SWING_STRATEGY = {
     "name": "AI_Analyst_v1",
     "allow_short_selling": True,
     "holding_period": 10,
-    "stop_loss_atr_multiplier": 2.5,
+    "stop_loss_atr_multiplier": 2.0,
     "profit_target_rr_multiple": 3.0,
     "min_conviction_score": 25,
     "use_trailing_stop": True,
     "trailing_stop_atr_multiplier": 1.5, 
+    "trailing_stop_activation_r": 1.0,
 }
 
 PORTFOLIO_CONSTRAINTS = {

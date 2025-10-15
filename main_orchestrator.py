@@ -219,6 +219,9 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
             except Exception as e:
                 log.error(f"[LIQUIDATE] Error liquidating {ticker}: {e}", exc_info=True)
 
+    if portfolio['daily_equity_log']:
+        portfolio['daily_equity_log'][-1]['equity'] = portfolio['equity']
+
     # All reporting logic is now handled by the dedicated analyzer.
     generate_backtest_report(portfolio, batch_id)
 
@@ -250,32 +253,43 @@ def _manage_exits_for_day(portfolio: dict, point_in_time: pd.Timestamp, data_cac
         if 'trailing_stop' not in position:
             position['trailing_stop'] = stop_loss
 
-        trailing_stop = position['trailing_stop']
-
         if use_trailing_stop:
-            try:
-                # Calculate the ATR for the current day to adjust the trail
-                atr_df = data_cache[ticker].loc[:point_in_time].copy()
-                atr_df.ta.atr(length=14, append=True)
-                current_atr = atr_df['ATRr_14'].iloc[-1]
-                trail_amount = current_atr * config.APEX_SWING_STRATEGY['trailing_stop_atr_multiplier']
+            # --- NEW: Check if trade is profitable enough to start trailing ---
+            initial_risk_per_share = abs(position['entry_price'] - position['stop_loss'])
+            activation_threshold = config.APEX_SWING_STRATEGY.get('trailing_stop_activation_r', 0) * initial_risk_per_share
+            
+            should_trail = False
+            if position['signal'] == 'BUY' and close_price > position['entry_price'] + activation_threshold:
+                should_trail = True
+            elif position['signal'] == 'SHORT' and close_price < position['entry_price'] - activation_threshold:
+                should_trail = True
+            # --- END NEW LOGIC ---
 
-                if position['signal'] == 'BUY':
-                    # Ratchet the stop up if the price moves in our favor
-                    new_trail = close_price - trail_amount
-                    if new_trail > trailing_stop:
-                        position['trailing_stop'] = new_trail
-                        trailing_stop = new_trail # Update for this loop's check
-                
-                elif position['signal'] == 'SHORT':
-                    # Ratchet the stop down if the price moves in our favor
-                    new_trail = close_price + trail_amount
-                    if new_trail < trailing_stop:
-                        position['trailing_stop'] = new_trail
-                        trailing_stop = new_trail # Update for this loop's check
-            except Exception as e:
-                log.warning(f"Could not calculate trailing stop for {ticker}: {e}")
-        # --- End of Logic ---
+            if should_trail:  # <-- Only start trailing once the trade is in profit beyond threshold
+                try:
+                    # Calculate the ATR for the current day to adjust the trail
+                    atr_df = data_cache[ticker].loc[:point_in_time].copy()
+                    atr_df.ta.atr(length=14, append=True)
+                    current_atr = atr_df['ATRr_14'].iloc[-1]
+                    trail_amount = current_atr * config.APEX_SWING_STRATEGY['trailing_stop_atr_multiplier']
+
+                    if position['signal'] == 'BUY':
+                        # Ratchet the stop up if the price moves in our favor
+                        new_trail = close_price - trail_amount
+                        if new_trail > trailing_stop:
+                            position['trailing_stop'] = new_trail
+                            trailing_stop = new_trail  # Update for this loop's check
+
+                    elif position['signal'] == 'SHORT':
+                        # Ratchet the stop down if the price moves in our favor
+                        new_trail = close_price + trail_amount
+                        if new_trail < trailing_stop:
+                            position['trailing_stop'] = new_trail
+                            trailing_stop = new_trail  # Update for this loop's check
+                except Exception as e:
+                    log.warning(f"Could not calculate trailing stop for {ticker}: {e}")
+            # --- End of Trailing Stop Logic ---
+
 
         # --- MODIFIED: Exit Priority ---
         if position['signal'] == 'BUY':
