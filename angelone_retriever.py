@@ -186,58 +186,86 @@ def _get_symbol_token(symbol: str, exchange: str = "NSE") -> str | None:
 @rate_limited
 def get_historical_data(symbol: str, from_date: datetime, to_date: datetime, interval: str = "ONE_DAY") -> pd.DataFrame | None:
     """
-    Fetches historical OHLCV data. Now correctly handles datetime objects and
-    formats them into the full timestamp string required by the Angel One API.
+    Fetches historical OHLCV data with a retry mechanism and improved
+    index symbol mapping to handle API instability.
     """
-    log.info(f"[AO] Fetching '{interval}' historical data for {symbol}...")
+    log.info(f"[AO] Fetching '{interval}' historical data for {symbol} from {from_date.date()} to {to_date.date()}...")
     if not smart_api_session and not initialize_angelone_session():
         return None
 
+    # --- Improved Index and Symbol Handling ---
     token = _get_symbol_token(symbol)
     if not token:
-        # For indices, Angel One uses names like "NIFTY 50", not tickers like "^NSEI"
-        # Let's try a lookup on the symbol name itself if it's an index.
-        if symbol.startswith('^'):
-            clean_symbol = symbol.replace('^', '').replace('CNX', '') # e.g. ^CNXIT -> IT
-            log.info(f"Retrying token lookup for index using cleaned name: {clean_symbol}")
-            token = _get_symbol_token(clean_symbol)
-            if not token and "BANK" in clean_symbol: # Handle Nifty Bank case
-                 token = _get_symbol_token("NIFTY BANK")
-
-        if not token:
-             log.warning(f"Final token lookup failed for {symbol}")
-             return None
-
-    try:
-        # Angel One API requires "YYYY-MM-DD HH:MM" format for all intervals.
-        params = {
-            "exchange": "NSE",
-            "symboltoken": token,
-            "interval": interval,
-            "fromdate": from_date.strftime('%Y-%m-%d 09:15'),
-            "todate": to_date.strftime('%Y-%m-%d 15:30')
+        # Map common yfinance index tickers to Angel One names
+        index_name_map = {
+            "^NSEI": "NIFTY 50",
+            "^NSEBANK": "NIFTY BANK",
+            "^CNXIT": "NIFTY IT",
+            "^CNXAUTO": "NIFTY AUTO",
+            "^CNXPHARMA": "NIFTY PHARMA",
+            "^CNXFMCG": "NIFTY FMCG",
+            "^CNXMETAL": "NIFTY METAL",
+            "^CNXENERGY": "NIFTY ENERGY",
+            "^CNXREALTY": "NIFTY REALTY",
+            "^CNXINFRA": "NIFTY INFRA"
         }
-
-        raw_data = smart_api_session.getCandleData(params)
-
-        if not raw_data or raw_data.get('status') is False:
-            err_msg = raw_data.get('message', 'Unknown API error')
-            log.error(f"[AO] API error for {symbol}: {err_msg}")
+        if symbol in index_name_map:
+            log.info(f"Retrying token lookup for index using mapped name: {index_name_map[symbol]}")
+            token = _get_symbol_token(index_name_map[symbol])
+        else:
+            log.warning(f"Final token lookup failed for {symbol}")
             return None
 
-        if not raw_data.get('data'):
-            log.warning(f"No historical data returned for {symbol} in the given range.")
-            return None
-
-        df = pd.DataFrame(raw_data['data'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
-        df['date'] = pd.to_datetime(df['timestamp'])
-        df.set_index('date', inplace=True)
-        log.info(f"Successfully fetched {len(df)} candles for {symbol} from Angel One.")
-        return df.drop(columns=['timestamp'])
-
-    except Exception as e:
-        log.error(f"Error in get_historical_data for {symbol}: {e}", exc_info=True)
+    if not token:
+        log.warning(f"Could not resolve token for {symbol} after all attempts.")
         return None
+
+    # --- Retry Logic Implementation ---
+    max_retries = 3
+    backoff_factor = 2  # Delay will be 2s, 4s, 8s
+
+    for attempt in range(max_retries):
+        try:
+            params = {
+                "exchange": "NSE",
+                "symboltoken": token,
+                "interval": interval,
+                "fromdate": from_date.strftime('%Y-%m-%d 09:15'),
+                "todate": to_date.strftime('%Y-%m-%d 15:30')
+            }
+            raw_data = smart_api_session.getCandleData(params)
+
+            if raw_data and raw_data.get('status') is True and raw_data.get('data'):
+                df = pd.DataFrame(raw_data['data'], columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+                df['date'] = pd.to_datetime(df['timestamp'])
+                df.set_index('date', inplace=True)
+
+                # --- Check for empty or insufficient data ---
+                if df.empty or len(df) < 2:
+                    log.warning(f"Received insufficient data for {symbol}.")
+                    return None
+
+                log.info(f"✅ Successfully fetched {len(df)} candles for {symbol} from Angel One.")
+                return df.drop(columns=['timestamp'])
+
+            # Handles cases where status is False or data is empty
+            err_msg = raw_data.get('message', 'Unknown API error')
+            log.warning(f"[AO Attempt {attempt + 1}/{max_retries}] API error for {symbol}: {err_msg}")
+
+        except Exception as e:
+            log.warning(
+                f"[AO Attempt {attempt + 1}/{max_retries}] System error for {symbol}: {e}",
+                exc_info=(attempt == max_retries - 1)  # Show full traceback only on final failure
+            )
+
+        # Wait before retrying if not last attempt
+        if attempt < max_retries - 1:
+            delay = backoff_factor ** (attempt + 1)
+            log.info(f"Waiting for {delay} seconds before retrying...")
+            time.sleep(delay)
+
+    log.error(f"❌ Angel One fetch failed for {symbol} after {max_retries} attempts. Triggering fallback.")
+    return None  # Return None to trigger the yfinance fallback in data_retriever.py
 
 @rate_limited
 def get_full_quote(symbol: str, exchange: str = "NSE", token: str = None) -> dict | None:
