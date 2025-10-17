@@ -22,7 +22,7 @@ from py_vollib_vectorized import vectorized_implied_volatility, vectorized_delta
 from smartapi_client.smartConnect import SmartConnect
 
 # --- Rate Limiting Decorator ---
-API_CALL_DELAY = 0.2  # Delay of 200ms between calls
+API_CALL_DELAY = 0.35 # Delay of 350ms between calls
 
 def rate_limited(func):
     """
