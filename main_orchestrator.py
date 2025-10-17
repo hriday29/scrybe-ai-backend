@@ -243,18 +243,16 @@ def _manage_exits_for_day(portfolio: dict, point_in_time: pd.Timestamp, data_cac
 
         close_reason, closing_price = None, None
         open_price, high_price, low_price, close_price = day_data['open'], day_data['high'], day_data['low'], day_data['close']
+        
+        # Initialize trailing_stop for this iteration
+        trailing_stop = position.get('trailing_stop', position['stop_loss'])
         stop_loss = position['stop_loss']
         target = position['target']
         
-        # --- railing Stop Logic ---
+        # --- Trailing Stop Logic ---
         use_trailing_stop = config.APEX_SWING_STRATEGY.get('use_trailing_stop', False)
         
-        # On the first day of the trade, the trailing stop is the same as the initial stop.
-        if 'trailing_stop' not in position:
-            position['trailing_stop'] = stop_loss
-
         if use_trailing_stop:
-            # --- NEW: Check if trade is profitable enough to start trailing ---
             initial_risk_per_share = abs(position['entry_price'] - position['stop_loss'])
             activation_threshold = config.APEX_SWING_STRATEGY.get('trailing_stop_activation_r', 0) * initial_risk_per_share
             
@@ -263,68 +261,50 @@ def _manage_exits_for_day(portfolio: dict, point_in_time: pd.Timestamp, data_cac
                 should_trail = True
             elif position['signal'] == 'SHORT' and close_price < position['entry_price'] - activation_threshold:
                 should_trail = True
-            # --- END NEW LOGIC ---
 
-            if should_trail:  # <-- Only start trailing once the trade is in profit beyond threshold
+            if should_trail:
                 try:
-                    # Calculate the ATR for the current day to adjust the trail
                     atr_df = data_cache[ticker].loc[:point_in_time].copy()
                     atr_df.ta.atr(length=14, append=True)
                     current_atr = atr_df['ATRr_14'].iloc[-1]
                     trail_amount = current_atr * config.APEX_SWING_STRATEGY['trailing_stop_atr_multiplier']
 
                     if position['signal'] == 'BUY':
-                        # Ratchet the stop up if the price moves in our favor
                         new_trail = close_price - trail_amount
                         if new_trail > trailing_stop:
                             position['trailing_stop'] = new_trail
-                            trailing_stop = new_trail  # Update for this loop's check
-
+                            trailing_stop = new_trail
                     elif position['signal'] == 'SHORT':
-                        # Ratchet the stop down if the price moves in our favor
                         new_trail = close_price + trail_amount
                         if new_trail < trailing_stop:
                             position['trailing_stop'] = new_trail
-                            trailing_stop = new_trail  # Update for this loop's check
+                            trailing_stop = new_trail
                 except Exception as e:
                     log.warning(f"Could not calculate trailing stop for {ticker}: {e}")
-            # --- End of Trailing Stop Logic ---
 
-
-        # --- MODIFIED: Exit Priority ---
+        # --- Exit Priority ---
         if position['signal'] == 'BUY':
-            # Priority 1: Check for gap down against initial stop-loss
             if open_price <= stop_loss:
                 close_reason, closing_price = "Stop-Loss Hit (Gap Down)", open_price
-            # Priority 2: Check against the TRAILING stop intraday
             elif low_price <= trailing_stop:
                 close_reason, closing_price = "Trailing Stop Hit", trailing_stop
-            # Priority 3: Check against the initial hard stop-loss (safety net)
             elif low_price <= stop_loss:
                 close_reason, closing_price = "Stop-Loss Hit (Intraday)", stop_loss
-            # Priority 4: Check for fixed target hit
             elif target and high_price >= target:
                 close_reason, closing_price = "Target Hit", target
-
         elif position['signal'] == 'SHORT':
-            # Priority 1: Check for gap up against initial stop-loss
             if open_price >= stop_loss:
                 close_reason, closing_price = "Stop-Loss Hit (Gap Up)", open_price
-            # Priority 2: Check against the TRAILING stop intraday
             elif high_price >= trailing_stop:
                 close_reason, closing_price = "Trailing Stop Hit", trailing_stop
-            # Priority 3: Check against the initial hard stop-loss (safety net)
             elif high_price >= stop_loss:
                 close_reason, closing_price = "Stop-Loss Hit (Intraday)", stop_loss
-            # Priority 4: Check for fixed target hit
             elif target and low_price <= target:
                 close_reason, closing_price = "Target Hit", target
 
-        # Final Priority: Time-based exit
         if not close_reason and (point_in_time - position['open_date']).days >= position['holding_period']:
             close_reason, closing_price = "Time Exit", close_price
 
-        # Process the closure if any exit condition was met
         if close_reason:
             closed_trade_doc, net_pnl = _calculate_closed_trade(position, closing_price, close_reason, point_in_time)
             log.info(f"[EXIT] Closing {ticker} ({position['signal']}) → {close_reason}. Net P&L: ₹{net_pnl:.2f}")

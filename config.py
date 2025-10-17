@@ -45,24 +45,24 @@ FLASH_MODEL = os.getenv("AZURE_FLASH_DEPLOYMENT", "gpt-35-turbo-deployment")
 
 # --- Strategy & Portfolio ---
 APEX_SWING_STRATEGY = {
-    "name": "AI_Analyst_v1",
+    "name": "AI_Analyst_Optimized_v1",
     "allow_short_selling": True,
-    "holding_period": 10,
-    "stop_loss_atr_multiplier": 2.0,
-    "profit_target_rr_multiple": 3.0,
-    "min_conviction_score": 25,
+    "holding_period": 15,                   # Increased to capture slightly longer swings.
+    "stop_loss_atr_multiplier": 1.75,       # Tighter stop to reduce risk on each trade.
+    "profit_target_rr_multiple": 2.5,       # Slightly lower R:R to increase win rate.
+    "min_conviction_score": 40,             # Increased to focus on higher quality signals from the wider funnel.
     "use_trailing_stop": True,
-    "trailing_stop_atr_multiplier": 1.5, 
-    "trailing_stop_activation_r": 1.0,
+    "trailing_stop_atr_multiplier": 1.5,
+    "trailing_stop_activation_r": 1.2,      # Activate trailing stop after 1.2R in profit.
 }
 
 PORTFOLIO_CONSTRAINTS = {
-    "max_concurrent_trades": 5
+    "max_concurrent_trades": 10              # Increased to allow more diversification.
 }
 
 BACKTEST_PORTFOLIO_CONFIG = {
     "initial_capital": 100000.0,
-    "risk_per_trade_pct": 1.0 # Risk 1% of total capital per trade
+    "risk_per_trade_pct": 1.5               # Slightly increased risk per trade, balanced by tighter stops.
 }
 
 # --- Market & Screener Config ---
