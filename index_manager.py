@@ -55,8 +55,8 @@ def get_point_in_time_nifty50_tickers(point_in_time: pd.Timestamp) -> list[str]:
         df = pd.read_csv('nifty50_historical_constituents.csv')
         df.columns = [col.strip().lower() for col in df.columns]
 
-        # Validate columns
-        required_cols = {'date', 'symbol'}
+        # --- FIX: Changed 'symbol' to 'ticker' to match your CSV file ---
+        required_cols = {'date', 'ticker'} 
         missing = required_cols - set(df.columns)
         if missing:
             raise ValueError(f"Missing columns in CSV: {', '.join(missing)}")
@@ -71,7 +71,9 @@ def get_point_in_time_nifty50_tickers(point_in_time: pd.Timestamp) -> list[str]:
         latest_snapshot_date = historical_df['date'].max()
         point_in_time_df = historical_df.loc[historical_df['date'] == latest_snapshot_date]
 
-        tickers = [s if s.endswith('.NS') else f"{s}.NS" for s in point_in_time_df['symbol']]
+        # --- FIX: Changed 'symbol' to 'ticker' here as well ---
+        tickers = [s if s.endswith('.NS') else f"{s}.NS" for s in point_in_time_df['ticker']]
+        
         log.info(f"Loaded {len(tickers)} Nifty 50 symbols for {point_in_time.date()} (snapshot: {latest_snapshot_date.date()}).")
         return tickers
 
@@ -80,11 +82,4 @@ def get_point_in_time_nifty50_tickers(point_in_time: pd.Timestamp) -> list[str]:
         return config.NIFTY_50_TICKERS
     except Exception as e:
         log.error(f"Error loading historical Nifty 50 list: {e}. Using fallback list.")
-        return config.NIFTY_50_TICKERS
-        
-    except FileNotFoundError:
-        log.error("CRITICAL: nifty50_historical_constituents.csv not found. Backtest will be inaccurate. Using fallback.")
-        return config.NIFTY_50_TICKERS
-    except Exception as e:
-        log.error(f"Error getting point-in-time tickers: {e}. Using fallback.")
         return config.NIFTY_50_TICKERS
