@@ -40,8 +40,8 @@ if not EMAIL_RECIPIENTS:
 # --- Models (MODIFIED FOR AZURE) ---
 # These now refer to your DEPLOYMENT NAMES in Azure AI Studio.
 # Please set them in your .env file.
-PRO_MODEL = os.getenv("AZURE_PRO_DEPLOYMENT", "gpt-4o-deployment")
-FLASH_MODEL = os.getenv("AZURE_FLASH_DEPLOYMENT", "gpt-35-turbo-deployment")
+PRO_MODEL = os.getenv("AZURE_PRO_DEPLOYMENT", "gpt-4.1")
+FLASH_MODEL = os.getenv("AZURE_FLASH_DEPLOYMENT", "gpt-4.1")
 
 # --- Strategy & Portfolio ---
 APEX_SWING_STRATEGY = {
