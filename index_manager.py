@@ -48,42 +48,38 @@ def get_nifty50_tickers():
     
 def get_point_in_time_nifty50_tickers(point_in_time: pd.Timestamp) -> list[str]:
     """
-    Fetches the Nifty 50 constituents for a specific point in time to avoid survivorship bias in backtesting.
-
-    Args:
-        point_in_time (pd.Timestamp): The date for which to get the constituents.
-
-    Returns:
-        list[str]: A list of ticker symbols for that date.
+    Returns Nifty 50 constituents valid at a given historical date.
+    Handles inconsistent CSV columns and ensures fallback reliability.
     """
     try:
-        # Load the historical data
         df = pd.read_csv('nifty50_historical_constituents.csv')
-        
-        # Ensure the 'Date' column is in datetime format
-        df['Date'] = pd.to_datetime(df['Date'])
-        
-        # Filter for all historical lists on or before the point_in_time
-        historical_df = df[df['Date'] <= point_in_time].copy()
-        
+        df.columns = [col.strip().lower() for col in df.columns]
+
+        # --- FIX: Changed 'symbol' to 'ticker' to match your CSV file ---
+        required_cols = {'date', 'ticker'} 
+        missing = required_cols - set(df.columns)
+        if missing:
+            raise ValueError(f"Missing columns in CSV: {', '.join(missing)}")
+
+        df['date'] = pd.to_datetime(df['date'])
+        historical_df = df.loc[df['date'] <= point_in_time]
+
         if historical_df.empty:
-            log.warning(f"No historical Nifty 50 data found on or before {point_in_time.date()}. Using fallback.")
+            log.warning(f"No historical Nifty 50 data on/before {point_in_time.date()}. Using fallback list.")
             return config.NIFTY_50_TICKERS
 
-        # Find the most recent snapshot date from the filtered data
-        latest_snapshot_date = historical_df['Date'].max()
+        latest_snapshot_date = historical_df['date'].max()
+        point_in_time_df = historical_df.loc[historical_df['date'] == latest_snapshot_date]
+
+        # --- FIX: Changed 'symbol' to 'ticker' here as well ---
+        tickers = [s if s.endswith('.NS') else f"{s}.NS" for s in point_in_time_df['ticker']]
         
-        # Get the final list of tickers from that specific snapshot date
-        point_in_time_df = historical_df[historical_df['Date'] == latest_snapshot_date]
-        
-        tickers = (point_in_time_df['Symbol'] + '.NS').tolist()
-        
-        log.info(f"Loaded {len(tickers)} historical Nifty 50 constituents for backtest date {point_in_time.date()} (using list from {latest_snapshot_date.date()}).")
+        log.info(f"Loaded {len(tickers)} Nifty 50 symbols for {point_in_time.date()} (snapshot: {latest_snapshot_date.date()}).")
         return tickers
-        
+
     except FileNotFoundError:
-        log.error("CRITICAL: nifty50_historical_constituents.csv not found. Backtest will be inaccurate. Using fallback.")
+        log.error("CRITICAL: nifty50_historical_constituents.csv not found — using fallback list.")
         return config.NIFTY_50_TICKERS
     except Exception as e:
-        log.error(f"Error getting point-in-time tickers: {e}. Using fallback.")
+        log.error(f"Error loading historical Nifty 50 list: {e}. Using fallback list.")
         return config.NIFTY_50_TICKERS
