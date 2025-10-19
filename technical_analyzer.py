@@ -11,14 +11,7 @@ import pandas_ta as ta
 import angelone_retriever
 
 def get_all_technicals(data: pd.DataFrame) -> dict:
-    """
-    Calculates a comprehensive set of technical indicators, including
-    volatility proxies (ATR%, BBW%) and volume analysis.
-    Adds detailed logging for step-by-step diagnostic tracking.
-    """
     log.info("Calculating comprehensive technical indicators...")
-
-    # --- Basic validation ---
     if data is None or len(data) < 50:
         return {"error": "Insufficient historical data (initial < 50)."}
 
@@ -30,6 +23,7 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
     initial_nans = data.isnull().sum().sum()
     if initial_nans > 0:
         log.warning(f"Input data has {initial_nans} NaN values BEFORE indicator calculation. Head:\n{data.head()}")
+    # ---
 
     technicals = {}
 
@@ -38,7 +32,7 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
         return {"error": "Input data missing valid 'close' column."}
 
     try:
-        # --- Step-by-step indicator calculations with logging ---
+        # --- Step-by-step indicator calculation with logging ---
         log.info("Calculating MACD...")
         data.ta.macd(append=True)
         log.info(f"NaNs after MACD: {data.isnull().sum().sum()}")
@@ -47,9 +41,9 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
         data.ta.bbands(length=20, std=2, append=True)
         log.info(f"NaNs after BBands: {data.isnull().sum().sum()}")
 
-        log.info("Calculating Supertrend...")
-        data.ta.supertrend(append=True)
-        log.info(f"NaNs after Supertrend: {data.isnull().sum().sum()}")
+        # log.info("Calculating Supertrend...")  # COMMENTED OUT TEMPORARILY
+        # data.ta.supertrend(append=True)
+        # log.info(f"NaNs after Supertrend: {data.isnull().sum().sum()}")
 
         log.info("Calculating RSI...")
         data.ta.rsi(length=14, append=True)
@@ -63,83 +57,81 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
         data.ta.atr(length=14, append=True)
         log.info(f"NaNs after ATR: {data.isnull().sum().sum()}")
 
-        log.info("Calculating 20-day Volume Average...")
+        log.info("Calculating Volume 20-day Average...")
         data['volume_20d_avg'] = data['volume'].rolling(window=20).mean()
         log.info(f"NaNs after Volume Avg: {data.isnull().sum().sum()}")
         # --- End step-by-step ---
+
     except Exception as e:
         log.error(f"Error during indicator calculation: {e}", exc_info=True)
         return {"error": f"Indicator calculation failed: {e}"}
 
-    # --- Log pre-dropna stats ---
     length_before_dropna = len(data)
     nan_rows_before = data.isnull().any(axis=1).sum()
     log.info(f"Length before dropna: {length_before_dropna}, Rows with NaNs: {nan_rows_before}")
 
-    # Optional: inspect rows with NaNs if needed
-    # if nan_rows_before > 0:
-    #     log.debug(f"Rows with NaNs before dropna:\n{data[data.isnull().any(axis=1)]}")
-
-    # --- Clean data ---
-    data.dropna(inplace=True)
+    # Commented out dropna for debugging and NaN handling
+    # data.dropna(inplace=True)  # <--- SKIPPED for now
 
     length_after_dropna = len(data)
-    log.info(f"Length after dropna: {length_after_dropna}")
+    log.info(f"Length after (SKIPPED) dropna: {length_after_dropna}")
 
     if data.empty:
-        error_msg = (
-            f"Data became empty after calculating indicators and dropping NaNs. "
-            f"Initial length: {initial_length}, NaNs before drop: {nan_rows_before}."
-        )
+        error_msg = f"Data became empty unexpectedly. Initial length: {initial_length}."
         log.error(error_msg)
         return {"error": error_msg}
 
-    # --- Build the technical dictionary (unchanged logic from your version) ---
+    # --- Safely extract latest & previous row ---
     latest_row = data.iloc[-1]
     previous_row = data.iloc[-2] if len(data) > 1 else latest_row
 
+    # --- Build NaN-safe technicals dictionary ---
     technicals["daily_close"] = latest_row.get("close", None)
 
-    # RSI & ADX
-    if "RSI_14" in latest_row:
+    # RSI
+    if pd.notna(latest_row.get("RSI_14")):
         technicals["RSI_14"] = f"{latest_row['RSI_14']:.2f}"
-    if "ADX_14" in latest_row:
-        technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
+    else:
+        technicals["RSI_14"] = "N/A"
 
-    # Volatility Proxies
-    if "ATRr_14" in latest_row and latest_row['close'] > 0:
+    # ADX
+    if pd.notna(latest_row.get("ADX_14")):
+        technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
+    else:
+        technicals["ADX_14_trend_strength"] = "N/A"
+
+    # ATR (as percentage)
+    if pd.notna(latest_row.get("ATRr_14")) and latest_row.get("close", 0) > 0:
         technicals["ATR_14_percent"] = f"{latest_row['ATRr_14']:.2f}%"
     else:
         technicals["ATR_14_percent"] = "N/A"
 
-    if all(k in latest_row for k in ["BBU_20_2.0", "BBL_20_2.0", "BBM_20_2.0"]) and latest_row['BBM_20_2.0'] > 0:
-        band_width_pct = (
-            (latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0'])
-            / latest_row['BBM_20_2.0']
-        ) * 100
+    # Bollinger Bands
+    bb_upper = latest_row.get("BBU_20_2.0")
+    bb_lower = latest_row.get("BBL_20_2.0")
+    bb_middle = latest_row.get("BBM_20_2.0")
+    if pd.notna(bb_upper) and pd.notna(bb_lower) and pd.notna(bb_middle) and bb_middle > 0:
+        band_width_pct = ((bb_upper - bb_lower) / bb_middle) * 100
         technicals["Bollinger_Band_Width_Percent"] = f"{band_width_pct:.2f}%"
         technicals["bollinger_bands_interpretation"] = {
-            "price_position": (
-                "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0']
-                else "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0']
-                else "Inside Bands"
-            ),
-            "volatility_state": (
-                "Squeeze (<5%)" if band_width_pct < 5.0
-                else "Expansion (>15%)" if band_width_pct > 15
-                else "Normal"
-            )
+            "price_position": "Above Upper Band" if latest_row['close'] > bb_upper else
+                              "Below Lower Band" if latest_row['close'] < bb_lower else
+                              "Inside Bands",
+            "volatility_state": "Squeeze (<5%)" if band_width_pct < 5.0 else
+                                ("Expansion (>15%)" if band_width_pct > 15 else "Normal")
         }
     else:
         technicals["Bollinger_Band_Width_Percent"] = "N/A"
         technicals["bollinger_bands_interpretation"] = {}
 
     # Volume Analysis
-    if "volume" in latest_row and "volume_20d_avg" in latest_row and latest_row['volume_20d_avg'] > 0:
-        surge_ratio = latest_row['volume'] / latest_row['volume_20d_avg']
+    vol_latest = latest_row.get("volume")
+    vol_avg = latest_row.get("volume_20d_avg")
+    if pd.notna(vol_latest) and pd.notna(vol_avg) and vol_avg > 0:
+        surge_ratio = vol_latest / vol_avg
         technicals["volume_analysis"] = {
-            "latest_volume": f"{latest_row['volume']:,.0f}",
-            "20d_avg_volume": f"{latest_row['volume_20d_avg']:,.0f}",
+            "latest_volume": f"{vol_latest:,.0f}",
+            "20d_avg_volume": f"{vol_avg:,.0f}",
             "surge_factor": f"{surge_ratio:.2f}x",
             "interpretation": "Significant Surge (>1.8x)" if surge_ratio > 1.8 else "Normal"
         }
@@ -147,13 +139,13 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
         technicals["volume_analysis"] = {"interpretation": "N/A"}
 
     # MACD Interpretation
-    if all(k in latest_row for k in ["MACD_12_26_9", "MACDs_12_26_9", "MACDh_12_26_9"]):
-        macd_val = latest_row['MACD_12_26_9']
-        signal_val = latest_row['MACDs_12_26_9']
-        hist_val = latest_row['MACDh_12_26_9']
-        prev_hist_val = previous_row['MACDh_12_26_9']
-        status = "Neutral"
+    macd_val = latest_row.get("MACD_12_26_9")
+    signal_val = latest_row.get("MACDs_12_26_9")
+    hist_val = latest_row.get("MACDh_12_26_9")
+    prev_hist_val = previous_row.get("MACDh_12_26_9")
 
+    if pd.notna(macd_val) and pd.notna(signal_val) and pd.notna(hist_val) and pd.notna(prev_hist_val):
+        status = "Neutral"
         if macd_val > signal_val:
             status = "Bullish Crossover"
             if hist_val > prev_hist_val:
@@ -176,16 +168,10 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
     else:
         technicals["MACD_status"] = {"interpretation": "N/A"}
 
-    # Supertrend
-    if all(k in latest_row for k in ["SUPERT_7_3.0", "SUPERTd_7_3.0"]):
-        technicals["supertrend_7_3"] = {
-            "trend": "Uptrend" if latest_row['SUPERTd_7_3.0'] == 1 else "Downtrend",
-            "value": f"{latest_row['SUPERT_7_3.0']:.2f}"
-        }
-    else:
-        technicals["supertrend_7_3"] = {"trend": "N/A"}
+    # Supertrend placeholder (commented out)
+    technicals["supertrend_7_3"] = {"trend": "N/A"}
 
-    log.info("Successfully calculated technical indicators.")
+    log.info("Successfully extracted latest technical indicators (NaNs handled).")
     return technicals
 
 def get_relative_strength(stock_data: pd.DataFrame, full_nifty_data: pd.DataFrame) -> str:
