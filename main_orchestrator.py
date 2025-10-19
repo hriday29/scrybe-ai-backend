@@ -103,117 +103,211 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
             # --- CORRECTED: Define Required Assets using Static Universe ---
             # ======================================================================
             # The 'backtest_universe' variable was fetched *before* the loop started.
-            # We directly use it here for every day of the simulation.
+            # We'll download essential indices separately, then download stocks excluding those indices.
+            essential_indices = list(set(list(CORE_SECTOR_INDICES.values()) + [BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())))  # [UPDATED]
+            log.info(f"Attempting separate download for {len(essential_indices)} essential indices...")
 
-            # Define required index and benchmark tickers
-            required_indices = list(CORE_SECTOR_INDICES.values()) + [BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())
+            # --- NEW: Rate Limiting Parameters for yfinance ---
+            YFINANCE_RETRY_ATTEMPTS = 3
+            YFINANCE_RETRY_DELAY_SECONDS = 30
+            YFINANCE_INTER_CALL_DELAY_SECONDS = 5
+            # --- End Rate Limiting Parameters ---
 
-            # Combine the static universe and indices uniquely
-            all_assets_for_today = list(set(backtest_universe + required_indices))
-            log.info(f"[DATA] Preparing to load data for {len(all_assets_for_today)} assets "
-                    f"using the static universe for {day_str}...")
-            # ======================================================================
+            # Prepare container dicts for index data
+            index_data_analysis = {}
+            index_data_simulation = {}
 
-            # ======================================================================
-            # --- MODIFIED: Bulk Data Loading ---
-            # ======================================================================
+            # Prepare date strings used in downloads
             decision_date = current_day - pd.Timedelta(days=1)
             decision_date_str = decision_date.strftime('%Y-%m-%d')
             simulation_date_str = current_day.strftime('%Y-%m-%d')
 
-            data_load_start = time.time()
-            bulk_data_for_analysis = None
-            bulk_data_for_simulation = None
-
-            # --- NEW: Rate Limiting Parameters for yfinance ---
-            YFINANCE_RETRY_ATTEMPTS = 3
-            YFINANCE_RETRY_DELAY_SECONDS = 10 # Start with 10 seconds, increase if needed
-            YFINANCE_INTER_CALL_DELAY_SECONDS = 2 # Pause between the two major calls
-            # --- End Rate Limiting Parameters ---
-
+            # --- NEW: Separate Index Downloads (Analysis: 5y up to decision_date, Simulation: 6mo up to simulation_date) ---
             try:
-                # --- Download for Analysis with Retry ---
+                index_analysis_raw = None
+                index_sim_raw = None
+
+                # Attempt analysis-length download for indices
                 for attempt in range(YFINANCE_RETRY_ATTEMPTS):
                     try:
-                        log.info(f"Attempting bulk download for ANALYSIS (up to {decision_date_str}), Attempt {attempt+1}/{YFINANCE_RETRY_ATTEMPTS}...")
-                        bulk_data_for_analysis_raw = yf.download(
-                            tickers=all_assets_for_today,
+                        index_analysis_raw = yf.download(
+                            tickers=essential_indices,
                             end=simulation_date_str,
                             period="5y",
                             progress=False,
                             ignore_tz=True
                         )
-                        if not bulk_data_for_analysis_raw.empty:
-                            bulk_data_for_analysis = bulk_data_for_analysis_raw.loc[:decision_date_str]
-                            log.info("Analysis data download successful.")
-                            break # Exit retry loop on success
+                        if index_analysis_raw is not None and not index_analysis_raw.empty:
+                            log.info("Index analysis download successful.")
+                            break
                         else:
-                            log.warning(f"Attempt {attempt+1}: Bulk download for analysis returned empty.")
-                            # Decide if empty is an error or just no data for the period
+                            log.warning(f"Index analysis attempt {attempt+1} returned empty.")
                             if attempt == YFINANCE_RETRY_ATTEMPTS - 1:
-                                    raise ValueError("Analysis download returned empty after all retries.")
-
-                    except Exception as yf_e:
-                        log.warning(f"Attempt {attempt+1} failed for analysis download: {yf_e}")
+                                raise ValueError("Index analysis download empty after retries.")
+                    except Exception as idx_an_e:
+                        log.warning(f"Index analysis download attempt {attempt+1} failed: {idx_an_e}")
                         if attempt < YFINANCE_RETRY_ATTEMPTS - 1:
-                            log.info(f"Waiting {YFINANCE_RETRY_DELAY_SECONDS}s before retrying...")
-                            time.sleep(YFINANCE_RETRY_DELAY_SECONDS)
+                            time.sleep(YFINANCE_RETRY_DELAY_SECONDS / 2)
                         else:
-                            log.error("Analysis download failed after all retries.")
-                            raise # Re-raise the exception to trigger outer catch block
+                            raise
 
-                # --- Add Delay Between Calls ---
-                log.info(f"Pausing for {YFINANCE_INTER_CALL_DELAY_SECONDS}s before next bulk download...")
-                time.sleep(YFINANCE_INTER_CALL_DELAY_SECONDS)
-                # --- End Delay ---
+                time.sleep(YFINANCE_INTER_CALL_DELAY_SECONDS / 2)
 
-                # --- Download for Simulation with Retry ---
+                # Attempt simulation-length download for indices
                 for attempt in range(YFINANCE_RETRY_ATTEMPTS):
                     try:
-                        log.info(f"Attempting bulk download for SIMULATION (up to {simulation_date_str}), Attempt {attempt+1}/{YFINANCE_RETRY_ATTEMPTS}...")
-                        bulk_data_for_simulation_raw = yf.download(
-                            tickers=all_assets_for_today,
+                        index_sim_raw = yf.download(
+                            tickers=essential_indices,
                             end=simulation_date_str,
                             period="6mo",
                             progress=False,
                             ignore_tz=True
                         )
-                        if not bulk_data_for_simulation_raw.empty:
-                            bulk_data_for_simulation = bulk_data_for_simulation_raw
-                            log.info("Simulation data download successful.")
-                            break # Exit retry loop on success
+                        if index_sim_raw is not None and not index_sim_raw.empty:
+                            log.info("Index simulation download successful.")
+                            break
                         else:
-                            log.warning(f"Attempt {attempt+1}: Bulk download for simulation returned empty.")
+                            log.warning(f"Index simulation attempt {attempt+1} returned empty.")
                             if attempt == YFINANCE_RETRY_ATTEMPTS - 1:
-                                raise ValueError("Simulation download returned empty after all retries.")
-
-                    except Exception as yf_e:
-                        log.warning(f"Attempt {attempt+1} failed for simulation download: {yf_e}")
+                                raise ValueError("Index simulation download empty after retries.")
+                    except Exception as idx_sim_e:
+                        log.warning(f"Index simulation download attempt {attempt+1} failed: {idx_sim_e}")
                         if attempt < YFINANCE_RETRY_ATTEMPTS - 1:
-                            log.info(f"Waiting {YFINANCE_RETRY_DELAY_SECONDS}s before retrying...")
+                            time.sleep(YFINANCE_RETRY_DELAY_SECONDS / 2)
+                        else:
+                            raise
+
+                # Process downloaded index data into dict format
+                if index_analysis_raw is not None and not index_analysis_raw.empty:
+                    index_analysis_data = index_analysis_raw.loc[:decision_date_str]
+                    for ticker in essential_indices:
+                        try:
+                            df = index_analysis_data.xs(ticker, level=1, axis=1).dropna(how='all')
+                            df.rename(columns={
+                                'Open': 'open', 'High': 'high', 'Low': 'low',
+                                'Close': 'close', 'Adj Close': 'adj_close', 'Volume': 'volume'
+                            }, inplace=True)
+                            if not df.empty:
+                                index_data_analysis[ticker] = df[['open', 'high', 'low', 'close', 'volume']]
+                        except KeyError:
+                            # Index may not have been returned for this ticker
+                            pass
+                        except Exception as ex_proc:
+                            log.warning(f"Error processing index analysis data for {ticker}: {ex_proc}")
+
+                if index_sim_raw is not None and not index_sim_raw.empty:
+                    for ticker in essential_indices:
+                        try:
+                            df = index_sim_raw.xs(ticker, level=1, axis=1).dropna(how='all')
+                            df.rename(columns={
+                                'Open': 'open', 'High': 'high', 'Low': 'low',
+                                'Close': 'close', 'Adj Close': 'adj_close', 'Volume': 'volume'
+                            }, inplace=True)
+                            if not df.empty:
+                                index_data_simulation[ticker] = df[['open', 'high', 'low', 'close', 'volume']]
+                        except KeyError:
+                            pass
+                        except Exception as ex_proc:
+                            log.warning(f"Error processing index simulation data for {ticker}: {ex_proc}")
+
+                log.info(f"Indices downloaded. Analysis: {len(index_data_analysis)}, Simulation: {len(index_data_simulation)}")
+
+            except Exception as idx_e:
+                log.error(f"Failed to download essential indices separately after retries: {idx_e}. Market context may be incomplete.")
+                # Continue without index data; downstream code should handle missing keys gracefully
+
+            # --- Now define assets for the main STOCK bulk download ---
+            # Exclude indices we already downloaded to avoid downloading them again
+            stock_assets_for_today = [t for t in backtest_universe if t not in essential_indices]
+            log.info(f"[DATA] Preparing to load data for {len(stock_assets_for_today)} stock assets for {day_str}...")
+
+            # ======================================================================
+            # --- MODIFIED: Bulk Data Loading (Now for STOCKS ONLY) ---
+            # ======================================================================
+            data_load_start = time.time()
+            bulk_stock_data_for_analysis = None
+            bulk_stock_data_for_simulation = None
+
+            try:
+                # --- Download for Analysis (Stocks Only) with Retry ---
+                for attempt in range(YFINANCE_RETRY_ATTEMPTS):
+                    try:
+                        log.info(f"Attempting STOCKS bulk download for ANALYSIS, Attempt {attempt+1}/{YFINANCE_RETRY_ATTEMPTS}...")
+                        bulk_stock_data_analysis_raw = yf.download(
+                            tickers=stock_assets_for_today,
+                            end=simulation_date_str,
+                            period="5y",
+                            progress=False,
+                            ignore_tz=True
+                        )
+                        if bulk_stock_data_analysis_raw is not None and not bulk_stock_data_analysis_raw.empty:
+                            bulk_stock_data_for_analysis = bulk_stock_data_analysis_raw.loc[:decision_date_str]
+                            log.info("Stock analysis data download successful.")
+                            break
+                        else:
+                            log.warning(f"Attempt {attempt+1}: Stock analysis download returned empty.")
+                            if attempt == YFINANCE_RETRY_ATTEMPTS - 1:
+                                raise ValueError("Stock analysis download empty.")
+                    except Exception as yf_e:
+                        log.warning(f"Attempt {attempt+1} failed for stock analysis download: {yf_e}")
+                        if attempt < YFINANCE_RETRY_ATTEMPTS - 1:
                             time.sleep(YFINANCE_RETRY_DELAY_SECONDS)
                         else:
-                            log.error("Simulation download failed after all retries.")
-                            raise # Re-raise the exception
+                            log.error("Stock analysis download failed.")
+                            raise
 
-                # Check if downloads ultimately failed
-                if bulk_data_for_analysis is None or bulk_data_for_simulation is None:
-                    raise ValueError("One or both bulk data downloads failed after retries.")
+                log.info(f"Pausing for {YFINANCE_INTER_CALL_DELAY_SECONDS}s...")
+                time.sleep(YFINANCE_INTER_CALL_DELAY_SECONDS)
 
-                log.info(f"[DATA] Bulk data loading completed in {time.time()-data_load_start:.2f}s")
-
-            except Exception as dl_e: # Catch errors from retries or initial failures
-                log.error(f"[DATA ERROR] Bulk data download ultimately failed for {day_str}: {dl_e}. Skipping day.")
-                continue # Skip to the next day
-
-            # ======================================================================
-            # --- Convert Multi-Index Data to Dict Format ---
-            # ======================================================================
-            data_for_analysis = {}
-            if bulk_data_for_analysis is not None:
-                for ticker in all_assets_for_today:
+                # --- Download for Simulation (Stocks Only) with Retry ---
+                for attempt in range(YFINANCE_RETRY_ATTEMPTS):
                     try:
-                        df = bulk_data_for_analysis.xs(ticker, level=1, axis=1).dropna(how='all')
+                        log.info(f"Attempting STOCKS bulk download for SIMULATION, Attempt {attempt+1}/{YFINANCE_RETRY_ATTEMPTS}...")
+                        bulk_stock_data_simulation_raw = yf.download(
+                            tickers=stock_assets_for_today,
+                            end=simulation_date_str,
+                            period="6mo",
+                            progress=False,
+                            ignore_tz=True
+                        )
+                        if bulk_stock_data_simulation_raw is not None and not bulk_stock_data_simulation_raw.empty:
+                            bulk_stock_data_for_simulation = bulk_stock_data_simulation_raw
+                            log.info("Stock simulation data download successful.")
+                            break
+                        else:
+                            log.warning(f"Attempt {attempt+1}: Stock simulation download returned empty.")
+                            if attempt == YFINANCE_RETRY_ATTEMPTS - 1:
+                                raise ValueError("Stock simulation download empty.")
+                    except Exception as yf_e:
+                        log.warning(f"Attempt {attempt+1} failed for stock simulation download: {yf_e}")
+                        if attempt < YFINANCE_RETRY_ATTEMPTS - 1:
+                            time.sleep(YFINANCE_RETRY_DELAY_SECONDS)
+                        else:
+                            log.error("Stock simulation download failed.")
+                            raise
+
+                # Check final status
+                if bulk_stock_data_for_analysis is None or bulk_stock_data_for_simulation is None:
+                    raise ValueError("One or both stock bulk data downloads failed after retries.")
+
+                log.info(f"[DATA] Stock bulk data loading completed in {time.time()-data_load_start:.2f}s")
+
+            except Exception as dl_e:
+                log.error(f"[DATA ERROR] Stock bulk data download ultimately failed for {day_str}: {dl_e}. Skipping day.")
+                continue  # Skip to the next day
+
+            # ======================================================================
+            # --- Convert Multi-Index Data & COMBINE with Index Data ---
+            # ======================================================================
+            # Start with the index data we fetched separately
+            data_for_analysis = index_data_analysis.copy()
+            data_for_simulation = index_data_simulation.copy()
+
+            # Process and add stock data for analysis
+            if bulk_stock_data_for_analysis is not None:
+                for ticker in stock_assets_for_today:  # Iterate stocks only
+                    try:
+                        df = bulk_stock_data_for_analysis.xs(ticker, level=1, axis=1).dropna(how='all')
                         df.rename(columns={
                             'Open': 'open', 'High': 'high', 'Low': 'low',
                             'Close': 'close', 'Adj Close': 'adj_close', 'Volume': 'volume'
@@ -221,15 +315,15 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                         if not df.empty:
                             data_for_analysis[ticker] = df[['open', 'high', 'low', 'close', 'volume']]
                     except KeyError:
-                        log.debug(f"No analysis data found for {ticker} in bulk download for {decision_date_str}.")
+                        log.debug(f"No analysis data found for {ticker} in stock bulk download for {decision_date_str}.")
                     except Exception as ex:
-                        log.warning(f"Error processing analysis data for {ticker}: {ex}")
+                        log.warning(f"Error processing stock analysis data for {ticker}: {ex}")
 
-            data_for_simulation = {}
-            if bulk_data_for_simulation is not None:
-                for ticker in all_assets_for_today:
+            # Process and add stock data for simulation
+            if bulk_stock_data_for_simulation is not None:
+                for ticker in stock_assets_for_today:  # Iterate stocks only
                     try:
-                        df = bulk_data_for_simulation.xs(ticker, level=1, axis=1).dropna(how='all')
+                        df = bulk_stock_data_for_simulation.xs(ticker, level=1, axis=1).dropna(how='all')
                         df.rename(columns={
                             'Open': 'open', 'High': 'high', 'Low': 'low',
                             'Close': 'close', 'Adj Close': 'adj_close', 'Volume': 'volume'
@@ -237,12 +331,13 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                         if not df.empty:
                             data_for_simulation[ticker] = df[['open', 'high', 'low', 'close', 'volume']]
                     except KeyError:
-                        log.debug(f"No simulation data found for {ticker} in bulk download for {simulation_date_str}.")
+                        log.debug(f"No simulation data found for {ticker} in stock bulk download for {simulation_date_str}.")
                     except Exception as ex:
-                        log.warning(f"Error processing simulation data for {ticker}: {ex}")
+                        log.warning(f"Error processing stock simulation data for {ticker}: {ex}")
 
-            log.info(f"[DATA] Processed bulk data into caches. "
-                    f"Analysis: {len(data_for_analysis)} assets, Simulation: {len(data_for_simulation)} assets.")
+            # Now data_for_analysis and data_for_simulation contain BOTH index and stock data
+            log.info(f"[DATA] Combined data caches created. "
+                     f"Analysis: {len(data_for_analysis)} assets, Simulation: {len(data_for_simulation)} assets.")
             # ======================================================================
 
             # --- Manage Exits ---
@@ -324,7 +419,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                 if closing_price is not None:
                     closed_trade_doc, net_pnl = _calculate_closed_trade(position, closing_price, close_reason, final_day)
                     log.info(f"[LIQUIDATE] Closing {ticker} ({position['signal']}) at {closing_price:.2f}. Net P&L: ₹{net_pnl:.2f}")
-                    
+
                     portfolio['equity'] += net_pnl
                     portfolio['closed_trades'].append(closed_trade_doc)
                     portfolio['open_positions'].remove(position)
