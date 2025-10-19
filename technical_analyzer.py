@@ -16,64 +16,94 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
     volatility proxies (ATR%, BBW%) and volume analysis.
     """
     log.info("Calculating comprehensive technical indicators...")
-    if data is None or len(data) < 50: # Need enough data for rolling calcs
+
+    # --- Initial data validation ---
+    if data is None or len(data) < 50:  # Need enough data for rolling calcs
+        log.warning("Insufficient historical data for technical analysis.")
         return {"error": "Insufficient historical data for technical analysis."}
 
     data = data.copy()
-    technicals = {} # Initialize empty dict
+    initial_length = len(data)
+    log.info(f"Initial data length: {initial_length}")
 
-    # --- Calculate all indicators using pandas_ta ---
-    # Ensure 'close' column exists and is numeric
+    technicals = {}  # Initialize empty dict
+
+    # --- Column checks ---
     if 'close' not in data.columns or not pd.api.types.is_numeric_dtype(data['close']):
-         log.error("Input data missing valid 'close' column.")
-         return {"error": "Input data missing valid 'close' column."}
+        log.error("Input data missing valid 'close' column.")
+        return {"error": "Input data missing valid 'close' column."}
 
+    # --- Indicator calculations ---
+    log.info("Computing MACD, Bollinger Bands, Supertrend, RSI, ADX, ATR, and Volume averages...")
     data.ta.macd(append=True)
-    data.ta.bbands(length=20, std=2, append=True) # Standard BBands
+    data.ta.bbands(length=20, std=2, append=True)
     data.ta.supertrend(append=True)
     data.ta.rsi(length=14, append=True)
     data.ta.adx(length=14, append=True)
-    data.ta.atr(length=14, append=True) # Calculate standard ATR first
+    data.ta.atr(length=14, append=True)
     data['volume_20d_avg'] = data['volume'].rolling(window=20).mean()
 
-    # Drop rows with NaNs created by indicators
+    # --- Log pre-cleanup metrics ---
+    length_before_dropna = len(data)
+    nan_rows_before = data.isnull().any(axis=1).sum()
+    log.info(f"Length before dropna: {length_before_dropna}, Rows with NaNs: {nan_rows_before}")
+
+    # --- Drop rows with NaNs created by indicators ---
     data.dropna(inplace=True)
 
-    if data.empty:
-        return {"error": "Data became empty after calculating indicators and dropping NaNs."}
+    length_after_dropna = len(data)
+    log.info(f"Length after dropna: {length_after_dropna}")
 
+    if data.empty:
+        error_msg = (
+            f"Data became empty after calculating indicators and dropping NaNs. "
+            f"Initial length: {initial_length}, Length before dropna: {length_before_dropna}."
+        )
+        log.error(error_msg)
+        return {"error": error_msg}
+
+    # --- Fetch latest and previous rows for signal comparison ---
     latest_row = data.iloc[-1]
-    previous_row = data.iloc[-2] if len(data) > 1 else latest_row # For histogram comparison
+    previous_row = data.iloc[-2] if len(data) > 1 else latest_row
 
     # --- Build the technicals dictionary ---
     technicals["daily_close"] = latest_row.get("close", None)
 
-    # Standard Indicators
-    if "RSI_14" in latest_row: technicals["RSI_14"] = f"{latest_row['RSI_14']:.2f}"
-    if "ADX_14" in latest_row: technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
+    # RSI & ADX
+    if "RSI_14" in latest_row:
+        technicals["RSI_14"] = f"{latest_row['RSI_14']:.2f}"
+    if "ADX_14" in latest_row:
+        technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
 
     # --- Volatility Proxies (as percentages) ---
     if "ATRr_14" in latest_row and latest_row['close'] > 0:
-        # pandas_ta calculates ATRp (percent) directly if column='close' is specified
-        # Or calculate manually: (latest_row['ATR_14'] / latest_row['close']) * 100
-        technicals["ATR_14_percent"] = f"{latest_row['ATRr_14']:.2f}%" # Assuming ATRr_14 is the percentage ATR
+        technicals["ATR_14_percent"] = f"{latest_row['ATRr_14']:.2f}%"
     else:
-         technicals["ATR_14_percent"] = "N/A"
+        technicals["ATR_14_percent"] = "N/A"
 
     if all(k in latest_row for k in ["BBU_20_2.0", "BBL_20_2.0", "BBM_20_2.0"]) and latest_row['BBM_20_2.0'] > 0:
-        band_width_pct = ((latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0']) * 100
+        band_width_pct = (
+            (latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0'])
+            / latest_row['BBM_20_2.0']
+        ) * 100
         technicals["Bollinger_Band_Width_Percent"] = f"{band_width_pct:.2f}%"
-        # Add interpretation for volatility qualifier later if needed
         technicals["bollinger_bands_interpretation"] = {
-            "price_position": "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0'] else "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0'] else "Inside Bands",
-            "volatility_state": "Squeeze (<5%)" if band_width_pct < 5.0 else ("Expansion (>15%)" if band_width_pct > 15 else "Normal")
-         }
+            "price_position": (
+                "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0']
+                else "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0']
+                else "Inside Bands"
+            ),
+            "volatility_state": (
+                "Squeeze (<5%)" if band_width_pct < 5.0
+                else "Expansion (>15%)" if band_width_pct > 15
+                else "Normal"
+            )
+        }
     else:
-         technicals["Bollinger_Band_Width_Percent"] = "N/A"
-         technicals["bollinger_bands_interpretation"] = {}
+        technicals["Bollinger_Band_Width_Percent"] = "N/A"
+        technicals["bollinger_bands_interpretation"] = {}
 
-
-    # Volume Surge Analysis
+    # --- Volume Surge Analysis ---
     if "volume" in latest_row and "volume_20d_avg" in latest_row and latest_row['volume_20d_avg'] > 0:
         surge_ratio = latest_row['volume'] / latest_row['volume_20d_avg']
         technicals["volume_analysis"] = {
@@ -83,28 +113,28 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
             "interpretation": "Significant Surge (>1.8x)" if surge_ratio > 1.8 else "Normal"
         }
     else:
-         technicals["volume_analysis"] = {"interpretation": "N/A"}
+        technicals["volume_analysis"] = {"interpretation": "N/A"}
 
-    # Enhanced MACD Interpretation
+    # --- Enhanced MACD Interpretation ---
     if all(k in latest_row for k in ["MACD_12_26_9", "MACDs_12_26_9", "MACDh_12_26_9"]):
-        status = "Neutral"
         macd_val = latest_row['MACD_12_26_9']
         signal_val = latest_row['MACDs_12_26_9']
         hist_val = latest_row['MACDh_12_26_9']
         prev_hist_val = previous_row['MACDh_12_26_9']
+        status = "Neutral"
 
-        if macd_val > signal_val: # MACD above signal
+        if macd_val > signal_val:
             status = "Bullish Crossover"
             if hist_val > prev_hist_val:
                 status = "Bullish Momentum Accelerating"
             elif hist_val < prev_hist_val:
-                 status = "Bullish Momentum Decelerating"
-        elif macd_val < signal_val: # MACD below signal
+                status = "Bullish Momentum Decelerating"
+        elif macd_val < signal_val:
             status = "Bearish Crossover"
             if hist_val < prev_hist_val:
                 status = "Bearish Momentum Accelerating"
             elif hist_val > prev_hist_val:
-                 status = "Bearish Momentum Decelerating"
+                status = "Bearish Momentum Decelerating"
 
         technicals["MACD_status"] = {
             "value": f"{macd_val:.2f}",
@@ -115,11 +145,11 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
     else:
         technicals["MACD_status"] = {"interpretation": "N/A"}
 
-    # Supertrend
+    # --- Supertrend ---
     if all(k in latest_row for k in ["SUPERT_7_3.0", "SUPERTd_7_3.0"]):
         technicals["supertrend_7_3"] = {
             "trend": "Uptrend" if latest_row['SUPERTd_7_3.0'] == 1 else "Downtrend",
-            "value": f"{latest_row['SUPERT_7_3.0']:.2f}" # This is the stop level
+            "value": f"{latest_row['SUPERT_7_3.0']:.2f}"
         }
     else:
         technicals["supertrend_7_3"] = {"trend": "N/A"}
