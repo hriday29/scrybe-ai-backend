@@ -62,7 +62,7 @@ class AIAnalyzer:
                 "model": deployment_name,
                 "messages": messages,
                 "response_format": {"type": "json_object"},
-                "temperature": 0.1,
+                # "temperature": 0.1,
                 "timeout": timeout,
             }
             # Only add max_tokens to the parameters if it has a value (is not None)
