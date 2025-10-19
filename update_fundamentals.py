@@ -25,7 +25,7 @@ def run_fundamentals_update():
         fundamentals_collection = database_manager.db.fundamentals
 
         # --- FIX 1: Fetch the CURRENT stock universe ---
-        stock_universe = index_manager.get_nifty50_tickers()
+        stock_universe = index_manager.get_nse_all_active_tickers()
         if not stock_universe:
             log.error("Could not fetch stock universe. Aborting fundamentals update.")
             return
