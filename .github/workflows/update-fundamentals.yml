@@ -1,4 +1,4 @@
-name: Scrybe AI - Manual Fundamentals Update # Changed name slightly
+name: Scrybe AI - Manual Fundamentals Update
 
 on:
   workflow_dispatch: # Allows you to run it manually from the Actions tab
@@ -17,30 +17,15 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      # --- ADDED TA-Lib C Library Installation ---
-      # Although update_fundamentals doesn't directly use TA-Lib,
-      # it's good practice to keep the environment consistent if
-      # requirements.txt includes it. Remove if TA-Lib isn't in requirements.
-      - name: Install TA-Lib C Library Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y build-essential wget
-
-      - name: Download and Install TA-Lib C Library
-        run: |
-          wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
-          tar -xzf ta-lib-0.4.0-src.tar.gz && \
-          cd ta-lib/ && \
-          ./configure --prefix=/usr && \
-          make && \
-          sudo make install
-          cd ..
-      # --- END ADDED STEPS ---
-
+      # TA-Lib C Library installation steps REMOVED as they are not needed here.
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
+          # This assumes TA-Lib is NOT required by requirements.txt for this specific workflow,
+          # OR that if it is, the installation command handles potential missing C library gracefully.
+          # If 'pip install -r requirements.txt' FAILS here because of TA-Lib,
+          # you'll need to add the C library steps back in.
           python -m pip install -r requirements.txt
 
       - name: Run Fundamentals Update Script
