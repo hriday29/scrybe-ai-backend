@@ -1,10 +1,8 @@
-name: Scrybe AI - Weekly Fundamentals Update
+name: Scrybe AI - Manual Fundamentals Update # Changed name slightly
 
 on:
-  schedule:
-    # Runs at 10:00 UTC every Sunday (3:30 PM IST)
-    - cron: '00 10 * * 0'
   workflow_dispatch: # Allows you to run it manually from the Actions tab
+    # No inputs needed, it always runs for the full universe
 
 jobs:
   run-fundamentals-update:
@@ -19,11 +17,32 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
+      # --- ADDED TA-Lib C Library Installation ---
+      # Although update_fundamentals doesn't directly use TA-Lib,
+      # it's good practice to keep the environment consistent if
+      # requirements.txt includes it. Remove if TA-Lib isn't in requirements.
+      - name: Install TA-Lib C Library Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential wget
+
+      - name: Download and Install TA-Lib C Library
+        run: |
+          wget http://prdownloads.sourceforge.net/ta-lib/ta-lib-0.4.0-src.tar.gz && \
+          tar -xzf ta-lib-0.4.0-src.tar.gz && \
+          cd ta-lib/ && \
+          ./configure --prefix=/usr && \
+          make && \
+          sudo make install
+          cd ..
+      # --- END ADDED STEPS ---
+
+
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt
-      
+
       - name: Run Fundamentals Update Script
         env:
           # This script only needs the database URI to save the data
