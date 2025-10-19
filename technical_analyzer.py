@@ -14,41 +14,73 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
     """
     Calculates a comprehensive set of technical indicators, including
     volatility proxies (ATR%, BBW%) and volume analysis.
+    Adds detailed logging for step-by-step diagnostic tracking.
     """
     log.info("Calculating comprehensive technical indicators...")
 
-    # --- Initial data validation ---
-    if data is None or len(data) < 50:  # Need enough data for rolling calcs
-        log.warning("Insufficient historical data for technical analysis.")
-        return {"error": "Insufficient historical data for technical analysis."}
+    # --- Basic validation ---
+    if data is None or len(data) < 50:
+        return {"error": "Insufficient historical data (initial < 50)."}
 
     data = data.copy()
     initial_length = len(data)
     log.info(f"Initial data length: {initial_length}")
 
-    technicals = {}  # Initialize empty dict
+    # --- Pre-check for existing NaNs ---
+    initial_nans = data.isnull().sum().sum()
+    if initial_nans > 0:
+        log.warning(f"Input data has {initial_nans} NaN values BEFORE indicator calculation. Head:\n{data.head()}")
 
-    # --- Column checks ---
+    technicals = {}
+
     if 'close' not in data.columns or not pd.api.types.is_numeric_dtype(data['close']):
         log.error("Input data missing valid 'close' column.")
         return {"error": "Input data missing valid 'close' column."}
 
-    # --- Indicator calculations ---
-    log.info("Computing MACD, Bollinger Bands, Supertrend, RSI, ADX, ATR, and Volume averages...")
-    data.ta.macd(append=True)
-    data.ta.bbands(length=20, std=2, append=True)
-    data.ta.supertrend(append=True)
-    data.ta.rsi(length=14, append=True)
-    data.ta.adx(length=14, append=True)
-    data.ta.atr(length=14, append=True)
-    data['volume_20d_avg'] = data['volume'].rolling(window=20).mean()
+    try:
+        # --- Step-by-step indicator calculations with logging ---
+        log.info("Calculating MACD...")
+        data.ta.macd(append=True)
+        log.info(f"NaNs after MACD: {data.isnull().sum().sum()}")
 
-    # --- Log pre-cleanup metrics ---
+        log.info("Calculating Bollinger Bands...")
+        data.ta.bbands(length=20, std=2, append=True)
+        log.info(f"NaNs after BBands: {data.isnull().sum().sum()}")
+
+        log.info("Calculating Supertrend...")
+        data.ta.supertrend(append=True)
+        log.info(f"NaNs after Supertrend: {data.isnull().sum().sum()}")
+
+        log.info("Calculating RSI...")
+        data.ta.rsi(length=14, append=True)
+        log.info(f"NaNs after RSI: {data.isnull().sum().sum()}")
+
+        log.info("Calculating ADX...")
+        data.ta.adx(length=14, append=True)
+        log.info(f"NaNs after ADX: {data.isnull().sum().sum()}")
+
+        log.info("Calculating ATR...")
+        data.ta.atr(length=14, append=True)
+        log.info(f"NaNs after ATR: {data.isnull().sum().sum()}")
+
+        log.info("Calculating 20-day Volume Average...")
+        data['volume_20d_avg'] = data['volume'].rolling(window=20).mean()
+        log.info(f"NaNs after Volume Avg: {data.isnull().sum().sum()}")
+        # --- End step-by-step ---
+    except Exception as e:
+        log.error(f"Error during indicator calculation: {e}", exc_info=True)
+        return {"error": f"Indicator calculation failed: {e}"}
+
+    # --- Log pre-dropna stats ---
     length_before_dropna = len(data)
     nan_rows_before = data.isnull().any(axis=1).sum()
     log.info(f"Length before dropna: {length_before_dropna}, Rows with NaNs: {nan_rows_before}")
 
-    # --- Drop rows with NaNs created by indicators ---
+    # Optional: inspect rows with NaNs if needed
+    # if nan_rows_before > 0:
+    #     log.debug(f"Rows with NaNs before dropna:\n{data[data.isnull().any(axis=1)]}")
+
+    # --- Clean data ---
     data.dropna(inplace=True)
 
     length_after_dropna = len(data)
@@ -57,16 +89,15 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
     if data.empty:
         error_msg = (
             f"Data became empty after calculating indicators and dropping NaNs. "
-            f"Initial length: {initial_length}, Length before dropna: {length_before_dropna}."
+            f"Initial length: {initial_length}, NaNs before drop: {nan_rows_before}."
         )
         log.error(error_msg)
         return {"error": error_msg}
 
-    # --- Fetch latest and previous rows for signal comparison ---
+    # --- Build the technical dictionary (unchanged logic from your version) ---
     latest_row = data.iloc[-1]
     previous_row = data.iloc[-2] if len(data) > 1 else latest_row
 
-    # --- Build the technicals dictionary ---
     technicals["daily_close"] = latest_row.get("close", None)
 
     # RSI & ADX
@@ -75,7 +106,7 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
     if "ADX_14" in latest_row:
         technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
 
-    # --- Volatility Proxies (as percentages) ---
+    # Volatility Proxies
     if "ATRr_14" in latest_row and latest_row['close'] > 0:
         technicals["ATR_14_percent"] = f"{latest_row['ATRr_14']:.2f}%"
     else:
@@ -103,7 +134,7 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
         technicals["Bollinger_Band_Width_Percent"] = "N/A"
         technicals["bollinger_bands_interpretation"] = {}
 
-    # --- Volume Surge Analysis ---
+    # Volume Analysis
     if "volume" in latest_row and "volume_20d_avg" in latest_row and latest_row['volume_20d_avg'] > 0:
         surge_ratio = latest_row['volume'] / latest_row['volume_20d_avg']
         technicals["volume_analysis"] = {
@@ -115,7 +146,7 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
     else:
         technicals["volume_analysis"] = {"interpretation": "N/A"}
 
-    # --- Enhanced MACD Interpretation ---
+    # MACD Interpretation
     if all(k in latest_row for k in ["MACD_12_26_9", "MACDs_12_26_9", "MACDh_12_26_9"]):
         macd_val = latest_row['MACD_12_26_9']
         signal_val = latest_row['MACDs_12_26_9']
@@ -145,7 +176,7 @@ def get_all_technicals(data: pd.DataFrame) -> dict:
     else:
         technicals["MACD_status"] = {"interpretation": "N/A"}
 
-    # --- Supertrend ---
+    # Supertrend
     if all(k in latest_row for k in ["SUPERT_7_3.0", "SUPERTd_7_3.0"]):
         technicals["supertrend_7_3"] = {
             "trend": "Uptrend" if latest_row['SUPERTd_7_3.0'] == 1 else "Downtrend",
