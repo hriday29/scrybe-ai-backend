@@ -42,8 +42,7 @@ class AIAnalyzer:
 
     def _make_azure_call(self, system_instruction: str, user_prompt: str, deployment_name: str, output_schema: dict, timeout: int = 120, max_tokens: int = None):
         """Helper function to make calls to Azure OpenAI, enforcing JSON output."""
-        
-        # Azure's JSON mode requires instructing the model in the prompt.
+
         prompt_with_schema = f"""
         {user_prompt}
 
@@ -51,28 +50,45 @@ class AIAnalyzer:
         Schema:
         {json.dumps(output_schema, indent=2)}
         """
-        
+
         messages = [
             {"role": "system", "content": system_instruction},
             {"role": "user", "content": prompt_with_schema}
         ]
 
         try:
-            response = self.client.chat.completions.create(
-                model=deployment_name,
-                messages=messages,
-                response_format={"type": "json_object"},
-                temperature=0.1, # Added for more deterministic JSON outputs
-                timeout=timeout,
-                max_tokens=max_tokens
-            )
-            response_text = response.choices[0].message.content
-            return json.loads(response_text)
-        except Exception as e:
-            # Catch API errors, JSON parsing errors, etc.
-            log.error(f"Azure API call failed for deployment {deployment_name}: {e}")
-            return {"error": f"Failed to generate response from Azure AI: {e}"}
+            # --- FIX: Conditionally create API call parameters ---
+            api_params = {
+                "model": deployment_name,
+                "messages": messages,
+                "response_format": {"type": "json_object"},
+                "temperature": 0.1,
+                "timeout": timeout,
+            }
+            # Only add max_tokens to the parameters if it has a value (is not None)
+            if max_tokens is not None:
+                api_params["max_tokens"] = max_tokens
+            # --- END FIX ---
 
+            # Use dictionary unpacking (**) to pass the parameters
+            response = self.client.chat.completions.create(**api_params)
+
+            response_text = response.choices[0].message.content
+            # Attempt to parse the JSON immediately after receiving
+            return json.loads(response_text)
+
+        except json.JSONDecodeError as json_err:
+            log.error(f"Azure API response was not valid JSON for deployment {deployment_name}. Response: {response_text[:500]}... Error: {json_err}")
+            return {"error": f"Azure AI response parsing failed: {json_err}"}
+        except Exception as e:
+            # Catch other API errors, timeouts, etc.
+            log.error(f"Azure API call failed for deployment {deployment_name}: {e}")
+            # Consider checking error type for specific handling (e.g., rate limits, content filters)
+            error_message = f"Failed to generate response from Azure AI: {e}"
+            # Extract more specific error details if available (depends on exception type)
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
+                error_message += f" - API Response: {e.response.text}"
+            return {"error": error_message}
 
     def get_technical_verdict(self, technical_data: dict, ticker: str) -> dict:
         """Analyzes ONLY technical data to form a directional bias."""
