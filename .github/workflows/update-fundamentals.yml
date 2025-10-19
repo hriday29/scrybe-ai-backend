@@ -2,7 +2,6 @@ name: Scrybe AI - Manual Fundamentals Update
 
 on:
   workflow_dispatch: # Allows you to run it manually from the Actions tab
-    # No inputs needed, it always runs for the full universe
 
 jobs:
   run-fundamentals-update:
@@ -17,19 +16,24 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      # TA-Lib C Library installation steps REMOVED as they are not needed here.
+      # TA-Lib installation steps have been correctly REMOVED as they are not needed for this script.
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # This assumes TA-Lib is NOT required by requirements.txt for this specific workflow,
-          # OR that if it is, the installation command handles potential missing C library gracefully.
-          # If 'pip install -r requirements.txt' FAILS here because of TA-Lib,
-          # you'll need to add the C library steps back in.
+          # Note: If TA-Lib is in requirements.txt, this step might fail.
+          # If it does, you will need to add the TA-Lib C-library installation steps back.
           python -m pip install -r requirements.txt
 
       - name: Run Fundamentals Update Script
         env:
-          # This script only needs the database URI to save the data
+          # --- FIX: ADDED ALL REQUIRED SECRETS ---
+          # Although this script uses yfinance, the login is triggered on import
+          # because config.DATA_SOURCE is set to 'angelone'.
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
+          ANGELONE_API_KEY: ${{ secrets.ANGELONE_API_KEY }}
+          ANGELONE_CLIENT_ID: ${{ secrets.ANGELONE_CLIENT_ID }}
+          ANGELONE_PASSWORD: ${{ secrets.ANGELONE_PASSWORD }}
+          ANGELONE_TOTP_SECRET: ${{ secrets.ANGELONE_TOTP_SECRET }}
+          # --- END FIX ---
         run: python update_fundamentals.py
