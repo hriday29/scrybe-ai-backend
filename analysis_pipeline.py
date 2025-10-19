@@ -168,70 +168,92 @@ class AnalysisPipeline:
 
     def _run_ai_analysis(self, candidates, full_data_cache, market_state, point_in_time, is_backtest, batch_id=None):
         """
-        Runs the new "Committee of Experts" AI analysis pipeline.
-        1. Gathers verdicts from specialized technical, fundamental, and sentiment analysts.
-        2. Passes those verdicts to a final "Head of Strategy" synthesizer for the trade decision.
+        Runs the "Committee of Experts" AI analysis pipeline using the new
+        Volatility/Futures analyst instead of Sentiment. Handles potentially more candidates.
         """
-        log.info(f"--- Running 'Committee of Experts' AI Analysis for {len(candidates)} Candidate(s) ---")
-        
+        log.info(f"--- Running 'Committee of Experts' AI Analysis for {len(candidates)} Candidate(s) ---") # Handles larger list
+
         final_synthesized_results = []
-        for ticker, screener_reason in candidates:
-            log.info(f"--- Convening Committee for {ticker} (Reason: {screener_reason}) ---")
-            
+        nifty_data_for_rs = full_data_cache.get("^NSEI") # Fetch Nifty data once for RS calc
+
+        for i, (ticker, screener_reason) in enumerate(candidates):
+            log.info(f"--- ({i+1}/{len(candidates)}) Convening Committee for {ticker} (Reason: {screener_reason}) ---")
+
             # --- Build Full Context ---
-            # This part remains the same, as it gathers all necessary data.
-            point_in_time_data = full_data_cache.get(ticker).loc[:point_in_time].copy()
-            if len(point_in_time_data) < 252:
-                log.warning(f"Skipping {ticker}: Insufficient historical data for analysis.")
+            point_in_time_data = full_data_cache.get(ticker)
+            if point_in_time_data is None:
+                 log.warning(f"Skipping {ticker}: No data found in cache for point_in_time.")
+                 continue
+
+            # Ensure data slicing is correct
+            point_in_time_data_slice = point_in_time_data.loc[:point_in_time].copy()
+
+            if len(point_in_time_data_slice) < 50: # Check length *after* slicing
+                log.warning(f"Skipping {ticker}: Insufficient historical data ({len(point_in_time_data_slice)} days) for analysis.")
                 continue
-            
+
+            # Build the context using the sliced data and pass the full cache for futures lookup
             full_context = technical_analyzer.build_analysis_context(
-                ticker=ticker, historical_data=point_in_time_data,
-                market_state=market_state, is_backtest=is_backtest
+                ticker=ticker,
+                historical_data=point_in_time_data_slice, # Use the sliced data
+                market_state=market_state,
+                is_backtest=is_backtest,
+                full_nifty_data=nifty_data_for_rs,
+                full_data_cache=full_data_cache # Pass the main cache here
             )
-            
+
             # --- Call Specialist Analysts ---
-            # Each specialist gets only the part of the context they are qualified to analyze.
             log.info(f"[AI Committee] Getting Technical Verdict for {ticker}...")
             tech_verdict = self.ai_analyzer.get_technical_verdict(full_context.get('technical_indicators', {}), ticker)
 
             log.info(f"[AI Committee] Getting Fundamental Verdict for {ticker}...")
             fund_verdict = self.ai_analyzer.get_fundamental_verdict(full_context.get('fundamental_data', {}), ticker)
 
-            log.info(f"[AI Committee] Getting Sentiment Verdict for {ticker}...")
-            sent_verdict = self.ai_analyzer.get_sentiment_verdict(full_context.get('sentiment_data', {}), ticker)
+            # --- MODIFIED: Call New Volatility/Futures Analyst ---
+            log.info(f"[AI Committee] Getting Volatility/Futures Verdict for {ticker}...")
+            vol_fut_verdict = self.ai_analyzer.get_volatility_and_futures_verdict(full_context.get('volatility_futures_data', {}), ticker)
+            # --- END MODIFICATION ---
 
             # --- Sanity Check on Specialist Reports ---
-            if "error" in tech_verdict or "error" in fund_verdict or "error" in sent_verdict:
+            # --- MODIFIED: Check new verdict variable ---
+            if "error" in tech_verdict or "error" in fund_verdict or "error" in vol_fut_verdict:
                 log.error(f"Could not proceed with final synthesis for {ticker} due to an error in a specialist analysis. Skipping.")
+                # Optionally log the specific error details here
+                if "error" in tech_verdict: log.error(f"  Technical Error: {tech_verdict['error']}")
+                if "error" in fund_verdict: log.error(f"  Fundamental Error: {fund_verdict['error']}")
+                if "error" in vol_fut_verdict: log.error(f"  Vol/Futures Error: {vol_fut_verdict['error']}")
                 continue
+            # --- END MODIFICATION ---
 
             # --- Call Head of Strategy for Final Synthesis ---
-            # The synthesizer gets the market state and all three specialist reports.
             try:
                 log.info(f"[AI Committee] Passing reports to Head of Strategy for {ticker}...")
+                # --- MODIFIED: Pass new verdict variable ---
                 final_analysis = self.ai_analyzer.get_apex_analysis(
                     ticker=ticker,
                     technical_verdict=tech_verdict,
                     fundamental_verdict=fund_verdict,
-                    sentiment_verdict=sent_verdict,
+                    volatility_futures_verdict=vol_fut_verdict, # Pass the new verdict
                     market_state=market_state,
                     screener_reason=screener_reason
                 )
+                # --- END MODIFICATION ---
 
-                if final_analysis:
+                if final_analysis and "error" not in final_analysis : # Check for errors from apex call itself
                     final_synthesized_results.append({
                         "ticker": ticker,
                         "ai_analysis": final_analysis,
-                        "point_in_time_data": point_in_time_data
+                        "point_in_time_data": point_in_time_data_slice # Save the data used for analysis
                     })
+                elif final_analysis and "error" in final_analysis:
+                     log.error(f"Final APEX synthesis for {ticker} failed: {final_analysis.get('error')}")
                 else:
-                    log.error(f"Final synthesis for {ticker} returned no result.")
+                    log.error(f"Final APEX synthesis for {ticker} returned no result.")
 
             except Exception as e:
                 log.critical(f"The Head of Strategy (APEX Synthesis) failed critically for {ticker}: {e}", exc_info=True)
-                continue
-                
+                continue # Continue to the next candidate
+
         log.info(f"--- AI Committee Concluded. {len(final_synthesized_results)} stocks have a final verdict. ---")
         return final_synthesized_results
     

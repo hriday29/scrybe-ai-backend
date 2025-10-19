@@ -1,4 +1,4 @@
-# index_manager.py (Hybrid Fetch Version)
+# index_manager.py
 import pandas as pd
 import requests
 from io import StringIO
@@ -83,3 +83,68 @@ def get_point_in_time_nifty50_tickers(point_in_time: pd.Timestamp) -> list[str]:
     except Exception as e:
         log.error(f"Error loading historical Nifty 50 list: {e}. Using fallback list.")
         return config.NIFTY_50_TICKERS
+
+def get_nse_all_active_tickers():
+    """
+    Downloads the official list of all actively traded equity securities from NSE.
+    Returns a list of ticker symbols formatted for yfinance (e.g., 'RELIANCE.NS').
+    """
+    log.info("Attempting to fetch the full list of active NSE equity tickers...")
+
+    # URL for the CSV file on the new NSE website
+    url = "https://nsearchives.nseindia.com/content/equities/EQUITY_L.csv"
+    # Alternative/Old URL (keep for reference if the primary one fails):
+    # url = "https://www.nseindia.com/content/equities/EQUITY_L.csv"
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive'
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=20)
+        response.raise_for_status() # Check for HTTP errors
+
+        # Read the CSV content into pandas
+        csv_data = StringIO(response.content.decode('utf-8'))
+        df = pd.read_csv(csv_data)
+
+        # Basic validation
+        if 'SYMBOL' not in df.columns:
+            raise ValueError("CSV format unexpected: 'SYMBOL' column missing.")
+        if df.empty:
+             raise ValueError("Downloaded CSV is empty.")
+
+        # Filter for standard equity series (optional but good practice)
+        # Common equity series are 'EQ', 'BE', 'SM'. Adjust if needed.
+        # df_filtered = df[df[' SERIES'].isin(['EQ', 'BE', 'SM'])] # Note the space in ' SERIES' often present in NSE CSVs
+        # If filtering causes issues, use the unfiltered list first:
+        df_filtered = df
+
+        # Clean up column names (remove leading/trailing spaces)
+        df_filtered.columns = df_filtered.columns.str.strip()
+
+        tickers = (df_filtered['SYMBOL'] + '.NS').tolist()
+
+        # Sanity check
+        if len(tickers) < 1000: # Expecting well over 1000 active symbols
+            log.warning(f"Fetched list seems small ({len(tickers)} tickers). Check NSE source/format.")
+        else:
+            log.info(f"✅ Successfully fetched and parsed {len(tickers)} active NSE tickers.")
+
+        return tickers
+
+    except requests.exceptions.RequestException as e:
+        log.error(f"Network error fetching NSE ticker list: {e}")
+        return [] # Return empty list on failure
+    except pd.errors.ParserError as e:
+        log.error(f"Error parsing NSE ticker CSV: {e}")
+        return []
+    except ValueError as e:
+         log.error(f"Data validation error for NSE ticker list: {e}")
+         return []
+    except Exception as e:
+        log.error(f"Unexpected error fetching NSE ticker list: {e}", exc_info=True)
+        return []

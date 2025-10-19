@@ -12,78 +12,119 @@ import angelone_retriever
 
 def get_all_technicals(data: pd.DataFrame) -> dict:
     """
-    Calculates a comprehensive set of technical indicators, now including volume analysis.
+    Calculates a comprehensive set of technical indicators, including
+    volatility proxies (ATR%, BBW%) and volume analysis.
     """
     log.info("Calculating comprehensive technical indicators...")
-    if data is None or len(data) < 50:
+    if data is None or len(data) < 50: # Need enough data for rolling calcs
         return {"error": "Insufficient historical data for technical analysis."}
 
     data = data.copy()
-    
-    # --- Calculate all indicators ---
+    technicals = {} # Initialize empty dict
+
+    # --- Calculate all indicators using pandas_ta ---
+    # Ensure 'close' column exists and is numeric
+    if 'close' not in data.columns or not pd.api.types.is_numeric_dtype(data['close']):
+         log.error("Input data missing valid 'close' column.")
+         return {"error": "Input data missing valid 'close' column."}
+
     data.ta.macd(append=True)
-    data.ta.bbands(append=True)
+    data.ta.bbands(length=20, std=2, append=True) # Standard BBands
     data.ta.supertrend(append=True)
     data.ta.rsi(length=14, append=True)
     data.ta.adx(length=14, append=True)
-    data.ta.atr(length=14, append=True)
+    data.ta.atr(length=14, append=True) # Calculate standard ATR first
     data['volume_20d_avg'] = data['volume'].rolling(window=20).mean()
-    
+
+    # Drop rows with NaNs created by indicators
+    data.dropna(inplace=True)
+
+    if data.empty:
+        return {"error": "Data became empty after calculating indicators and dropping NaNs."}
+
     latest_row = data.iloc[-1]
-    
+    previous_row = data.iloc[-2] if len(data) > 1 else latest_row # For histogram comparison
+
     # --- Build the technicals dictionary ---
-    technicals = {"daily_close": latest_row.get("close", None)}
-    
+    technicals["daily_close"] = latest_row.get("close", None)
+
     # Standard Indicators
-    if "RSI_14" in data.columns: technicals["RSI_14"] = f"{latest_row['RSI_14']:.2f}"
-    if "ADX_14" in data.columns: technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
-    if "ATRr_14" in data.columns: technicals["ATR_14_volatility"] = f"{latest_row['ATRr_14']:.2f}"
-    
+    if "RSI_14" in latest_row: technicals["RSI_14"] = f"{latest_row['RSI_14']:.2f}"
+    if "ADX_14" in latest_row: technicals["ADX_14_trend_strength"] = f"{latest_row['ADX_14']:.2f}"
+
+    # --- Volatility Proxies (as percentages) ---
+    if "ATRr_14" in latest_row and latest_row['close'] > 0:
+        # pandas_ta calculates ATRp (percent) directly if column='close' is specified
+        # Or calculate manually: (latest_row['ATR_14'] / latest_row['close']) * 100
+        technicals["ATR_14_percent"] = f"{latest_row['ATRr_14']:.2f}%" # Assuming ATRr_14 is the percentage ATR
+    else:
+         technicals["ATR_14_percent"] = "N/A"
+
+    if all(k in latest_row for k in ["BBU_20_2.0", "BBL_20_2.0", "BBM_20_2.0"]) and latest_row['BBM_20_2.0'] > 0:
+        band_width_pct = ((latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0']) * 100
+        technicals["Bollinger_Band_Width_Percent"] = f"{band_width_pct:.2f}%"
+        # Add interpretation for volatility qualifier later if needed
+        technicals["bollinger_bands_interpretation"] = {
+            "price_position": "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0'] else "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0'] else "Inside Bands",
+            "volatility_state": "Squeeze (<5%)" if band_width_pct < 5.0 else ("Expansion (>15%)" if band_width_pct > 15 else "Normal")
+         }
+    else:
+         technicals["Bollinger_Band_Width_Percent"] = "N/A"
+         technicals["bollinger_bands_interpretation"] = {}
+
+
     # Volume Surge Analysis
-    if "volume" in data.columns and "volume_20d_avg" in data.columns:
-        surge_ratio = latest_row['volume'] / latest_row['volume_20d_avg'] if latest_row['volume_20d_avg'] > 0 else 0
+    if "volume" in latest_row and "volume_20d_avg" in latest_row and latest_row['volume_20d_avg'] > 0:
+        surge_ratio = latest_row['volume'] / latest_row['volume_20d_avg']
         technicals["volume_analysis"] = {
-            "latest_volume": f"{latest_row['volume']:,}",
-            "20d_avg_volume": f"{latest_row['volume_20d_avg']:,}",
+            "latest_volume": f"{latest_row['volume']:,.0f}",
+            "20d_avg_volume": f"{latest_row['volume_20d_avg']:,.0f}",
             "surge_factor": f"{surge_ratio:.2f}x",
-            "interpretation": "Significant Volume Surge" if surge_ratio > 1.8 else "Normal Volume"
+            "interpretation": "Significant Surge (>1.8x)" if surge_ratio > 1.8 else "Normal"
         }
+    else:
+         technicals["volume_analysis"] = {"interpretation": "N/A"}
 
     # Enhanced MACD Interpretation
-    if all(k in data.columns for k in ["MACD_12_26_9", "MACDs_12_26_9", "MACDh_12_26_9"]):
+    if all(k in latest_row for k in ["MACD_12_26_9", "MACDs_12_26_9", "MACDh_12_26_9"]):
         status = "Neutral"
-        if latest_row['MACD_12_26_9'] > latest_row['MACDs_12_26_9']:
+        macd_val = latest_row['MACD_12_26_9']
+        signal_val = latest_row['MACDs_12_26_9']
+        hist_val = latest_row['MACDh_12_26_9']
+        prev_hist_val = previous_row['MACDh_12_26_9']
+
+        if macd_val > signal_val: # MACD above signal
             status = "Bullish Crossover"
-            if latest_row['MACDh_12_26_9'] > data['MACDh_12_26_9'].iloc[-2]:
+            if hist_val > prev_hist_val:
                 status = "Bullish Momentum Accelerating"
-        else:
+            elif hist_val < prev_hist_val:
+                 status = "Bullish Momentum Decelerating"
+        elif macd_val < signal_val: # MACD below signal
             status = "Bearish Crossover"
-            if latest_row['MACDh_12_26_9'] < data['MACDh_12_26_9'].iloc[-2]:
+            if hist_val < prev_hist_val:
                 status = "Bearish Momentum Accelerating"
-        
+            elif hist_val > prev_hist_val:
+                 status = "Bearish Momentum Decelerating"
+
         technicals["MACD_status"] = {
-            "value": f"{latest_row['MACD_12_26_9']:.2f}",
-            "signal_line": f"{latest_row['MACDs_12_26_9']:.2f}",
-            "histogram": f"{latest_row['MACDh_12_26_9']:.2f}",
+            "value": f"{macd_val:.2f}",
+            "signal_line": f"{signal_val:.2f}",
+            "histogram": f"{hist_val:.2f}",
             "interpretation": status
         }
-    
-    # Bollinger Bands
-    if all(k in data.columns for k in ["BBU_20_2.0", "BBL_20_2.0", "BBM_20_2.0"]):
-        band_width = ((latest_row['BBU_20_2.0'] - latest_row['BBL_20_2.0']) / latest_row['BBM_20_2.0']) * 100
-        technicals["bollinger_bands"] = {
-            "price_position": "Above Upper Band" if latest_row['close'] > latest_row['BBU_20_2.0'] else "Below Lower Band" if latest_row['close'] < latest_row['BBL_20_2.0'] else "Inside Bands",
-            "band_width_pct": f"{band_width:.2f}%",
-            "interpretation": "Volatility Squeeze" if band_width < 5.0 else "Volatility Expansion"
-        }
-            
+    else:
+        technicals["MACD_status"] = {"interpretation": "N/A"}
+
     # Supertrend
-    if all(k in data.columns for k in ["SUPERT_7_3.0", "SUPERTd_7_3.0"]):
+    if all(k in latest_row for k in ["SUPERT_7_3.0", "SUPERTd_7_3.0"]):
         technicals["supertrend_7_3"] = {
             "trend": "Uptrend" if latest_row['SUPERTd_7_3.0'] == 1 else "Downtrend",
-            "value": f"{latest_row['SUPERT_7_3.0']:.2f}"
+            "value": f"{latest_row['SUPERT_7_3.0']:.2f}" # This is the stop level
         }
-            
+    else:
+        technicals["supertrend_7_3"] = {"trend": "N/A"}
+
+    log.info("Successfully calculated technical indicators.")
     return technicals
 
 def get_relative_strength(stock_data: pd.DataFrame, full_nifty_data: pd.DataFrame) -> str:
@@ -261,56 +302,96 @@ def generate_focused_charts(full_data: pd.DataFrame, ticker: str) -> dict:
     return charts
 
 def build_analysis_context(
-    ticker: str, 
-    historical_data: pd.DataFrame, 
+    ticker: str,
+    historical_data: pd.DataFrame,
     market_state: dict,
     is_backtest: bool = False,
-    full_nifty_data: pd.DataFrame = None # Pass in Nifty data to avoid re-fetching
+    full_nifty_data: pd.DataFrame = None,   # For relative strength
+    full_data_cache: dict = None            # For futures data lookup (optional)
 ) -> dict:
     """
-    Builds a clean, structured context packet with keys that directly map 
-    to the 'Committee of Experts' AI analysts.
+    Builds a clean, structured context packet combining:
+    - Technicals (including RS & F&O basis)
+    - Fundamentals (point-in-time)
+    - Volatility + Futures proxies (replaces sentiment in new architecture)
+
+    Designed to feed AI analysts or analysis pipelines.
     """
     log.info(f"Building context for {ticker} (Backtest Mode: {is_backtest})...")
 
     # --- 1. Technical Data Packet ---
     technicals = get_all_technicals(historical_data)
+    if "error" in technicals:
+        log.error(f"Skipping context build for {ticker} due to technicals error: {technicals['error']}")
+        return {
+            "technical_indicators": {"status": "Error", "message": technicals['error']},
+            "fundamental_data": {"status": "Not Processed"},
+            "volatility_futures_data": {"status": "Not Processed"}
+        }
+
+    # Relative Strength vs Nifty
     technicals["relative_strength_vs_nifty50"] = get_relative_strength(historical_data, full_nifty_data)
 
-    # --- 2. Fundamental Data Packet ---
-    # Fetches point-in-time fundamentals to ensure backtest accuracy.
+    # --- 2. Futures Data & Basis Calculation ---
+    futures_basis_pct = "N/A"
+    futures_ticker = None
+
+    if ".NS" in ticker:
+        base_symbol = ticker.replace(".NS", "")
+        potential_futures_ticker = f"{base_symbol}-F.NS"  # e.g., RELIANCE-F.NS
+        log.info(f"Attempting to fetch futures data for {ticker} using {potential_futures_ticker}")
+
+        if full_data_cache and potential_futures_ticker in full_data_cache:
+            futures_data = full_data_cache[potential_futures_ticker]
+            if futures_data is not None and not futures_data.empty:
+                common_index = historical_data.index.intersection(futures_data.index)
+                if not common_index.empty:
+                    latest_spot = historical_data.loc[common_index[-1], "close"]
+                    latest_future = futures_data.loc[common_index[-1], "close"]
+                    if latest_spot > 0:
+                        basis = latest_future - latest_spot
+                        futures_basis_pct = f"{(basis / latest_spot) * 100:.2f}%"
+                        futures_ticker = potential_futures_ticker
+                        log.info(f"Calculated Futures Basis for {ticker}: {futures_basis_pct}")
+                    else:
+                        log.warning(f"Spot price zero for {ticker}, skipping basis calc.")
+                else:
+                    log.warning(f"No overlapping dates for {ticker} and its futures data.")
+            else:
+                log.info(f"No futures data found in cache for {potential_futures_ticker}.")
+        else:
+            log.info(f"Futures ticker {potential_futures_ticker} not in cache; skipping fetch for now.")
+
+    technicals["futures_spot_basis_percent"] = futures_basis_pct
+    if futures_ticker:
+        technicals["futures_ticker_used"] = futures_ticker
+
+    # --- 3. Fundamental Data Packet ---
     fundamentals = data_retriever.get_stored_fundamentals(ticker, point_in_time=historical_data.index[-1])
-    # FIX: Convert the datetime object to a string to make it JSON serializable
-    if fundamentals and 'asOfDate' in fundamentals and hasattr(fundamentals['asOfDate'], 'isoformat'):
-        fundamentals['asOfDate'] = fundamentals['asOfDate'].isoformat()
+    if fundamentals and "asOfDate" in fundamentals and hasattr(fundamentals["asOfDate"], "isoformat"):
+        fundamentals["asOfDate"] = fundamentals["asOfDate"].isoformat()
     if not fundamentals:
         fundamentals = {"status": "Fundamental data not available for this date."}
 
-    # --- 3. Sentiment Data Packet ---
-    # In backtesting, we use placeholders for data that is ephemeral and cannot be reliably recreated.
-    if is_backtest:
-        options_data = {"status": "Unavailable in backtest"}
-        news_data = {"status": "Unavailable in backtest"}
-    else:
-        # For live runs, fetch rich, real-time data.
-        options_data = angelone_retriever.get_option_greeks(ticker)
-        if not options_data:
-            options_data = {"status": "No options data for this ticker."}
-        
-        news_data = data_retriever.get_news_articles_for_ticker(ticker)
-
-    sentiment = {
-        "options_market_sentiment": options_data,
-        "recent_news_flow": news_data
+    # --- 4. Volatility & Futures Data Packet (Replaces Sentiment) ---
+    volatility_futures_data = {
+        "volatility_atr_percent": technicals.get("ATR_14_percent", "N/A"),
+        "volatility_bbw_percent": technicals.get("Bollinger_Band_Width_Percent", "N/A"),
+        "volatility_interpretation": technicals.get("bollinger_bands_interpretation", {}).get("volatility_state", "N/A"),
+        "futures_spot_basis_percent": futures_basis_pct,
+        "basis_interpretation": (
+            "Premium (Bullish Bias)" if isinstance(futures_basis_pct, str) and futures_basis_pct != "N/A" and float(futures_basis_pct.replace("%", "")) > 0.1 else
+            "Discount (Bearish Bias)" if isinstance(futures_basis_pct, str) and futures_basis_pct != "N/A" and float(futures_basis_pct.replace("%", "")) < -0.1 else
+            "Near Flat / Unavailable"
+        )
     }
 
-    # --- Assemble the Final Context Dictionary ---
-    # This structure is now clean and directly usable by the analysis_pipeline.
+    # --- 5. Assemble Final Context ---
     context = {
         "technical_indicators": technicals,
         "fundamental_data": fundamentals,
-        "sentiment_data": sentiment
+        "volatility_futures_data": volatility_futures_data  # replaces sentiment
     }
-    
+
     log.info(f"Successfully built context for {ticker}.")
     return context

@@ -6,14 +6,11 @@ from logger_config import log
 import database_manager
 import json
 import os
-import data_retriever
-import pandas_ta as ta
-import uuid
 import argparse
+import yfinance as yf
 from config import PORTFOLIO_CONSTRAINTS
 from collections import deque
 from sector_analyzer import CORE_SECTOR_INDICES, BENCHMARK_INDEX
-import random
 import index_manager
 from analysis_pipeline import AnalysisPipeline, BENCHMARK_TICKERS
 from performance_analyzer import generate_backtest_report
@@ -47,6 +44,17 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
     pipeline = AnalysisPipeline()
     pipeline._setup(mode='scheduler')
+
+    # --- Fetch the static universe ONCE for the entire backtest run ---
+    log.info("Fetching the full NSE active ticker list for this backtest run...")
+    # We use the 'live' fetcher here as an approximation for the historical period
+    backtest_universe = index_manager.get_nse_all_active_tickers()
+    if not backtest_universe:
+        log.fatal("[SETUP ERROR] Could not fetch the NSE ticker list. Aborting backtest.")
+        pipeline.close()
+        return
+    log.info(f"Using a static universe of {len(backtest_universe)} tickers for this run.")
+    # --- End fetching static universe ---
 
     if is_fresh_run:
         log.warning("FRESH RUN: Deleting previous predictions and performance data for this batch.")
@@ -83,6 +91,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
         import angelone_retriever
         angelone_retriever.initialize_angelone_session()
         # --- END OF NEW CODE ---
+
         day_start = time.time()
         day_str = current_day.strftime('%Y-%m-%d')
         log.info("")
@@ -90,58 +99,163 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
         log.info(f"--- Simulating Day {i+1}/{total_days}: {day_str} ---")
 
         try:
-            # --- Determine Stock Universe ---
-            if tickers:
-                stock_universe_for_today = tickers
-                log.info(f"[UNIVERSE] Using predefined stock universe of {len(tickers)} tickers.")
-            else:
-                stock_universe_for_today = index_manager.get_point_in_time_nifty50_tickers(current_day)
-                if not stock_universe_for_today:
-                    log.warning(f"[UNIVERSE] No tickers found for {day_str}. Skipping day.")
-                    continue
+            # ======================================================================
+            # --- CORRECTED: Define Required Assets using Static Universe ---
+            # ======================================================================
+            # The 'backtest_universe' variable was fetched *before* the loop started.
+            # We directly use it here for every day of the simulation.
 
-            # --- Data Loading ---
+            # Define required index and benchmark tickers
             required_indices = list(CORE_SECTOR_INDICES.values()) + [BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())
-            tickers_for_today = list(set(stock_universe_for_today + required_indices))
-            log.info(f"[DATA] Loading {len(tickers_for_today)} assets for {day_str} ...")
-            
-            # The date used to fetch data for making the trading decision.
+
+            # Combine the static universe and indices uniquely
+            all_assets_for_today = list(set(backtest_universe + required_indices))
+            log.info(f"[DATA] Preparing to load data for {len(all_assets_for_today)} assets "
+                    f"using the static universe for {day_str}...")
+            # ======================================================================
+
+            # ======================================================================
+            # --- MODIFIED: Bulk Data Loading ---
+            # ======================================================================
             decision_date = current_day - pd.Timedelta(days=1)
             decision_date_str = decision_date.strftime('%Y-%m-%d')
-            
-            data_load_start = time.time()
-            
-            # This cache is for the AI/Pipeline. It cannot see today's data.
-            data_for_analysis = {
-                ticker: data_retriever.get_historical_stock_data(ticker, end_date=decision_date_str)
-                for ticker in tickers_for_today
-            }
-            data_for_analysis = {k: v for k, v in data_for_analysis.items() if v is not None and not v.empty}
-            log.info(f"[DATA] Loaded {len(data_for_analysis)} tickers for ANALYSIS (up to {decision_date_str})")
+            simulation_date_str = current_day.strftime('%Y-%m-%d')
 
-            # This cache is for the backtester to simulate today's trading activity.
-            data_for_simulation = {
-                ticker: data_retriever.get_historical_stock_data(ticker, end_date=day_str)
-                for ticker in tickers_for_today
-            }
-            data_for_simulation = {k: v for k, v in data_for_simulation.items() if v is not None and not v.empty}
-            log.info(f"[DATA] Loaded {len(data_for_simulation)} tickers for SIMULATION (up to {day_str})")
-            
-            log.info(f"[DATA] Full data loading completed in {time.time()-data_load_start:.2f}s")
+            data_load_start = time.time()
+            bulk_data_for_analysis = None
+            bulk_data_for_simulation = None
+
+            # --- NEW: Rate Limiting Parameters for yfinance ---
+            YFINANCE_RETRY_ATTEMPTS = 3
+            YFINANCE_RETRY_DELAY_SECONDS = 10 # Start with 10 seconds, increase if needed
+            YFINANCE_INTER_CALL_DELAY_SECONDS = 2 # Pause between the two major calls
+            # --- End Rate Limiting Parameters ---
+
+            try:
+                # --- Download for Analysis with Retry ---
+                for attempt in range(YFINANCE_RETRY_ATTEMPTS):
+                    try:
+                        log.info(f"Attempting bulk download for ANALYSIS (up to {decision_date_str}), Attempt {attempt+1}/{YFINANCE_RETRY_ATTEMPTS}...")
+                        bulk_data_for_analysis_raw = yf.download(
+                            tickers=all_assets_for_today,
+                            end=simulation_date_str,
+                            period="5y",
+                            progress=False,
+                            ignore_tz=True
+                        )
+                        if not bulk_data_for_analysis_raw.empty:
+                            bulk_data_for_analysis = bulk_data_for_analysis_raw.loc[:decision_date_str]
+                            log.info("Analysis data download successful.")
+                            break # Exit retry loop on success
+                        else:
+                            log.warning(f"Attempt {attempt+1}: Bulk download for analysis returned empty.")
+                            # Decide if empty is an error or just no data for the period
+                            if attempt == YFINANCE_RETRY_ATTEMPTS - 1:
+                                    raise ValueError("Analysis download returned empty after all retries.")
+
+                    except Exception as yf_e:
+                        log.warning(f"Attempt {attempt+1} failed for analysis download: {yf_e}")
+                        if attempt < YFINANCE_RETRY_ATTEMPTS - 1:
+                            log.info(f"Waiting {YFINANCE_RETRY_DELAY_SECONDS}s before retrying...")
+                            time.sleep(YFINANCE_RETRY_DELAY_SECONDS)
+                        else:
+                            log.error("Analysis download failed after all retries.")
+                            raise # Re-raise the exception to trigger outer catch block
+
+                # --- Add Delay Between Calls ---
+                log.info(f"Pausing for {YFINANCE_INTER_CALL_DELAY_SECONDS}s before next bulk download...")
+                time.sleep(YFINANCE_INTER_CALL_DELAY_SECONDS)
+                # --- End Delay ---
+
+                # --- Download for Simulation with Retry ---
+                for attempt in range(YFINANCE_RETRY_ATTEMPTS):
+                    try:
+                        log.info(f"Attempting bulk download for SIMULATION (up to {simulation_date_str}), Attempt {attempt+1}/{YFINANCE_RETRY_ATTEMPTS}...")
+                        bulk_data_for_simulation_raw = yf.download(
+                            tickers=all_assets_for_today,
+                            end=simulation_date_str,
+                            period="6mo",
+                            progress=False,
+                            ignore_tz=True
+                        )
+                        if not bulk_data_for_simulation_raw.empty:
+                            bulk_data_for_simulation = bulk_data_for_simulation_raw
+                            log.info("Simulation data download successful.")
+                            break # Exit retry loop on success
+                        else:
+                            log.warning(f"Attempt {attempt+1}: Bulk download for simulation returned empty.")
+                            if attempt == YFINANCE_RETRY_ATTEMPTS - 1:
+                                raise ValueError("Simulation download returned empty after all retries.")
+
+                    except Exception as yf_e:
+                        log.warning(f"Attempt {attempt+1} failed for simulation download: {yf_e}")
+                        if attempt < YFINANCE_RETRY_ATTEMPTS - 1:
+                            log.info(f"Waiting {YFINANCE_RETRY_DELAY_SECONDS}s before retrying...")
+                            time.sleep(YFINANCE_RETRY_DELAY_SECONDS)
+                        else:
+                            log.error("Simulation download failed after all retries.")
+                            raise # Re-raise the exception
+
+                # Check if downloads ultimately failed
+                if bulk_data_for_analysis is None or bulk_data_for_simulation is None:
+                    raise ValueError("One or both bulk data downloads failed after retries.")
+
+                log.info(f"[DATA] Bulk data loading completed in {time.time()-data_load_start:.2f}s")
+
+            except Exception as dl_e: # Catch errors from retries or initial failures
+                log.error(f"[DATA ERROR] Bulk data download ultimately failed for {day_str}: {dl_e}. Skipping day.")
+                continue # Skip to the next day
+
+            # ======================================================================
+            # --- Convert Multi-Index Data to Dict Format ---
+            # ======================================================================
+            data_for_analysis = {}
+            if bulk_data_for_analysis is not None:
+                for ticker in all_assets_for_today:
+                    try:
+                        df = bulk_data_for_analysis.xs(ticker, level=1, axis=1).dropna(how='all')
+                        df.rename(columns={
+                            'Open': 'open', 'High': 'high', 'Low': 'low',
+                            'Close': 'close', 'Adj Close': 'adj_close', 'Volume': 'volume'
+                        }, inplace=True)
+                        if not df.empty:
+                            data_for_analysis[ticker] = df[['open', 'high', 'low', 'close', 'volume']]
+                    except KeyError:
+                        log.debug(f"No analysis data found for {ticker} in bulk download for {decision_date_str}.")
+                    except Exception as ex:
+                        log.warning(f"Error processing analysis data for {ticker}: {ex}")
+
+            data_for_simulation = {}
+            if bulk_data_for_simulation is not None:
+                for ticker in all_assets_for_today:
+                    try:
+                        df = bulk_data_for_simulation.xs(ticker, level=1, axis=1).dropna(how='all')
+                        df.rename(columns={
+                            'Open': 'open', 'High': 'high', 'Low': 'low',
+                            'Close': 'close', 'Adj Close': 'adj_close', 'Volume': 'volume'
+                        }, inplace=True)
+                        if not df.empty:
+                            data_for_simulation[ticker] = df[['open', 'high', 'low', 'close', 'volume']]
+                    except KeyError:
+                        log.debug(f"No simulation data found for {ticker} in bulk download for {simulation_date_str}.")
+                    except Exception as ex:
+                        log.warning(f"Error processing simulation data for {ticker}: {ex}")
+
+            log.info(f"[DATA] Processed bulk data into caches. "
+                    f"Analysis: {len(data_for_analysis)} assets, Simulation: {len(data_for_simulation)} assets.")
+            # ======================================================================
 
             # --- Manage Exits ---
             exits_start = time.time()
             before_exits = len(portfolio['open_positions'])
-            # Pass the SIMULATION data cache which contains the current day's prices
             _manage_exits_for_day(portfolio, current_day, data_for_simulation, batch_id)
             closed_today = before_exits - len(portfolio['open_positions'])
             log.info(f"[EXIT] {closed_today} positions closed in {time.time()-exits_start:.2f}s")
 
             # --- Run Analysis Pipeline ---
             pipeline_start = time.time()
-            # Pass the ANALYSIS data cache which ONLY has data up to the previous day
             pipeline.run(
-                point_in_time=decision_date, # The decision is made based on the previous day's close
+                point_in_time=decision_date,
                 full_data_cache=data_for_analysis,
                 is_backtest=True,
                 batch_id=batch_id
@@ -153,19 +267,19 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
             signals_for_today = list(database_manager.predictions_collection.find({
                 "batch_id": batch_id,
                 "prediction_date": decision_date.to_pydatetime(),
-                "signal": {"$in": ["BUY", "SHORT"]} # FIX: Replaced "SELL" with "SHORT"
+                "signal": {"$in": ["BUY", "SHORT"]}
             }))
             before_entries = len(portfolio['open_positions'])
             _manage_entries_for_day(portfolio, signals_for_today, current_day, data_for_simulation)
             opened_today = len(portfolio['open_positions']) - before_entries
-            log.info(f"[ENTRY] {len(signals_for_today)} signals processed, {opened_today} trades opened in {time.time()-entries_start:.2f}s")
+            log.info(f"[ENTRY] {len(signals_for_today)} signals processed, "
+                    f"{opened_today} trades opened in {time.time()-entries_start:.2f}s")
 
             # --- Equity Logging ---
             valuation_start = time.time()
             open_value = 0
             for pos in portfolio['open_positions']:
                 try:
-                    # Use the SIMULATION data cache for valuation
                     current_price = data_for_simulation[pos['ticker']].loc[current_day]['close']
                     open_value += current_price * pos['num_shares']
                 except (KeyError, IndexError):
@@ -173,10 +287,11 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
             total_equity = portfolio['equity'] + open_value
             portfolio['daily_equity_log'].append({'date': current_day, 'equity': total_equity})
-            log.info(f"[PORTFOLIO] End-of-Day Equity: ₹{total_equity:,.2f} (valuation time {time.time()-valuation_start:.2f}s)")
+            log.info(f"[PORTFOLIO] End-of-Day Equity: ₹{total_equity:,.2f} "
+                    f"(valuation time {time.time()-valuation_start:.2f}s)")
 
-            # --- Day Complete ---
             log.info(f"--- Day {i+1}/{total_days} completed in {time.time()-day_start:.2f}s ---")
+
         except Exception as e:
             log.error(f"[ERROR] Exception during simulation of {day_str}: {e}", exc_info=True)
             continue

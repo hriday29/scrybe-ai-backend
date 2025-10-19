@@ -130,50 +130,91 @@ class AIAnalyzer:
             output_schema=output_schema
         )
 
-    def get_sentiment_verdict(self, sentiment_data: dict, ticker: str) -> dict:
-        """Analyzes ONLY sentiment data (news, options) to gauge market emotion."""
-        log.info(f"Getting sentiment verdict for {ticker}...")
+    # def get_sentiment_verdict(self, sentiment_data: dict, ticker: str) -> dict:
+    #     """Analyzes ONLY sentiment data (news, options) to gauge market emotion."""
+    #     log.info(f"Getting sentiment verdict for {ticker}...")
         
-        system_instruction = """
-        You are a market sentiment analyst. Your job is to gauge the prevailing emotion and potential catalysts from news and options market data.
-        Determine if the current mood is driven by fear, greed, or neutrality. Identify the most significant piece of information driving this sentiment.
-        Ignore the company's financials and the long-term technical chart.
+    #     system_instruction = """
+    #     You are a market sentiment analyst. Your job is to gauge the prevailing emotion and potential catalysts from news and options market data.
+    #     Determine if the current mood is driven by fear, greed, or neutrality. Identify the most significant piece of information driving this sentiment.
+    #     Ignore the company's financials and the long-term technical chart.
+    #     """
+        
+    #     output_schema = {
+    #         "type": "OBJECT", "properties": {
+    #             "prevailing_emotion": {"type": "STRING", "enum": ["Greed", "Fear", "Neutral"]},
+    #             "key_catalyst": {"type": "STRING", "description": "e.g., 'High call option volume', 'Negative earnings pre-announcement'"},
+    #             "strength": {"type": "STRING", "enum": ["Low", "Medium", "High"]},
+    #             "rationale": {"type": "STRING", "description": "A brief, one-sentence justification based only on sentiment indicators."}
+    #         }, "required": ["prevailing_emotion", "key_catalyst", "strength", "rationale"]
+    #     }
+
+    #     prompt = f"Provide a pure sentiment analysis for {ticker} using the following data:\n{json.dumps(sentiment_data, indent=2)}"
+
+    #     return self._make_azure_call(
+    #         system_instruction=system_instruction,
+    #         user_prompt=prompt,
+    #         deployment_name=self.flash_deployment,
+    #         output_schema=output_schema
+    #     )
+
+    def get_volatility_and_futures_verdict(self, vol_futures_data: dict, ticker: str) -> dict:
         """
-        
+        Analyzes volatility proxies (ATR%, BBW%) and Futures-Spot Basis %
+        to gauge market conditions relevant to the specific stock.
+        Replaces the old sentiment analysis.
+        """
+        log.info(f"Getting Volatility & Futures verdict for {ticker}...")
+
+        system_instruction = """
+        You are a quantitative derivatives analyst. Your focus is ONLY on the provided volatility metrics (ATR%, Bollinger Band Width %) and the Futures-Spot Basis %.
+        Based ONLY on this data, assess the current volatility environment and any directional bias suggested by the futures market premium or discount.
+        Ignore all chart patterns, fundamentals, or news. Your analysis must be purely based on the provided derivatives and volatility proxies.
+        Determine:
+        1. Volatility State: Is volatility contracting (Squeeze), expanding, or normal?
+        2. Basis Bias: Does the futures basis suggest bullish (premium), bearish (discount), or neutral sentiment?
+        3. Confidence: How strong is the signal from these indicators combined?
+        4. Rationale: Briefly justify your conclusions based *only* on the provided data.
+        """
+
         output_schema = {
             "type": "OBJECT", "properties": {
-                "prevailing_emotion": {"type": "STRING", "enum": ["Greed", "Fear", "Neutral"]},
-                "key_catalyst": {"type": "STRING", "description": "e.g., 'High call option volume', 'Negative earnings pre-announcement'"},
-                "strength": {"type": "STRING", "enum": ["Low", "Medium", "High"]},
-                "rationale": {"type": "STRING", "description": "A brief, one-sentence justification based only on sentiment indicators."}
-            }, "required": ["prevailing_emotion", "key_catalyst", "strength", "rationale"]
+                "volatility_state": {"type": "STRING", "enum": ["Squeeze", "Expansion", "Normal", "N/A"]},
+                "basis_bias": {"type": "STRING", "enum": ["Bullish Premium", "Bearish Discount", "Neutral / Flat", "N/A"]},
+                "confidence": {"type": "STRING", "enum": ["Low", "Medium", "High"]},
+                "rationale": {"type": "STRING", "description": "Brief justification based ONLY on volatility/basis data."}
+            }, "required": ["volatility_state", "basis_bias", "confidence", "rationale"]
         }
 
-        prompt = f"Provide a pure sentiment analysis for {ticker} using the following data:\n{json.dumps(sentiment_data, indent=2)}"
+        # Ensure the input data is passed correctly as a JSON string in the prompt
+        prompt = f"Provide a pure volatility and futures basis analysis for {ticker} using the following data:\n{json.dumps(vol_futures_data, indent=2)}"
 
         return self._make_azure_call(
             system_instruction=system_instruction,
             user_prompt=prompt,
-            deployment_name=self.flash_deployment,
+            deployment_name=self.flash_deployment, # Use the faster model for this focused task
             output_schema=output_schema
         )
         
-    def get_apex_analysis(self, ticker: str, technical_verdict: dict, fundamental_verdict: dict, sentiment_verdict: dict, market_state: dict, screener_reason: str) -> dict:
+    def get_apex_analysis(self, ticker: str, technical_verdict: dict, fundamental_verdict: dict, volatility_futures_verdict: dict, market_state: dict, screener_reason: str) -> dict: # <-- MODIFIED PARAMETER
         """
-        Synthesizes expert verdicts into a final, institutional-grade trade decision.
-        This is the "Head of Strategy" that makes the final call.
+        Synthesizes expert verdicts (Technical, Fundamental, Volatility/Futures)
+        into a final, institutional-grade trade decision.
         """
-        log.info(f"Generating APEX Synthesis for {ticker}...")
+        log.info(f"Generating APEX Synthesis for {ticker} using new Volatility/Futures input...")
 
+        # --- MODIFIED SYSTEM PROMPT ---
         system_instruction = """
-        You are "Scrybe," the Head of Strategy for a top-tier hedge fund. You have just received reports from your specialist analyst team: a technical analyst (CMT), a fundamental analyst (CFA), and a sentiment strategist.
+        You are "Scrybe," the Head of Strategy for a top-tier hedge fund. You have just received reports from your specialist analyst team: a technical analyst (CMT), a fundamental analyst (CFA), and a **Volatility & Derivatives strategist**. # <-- UPDATED ANALYST TYPE
 
         Your task is to synthesize these expert, and sometimes conflicting, reports into a single, decisive trade recommendation. Your decision is governed by the iron-clad Fund Mandate.
 
         **FUND MANDATE & DECISION HIERARCHY:**
-        1.  **Market Regime is KING:** Your primary goal is to trade in alignment with the `market_regime`. Counter-trend trades are forbidden unless ALL three specialist reports (Technical, Fundamental, Sentiment) show high-confidence agreement against the market regime.
-        2.  **Confluence Builds Conviction:** Your `confidence` level should reflect the degree of alignment. If technical and fundamental verdicts align with the market regime, confidence is 'High'. If only one aligns, it's 'Medium'. If sentiment also aligns, it becomes 'Very High'.
-        3.  **Sentiment is a Modifier:** Use sentiment to adjust confidence. A strong "Greed" signal on a Bullish setup boosts confidence. A "Fear" signal can downgrade confidence or veto the trade if the conflict is too severe.
+        1.  **Market Regime is KING:** Your primary goal is to trade in alignment with the `market_regime`. Counter-trend trades are forbidden unless ALL three specialist reports (Technical, Fundamental, Volatility/Futures) show high-confidence agreement against the market regime.
+        2.  **Confluence Builds Conviction:** Your `confidence` level should reflect the degree of alignment. If technical and fundamental verdicts align with the market regime, confidence is 'High'. If only one aligns, it's 'Medium'.
+        3.  **Volatility/Futures is a Modifier:** Use the Volatility/Futures report primarily to adjust confidence or veto trades in extreme conditions.
+            * **Volatility:** A 'Squeeze' might precede a breakout, potentially increasing confidence if other factors align. High 'Expansion' might warrant *reducing* position size or skipping the trade due to risk, even if the direction is right.
+            * **Basis:** A strong 'Bullish Premium' can boost confidence in a BUY signal. A strong 'Bearish Discount' can boost confidence in a SHORT signal. A conflicting basis (e.g., Bullish Premium on a SHORT signal) should decrease confidence or potentially veto the trade.
 
         **CRITICAL SCORING RULE:** You MUST use the sign of the scrybeScore to indicate direction.
         - Positive (+) scores are ONLY for BUY signals.
@@ -185,7 +226,9 @@ class AIAnalyzer:
 
         Synthesize the reports, weigh the evidence according to the mandate, and generate the final trade plan in the required JSON format.
         """
+        # --- END MODIFIED SYSTEM PROMPT ---
 
+        # Output schema remains the same
         output_schema = {
             "type": "OBJECT",
             "properties": {
@@ -207,11 +250,12 @@ class AIAnalyzer:
                 }
             },
             "required": [
-                "scrybeScore", "signal", "thesisType", "confidence", 
+                "scrybeScore", "signal", "thesisType", "confidence",
                 "keyInsight", "analystVerdict", "keyRisks_and_Mitigants", "keyObservations"
             ]
         }
-        
+
+        # --- MODIFIED PROMPT CONTENT ---
         prompt_content = "\n".join([
             "## Analyst Reports & Market State ##",
             f"Ticker: {ticker}",
@@ -219,30 +263,34 @@ class AIAnalyzer:
             f"Market State: {json.dumps(market_state, indent=2)}",
             f"Technical Verdict: {json.dumps(technical_verdict, indent=2)}",
             f"Fundamental Verdict: {json.dumps(fundamental_verdict, indent=2)}",
-            f"Sentiment Verdict: {json.dumps(sentiment_verdict, indent=2)}",
+            f"Volatility/Futures Verdict: {json.dumps(volatility_futures_verdict, indent=2)}", # <-- MODIFIED LINE
             "\nSynthesize these reports into the final trade decision as per the Fund Mandate."
         ])
+        # --- END MODIFIED PROMPT CONTENT ---
 
-        # Removed the complex key rotation and retry logic. Now using a single, robust call.
+
         log.info(f"--- Attempting APEX synthesis with Azure deployment '{self.pro_deployment}' ---")
         try:
             analysis_result = self._make_azure_call(
                 system_instruction=system_instruction,
                 user_prompt=prompt_content,
-                deployment_name=self.pro_deployment,
+                deployment_name=self.pro_deployment, # Still use Pro for the final synthesis
                 output_schema=output_schema,
                 timeout=300,
-                max_tokens=8192
+                max_tokens=8192 # Keep max tokens high for complex synthesis
             )
-            
+
             if "error" in analysis_result:
-                 raise Exception(analysis_result["error"])
+                raise Exception(analysis_result["error"])
 
             analysis_result["model_used"] = self.pro_deployment
             log.info(f"✅ Success on APEX synthesis for {ticker}.")
             return analysis_result
         except Exception as e:
             log.critical(f"CRITICAL: APEX synthesis failed for {ticker}. Error: {e}")
+            # Consider returning a default HOLD/Error structure instead of raising Exception
+            # to prevent pipeline failure for one bad stock.
+            # For now, keeping the exception raise as per original design.
             raise Exception(f"APEX synthesis failed for deployment {self.pro_deployment}.")
 
     def get_single_news_impact_analysis(self, article: dict) -> dict:

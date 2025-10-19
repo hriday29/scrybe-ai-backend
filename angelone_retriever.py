@@ -524,3 +524,172 @@ def get_market_depth(symbol: str, exchange: str = "NSE") -> dict | None:
     except Exception as e:
         log.error(f"Error in get_market_depth for {symbol}: {e}", exc_info=True)
         return None
+
+# ===================================================================
+# SECTION 4: FUTURES DATA
+# ===================================================================
+
+@rate_limited
+def get_futures_contract_data(symbol: str, exchange: str = "NFO") -> dict | None:
+    """
+    Fetches key data (LTP, OI, Volume) for the nearest expiry futures contract.
+    """
+    log.info(f"[AO] Getting nearest futures contract data for {symbol}...")
+    if (not smart_api_session or not INSTRUMENT_LIST) and not initialize_angelone_session():
+        return None
+
+    underlying_symbol = symbol.replace('.NS', '')
+
+    # Step 1: Find all futures expiry dates for the given stock
+    try:
+        futures_expiries = set()
+        for inst in INSTRUMENT_LIST.values():
+            if (isinstance(inst, dict) and
+                inst.get('instrumenttype') == 'FUTSTK' and # Changed to FUTSTK
+                inst.get('name') == underlying_symbol and
+                inst.get('exch_seg') == exchange):
+                futures_expiries.add(inst.get('expiry'))
+
+        if not futures_expiries:
+            log.warning(f"No futures expiry dates found for {symbol} in the instrument list.")
+            return None
+
+        # Step 2: Find the nearest expiry date
+        today = datetime.now()
+        parsed_dates = []
+        for d in futures_expiries:
+            try:
+                # AngelOne expiry format is DDMMMYYYY (e.g., 25JUL2024)
+                parsed_dates.append(datetime.strptime(d, '%d%b%Y'))
+            except Exception:
+                log.debug(f"Ignoring unparsable futures expiry date entry: {d}")
+
+        if not parsed_dates:
+            log.warning(f"No parsable futures expiry dates found for {symbol}.")
+            return None
+
+        nearest = min(d for d in parsed_dates if d >= today) # Ensure expiry is not in the past
+        nearest_expiry_str = nearest.strftime('%d%b%Y').upper()
+
+        log.info(f"Nearest futures expiry date for {symbol} is {nearest_expiry_str}.")
+
+        # Step 3: Find the specific instrument token for this future
+        future_token = None
+        future_trading_symbol = None
+        search_key_prefix = f"{underlying_symbol.upper()}{nearest_expiry_str}" # e.g., RELIANCE25JUL2024
+
+        # Search the INSTRUMENT_LIST dictionary (fast lookup)
+        for key, inst in INSTRUMENT_LIST.items():
+             # Check if the key starts with our target prefix and is a future
+             if (isinstance(inst, dict) and
+                 key.startswith(search_key_prefix) and
+                 inst.get('instrumenttype') == 'FUTSTK' and
+                 inst.get('exch_seg') == exchange and
+                 inst.get('expiry') == nearest_expiry_str): # Double check expiry
+                 future_token = inst.get('token')
+                 future_trading_symbol = inst.get('symbol') # Get the exact symbol like RELIANCE24JULFUT
+                 break # Found the first match (should be the only one)
+
+        if not future_token or not future_trading_symbol:
+            log.error(f"Could not find instrument token/symbol for {underlying_symbol} future expiring {nearest_expiry_str}.")
+            return None
+
+        log.info(f"Found future instrument: Symbol='{future_trading_symbol}', Token='{future_token}'")
+
+        # Step 4: Fetch the quote data using the token
+        # Use the specific future symbol for the ltpData call
+        quote_data = smart_api_session.ltpData(exchange, future_trading_symbol, future_token)
+
+        if quote_data and quote_data.get('status'):
+             data = quote_data.get('data')
+             if data:
+                 log.info(f"✅ Successfully fetched futures quote for {future_trading_symbol}.")
+                 # Extract relevant fields
+                 return {
+                     "symbol": future_trading_symbol,
+                     "expiry_date": nearest_expiry_str,
+                     "ltp": data.get('ltp'),
+                     "open_interest": data.get('opnInterest'), # Note the capitalization from API
+                     "volume": data.get('volume'),
+                     "last_traded_time": data.get('exchFeedTime') # Useful for checking freshness
+                 }
+             else:
+                  log.error(f"Empty data received for futures quote {future_trading_symbol}.")
+                  return None
+        else:
+            err_msg = quote_data.get('message') if isinstance(quote_data, dict) else "Unknown API error"
+            log.error(f"API error fetching futures quote for {future_trading_symbol}: {err_msg}")
+            return None
+
+    except Exception as e:
+        log.error(f"Error getting futures contract data for {symbol}: {e}", exc_info=True)
+        return None
+
+
+def get_key_oi_levels(symbol: str, num_levels: int = 3) -> dict | None:
+    """
+    Fetches the option chain and identifies the top N Call and Put strikes
+    with the highest Open Interest for the nearest expiry.
+    """
+    log.info(f"[AO] Getting Top {num_levels} High OI Strikes for {symbol}...")
+    try:
+        chain_data = get_option_chain_data(symbol) # Re-use the existing function
+        if not chain_data or not chain_data.get('chain'):
+            log.warning(f"No option chain data available for {symbol} to find high OI levels.")
+            return None
+
+        df = pd.DataFrame(chain_data['chain'])
+        required_cols = ['strikePrice', 'optionType', 'openInterest']
+        if not all(col in df.columns for col in required_cols):
+            log.warning(f"Option chain for {symbol} missing columns for OI analysis.")
+            return None
+
+        # Convert to numeric, coercing errors
+        df['strikePrice'] = pd.to_numeric(df['strikePrice'], errors='coerce')
+        df['openInterest'] = pd.to_numeric(df['openInterest'], errors='coerce')
+        df.dropna(subset=['strikePrice', 'openInterest'], inplace=True)
+
+        calls = df[df['optionType'] == 'CE'].nlargest(num_levels, 'openInterest')
+        puts = df[df['optionType'] == 'PE'].nlargest(num_levels, 'openInterest')
+
+        high_oi_calls = calls[['strikePrice', 'openInterest']].to_dict('records')
+        high_oi_puts = puts[['strikePrice', 'openInterest']].to_dict('records')
+
+        log.info(f"✅ Identified High OI levels for {symbol}. Calls: {[c['strikePrice'] for c in high_oi_calls]}, Puts: {[p['strikePrice'] for p in high_oi_puts]}")
+        return {
+            "expiry_date": chain_data.get("expiry_date"),
+            "underlying_price": chain_data.get("underlying_price"),
+            "high_oi_calls": high_oi_calls,
+            "high_oi_puts": high_oi_puts
+        }
+
+    except Exception as e:
+        log.error(f"Error getting key OI levels for {symbol}: {e}", exc_info=True)
+        return None
+
+# Convenience function for Indices (Indices use FUTIDX/OPTIDX)
+def get_index_futures_data(index_name: str) -> dict | None:
+    """Gets futures data specifically for indices like NIFTY, BANKNIFTY."""
+    # This requires finding the correct index name/symbol mapping in INSTRUMENT_LIST
+    # and using 'instrumenttype' = 'FUTIDX'
+    # For now, we can adapt the get_futures_contract_data logic if needed,
+    # ensuring the correct instrument type and exchange ("NFO") are used.
+    # We might need a specific mapping for index names to their base names in the instrument list.
+
+    # Placeholder - Adapt logic from get_futures_contract_data
+    log.warning("get_index_futures_data needs specific implementation based on index names in INSTRUMENT_LIST")
+    # Example call structure (needs refinement based on instrument list inspection)
+    # return get_futures_contract_data(index_name, exchange="NFO") # Might need symbol mapping first
+    return None
+
+def get_index_key_oi_levels(index_name: str, num_levels: int = 5) -> dict | None:
+    """Gets key OI levels specifically for indices."""
+    # Similar to index futures, this requires finding the index in INSTRUMENT_LIST
+    # and using 'instrumenttype' = 'OPTIDX' when filtering/fetching.
+    # The get_option_chain_data function might need adaptation or a specific index version.
+
+    # Placeholder - Adapt logic from get_key_oi_levels
+    log.warning("get_index_key_oi_levels needs specific implementation based on index names in INSTRUMENT_LIST")
+    # Example call structure (needs refinement based on instrument list inspection)
+    # return get_key_oi_levels(index_name, num_levels=num_levels) # Might need symbol mapping and option chain adjustments
+    return None

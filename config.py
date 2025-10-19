@@ -45,15 +45,15 @@ FLASH_MODEL = os.getenv("AZURE_FLASH_DEPLOYMENT", "gpt-4.1")
 
 # --- Strategy & Portfolio ---
 APEX_SWING_STRATEGY = {
-    "name": "AI_Analyst_Optimized_v1",
+    "name": "AI_Candlestick_Swing_v1", # Renamed to reflect the new screener
     "allow_short_selling": True,
-    "holding_period": 15,                   # Increased to capture slightly longer swings.
-    "stop_loss_atr_multiplier": 1.75,       # Tighter stop to reduce risk on each trade.
-    "profit_target_rr_multiple": 2.5,       # Slightly lower R:R to increase win rate.
-    "min_conviction_score": 40,             # Increased to focus on higher quality signals from the wider funnel.
+    "holding_period": 15,              # Keep 15 days for swing trades
+    "stop_loss_atr_multiplier": 1.75,  # Keep initial stop relatively standard
+    "profit_target_rr_multiple": 2.5,  # Keep target standard
+    "min_conviction_score": 45,        # Slightly increased threshold for AI conviction -> to compensate for the broader screener funnel.
     "use_trailing_stop": True,
-    "trailing_stop_atr_multiplier": 1.5,
-    "trailing_stop_activation_r": 1.2,      # Activate trailing stop after 1.2R in profit.
+    "trailing_stop_atr_multiplier": 1.5, # Keep the trail distance standard for now
+    "trailing_stop_activation_r": 1.5,   # Activate trailing stop a bit later (after 1.5R) -> to potentially give trades more room to run initially.
 }
 
 PORTFOLIO_CONSTRAINTS = {

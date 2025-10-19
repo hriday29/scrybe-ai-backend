@@ -33,3 +33,4 @@ logzero
 websocket-client
 pytz
 py_vollib_vectorized
+TA-Lib
