@@ -4,30 +4,40 @@ on:
   workflow_dispatch:
     inputs:
       batch_id:
-        description: 'Unique ID for the backtest batch (e.g., AI_Candlestick_Apr25)'
+        description: 'Unique ID for the backtest batch (e.g., AI_Smallcap_Apr25)' # Updated example ID
         required: true
         default: 'MANUAL-RUN'
       start_date:
         description: 'Start date (YYYY-MM-DD)'
         required: true
-        default: '2025-04-01' # Updated default example
+        default: '2025-04-01'
       end_date:
         description: 'End date (YYYY-MM-DD)'
         required: true
-        default: '2025-04-30' # Updated default example
+        default: '2025-04-30'
       fresh_run:
         description: 'Delete previous data for this batch_id? (true/false)'
         required: true
         default: 'true'
       tickers:
-        description: 'Optional: Tickers to test (e.g., RELIANCE.NS HDFCBANK.NS). Leave blank for full NSE universe.' # Description is okay, but update default examples above.
+        description: 'Optional: Tickers to test (e.g., RELIANCE.NS HDFCBANK.NS). Leave blank for Nifty Smallcap 250.' # Updated description
         required: false
         default: ''
+      # --- ADDED BATCH INPUTS ---
+      total_batches:
+        description: 'Total number of batches to split universe into (e.g., 2 or 3)'
+        required: true
+        default: '2' # Default to splitting into 2 batches
+      batch_num:
+        description: 'Which batch number to run (1 to total_batches)'
+        required: true
+        default: '1' # Default to running the first batch
+      # --- END ADDED BATCH INPUTS ---
 
 jobs:
   run-unified-backtest:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # 6 hours (Keep this, full NSE backtest might be long)
+    timeout-minutes: 360 # 6 hours - Still might be tight for one batch, monitor runtime
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -38,7 +48,6 @@ jobs:
           python-version: '3.12'
           cache: 'pip'
 
-      # --- ADDED TA-LIB C LIBRARY INSTALLATION ---
       - name: Install TA-Lib C Library Dependencies
         run: |
           sudo apt-get update
@@ -53,12 +62,10 @@ jobs:
           make && \
           sudo make install
           cd ..
-      # --- END ADDED STEPS ---
 
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip
-          # Ensure TA-Lib is listed in requirements.txt
           python -m pip install -r requirements.txt
 
       - name: Run Unified Backtesting Engine
@@ -72,18 +79,21 @@ jobs:
           # Database & Other API Keys
           ANALYSIS_DB_URI: ${{ secrets.ANALYSIS_DB_URI }}
           SCHEDULER_DB_URI: ${{ secrets.SCHEDULER_DB_URI }}
-          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }} # Still needed if data_retriever imports it
+          NEWSAPI_API_KEY: ${{ secrets.NEWSAPI_API_KEY }}
 
-          # --- Azure AI Credentials & Deployments ---
+          # Azure AI Credentials & Deployments
           AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
           AZURE_AI_API_KEY: ${{ secrets.AZURE_AI_API_KEY }}
           AZURE_PRO_DEPLOYMENT: ${{ secrets.AZURE_PRO_DEPLOYMENT }}
           AZURE_FLASH_DEPLOYMENT: ${{ secrets.AZURE_FLASH_DEPLOYMENT }}
 
         run: |
+          echo "Running backtest with Batch ID: ${{ github.event.inputs.batch_id }}, Period: ${{ github.event.inputs.start_date }} to ${{ github.event.inputs.end_date }}, Batch: ${{ github.event.inputs.batch_num }} of ${{ github.event.inputs.total_batches }}"
           python main_orchestrator.py \
             --batch_id ${{ github.event.inputs.batch_id }} \
             --start_date ${{ github.event.inputs.start_date }} \
             --end_date ${{ github.event.inputs.end_date }} \
             --fresh_run ${{ github.event.inputs.fresh_run }} \
-            ${{ github.event.inputs.tickers && '--tickers' }} ${{ github.event.inputs.tickers }} # Correctly handles optional tickers argument
+            --total_batches ${{ github.event.inputs.total_batches }} \
+            --batch_num ${{ github.event.inputs.batch_num }} \
+            ${{ github.event.inputs.tickers && '--tickers' }} ${{ github.event.inputs.tickers }} # Keep optional ticker override

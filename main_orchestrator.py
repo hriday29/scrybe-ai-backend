@@ -13,6 +13,7 @@ from collections import deque
 from sector_analyzer import CORE_SECTOR_INDICES, BENCHMARK_INDEX
 import index_manager
 from analysis_pipeline import AnalysisPipeline, BENCHMARK_TICKERS
+from pandas.tseries.offsets import BDay
 from performance_analyzer import generate_backtest_report
 
 STATE_FILE = 'simulation_state.json'
@@ -31,7 +32,7 @@ def load_state():
 
 api_call_timestamps = deque()
 
-def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: bool = False, tickers: list = None):
+def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: bool = False, tickers: list = None, batch_num: int = 1, total_batches: int = 1):
     """
     Runs a memory-efficient, day-by-day backtest simulation using on-demand data loading
     with file caching for the Angel One data source.
@@ -45,16 +46,40 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
     pipeline = AnalysisPipeline()
     pipeline._setup(mode='scheduler')
 
-    # --- Fetch the static universe ONCE for the entire backtest run ---
-    log.info("Fetching the full NSE active ticker list for this backtest run...")
-    # We use the 'live' fetcher here as an approximation for the historical period
-    backtest_universe = index_manager.get_nse_all_active_tickers()
+    # --- Fetch the Nifty Smallcap 250 universe ONCE for the entire backtest run --- # <-- MODIFIED COMMENT
+    log.info("Fetching the Nifty Smallcap 250 list for this backtest run...") # <-- MODIFIED LOG
+    backtest_universe = index_manager.get_nifty_smallcap_250_tickers() # <-- USE NEW FUNCTION
     if not backtest_universe:
-        log.fatal("[SETUP ERROR] Could not fetch the NSE ticker list. Aborting backtest.")
+        log.fatal("[SETUP ERROR] Could not fetch the Smallcap ticker list. Aborting backtest.") # <-- MODIFIED LOG
         pipeline.close()
         return
-    log.info(f"Using a static universe of {len(backtest_universe)} tickers for this run.")
-    # --- End fetching static universe ---
+    log.info(f"Using a static universe of {len(backtest_universe)} Smallcap tickers for this run.") # <-- MODIFIED LOG
+    # --- End fetching universe ---
+
+    # --- NEW: SLICE UNIVERSE FOR BATCH PROCESSING ---
+    if total_batches > 1:
+        if not (1 <= batch_num <= total_batches):
+            log.error(f"Invalid batch_num {batch_num}. Must be between 1 and {total_batches}.")
+            pipeline.close()
+            return
+
+        universe_size = len(backtest_universe)
+        batch_size = (universe_size + total_batches - 1) // total_batches  # Ceiling division
+        start_idx = (batch_num - 1) * batch_size
+        end_idx = min(batch_num * batch_size, universe_size)  # Ensure end_idx doesn't exceed list size
+
+        backtest_universe_batch = backtest_universe[start_idx:end_idx]
+
+        log.warning(f"RUNNING BATCH {batch_num}/{total_batches}: Processing tickers {start_idx+1} to {end_idx} "
+                    f"(Size: {len(backtest_universe_batch)} tickers).")
+    else:
+        # If total_batches is 1, run the full universe
+        backtest_universe_batch = backtest_universe
+        log.info("Running on the full fetched universe (total_batches=1).")
+    # --- END UNIVERSE SLICING ---
+
+    # --- Use the sliced batch 'backtest_universe_batch' from now on ---
+    log.info(f"Using a universe of {len(backtest_universe_batch)} tickers for this batch.")
 
     if is_fresh_run:
         log.warning("FRESH RUN: Deleting previous predictions and performance data for this batch.")
@@ -118,7 +143,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
             index_data_simulation = {}
 
             # Prepare date strings used in downloads
-            decision_date = current_day - pd.Timedelta(days=1)
+            decision_date = (current_day - pd.tseries.offsets.BDay(1)).normalize()
             decision_date_str = decision_date.strftime('%Y-%m-%d')
             simulation_date_str = current_day.strftime('%Y-%m-%d')
 
@@ -218,7 +243,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
 
             # --- Now define assets for the main STOCK bulk download ---
             # Exclude indices we already downloaded to avoid downloading them again
-            stock_assets_for_today = [t for t in backtest_universe if t not in essential_indices]
+            stock_assets_for_today = [t for t in backtest_universe_batch if t not in essential_indices]
             log.info(f"[DATA] Preparing to load data for {len(stock_assets_for_today)} stock assets for {day_str}...")
 
             # ======================================================================
@@ -646,7 +671,15 @@ if __name__ == "__main__":
     parser.add_argument('--fresh_run', type=lambda x: (str(x).lower() == 'true'), default=True,
                         help='Delete previous data for this batch_id? (true/false)')
     parser.add_argument("--tickers", nargs='+', required=False,
-                        help="Optional: Space-separated list of tickers to backtest.")
+                        help="Optional: Space-separated list of tickers to backtest instead of index.")
+
+    # --- BATCH ARGUMENTS ---
+    parser.add_argument("--batch_num", type=int, default=1,
+                        help="Current batch number (1-based) if splitting the universe.")
+    parser.add_argument("--total_batches", type=int, default=1,
+                        help="Total number of batches the universe is split into.")
+    # --- END ADDED ARGUMENTS ---
+
     args = parser.parse_args()
 
     run_simulation(
@@ -654,5 +687,9 @@ if __name__ == "__main__":
         start_date=args.start_date,
         end_date=args.end_date,
         is_fresh_run=args.fresh_run,
-        tickers=args.tickers
+        tickers=args.tickers,
+        # --- PASS BATCH ARGUMENTS ---
+        batch_num=args.batch_num,
+        total_batches=args.total_batches
+        # --- END PASSING ARGUMENTS ---
     )

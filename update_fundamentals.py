@@ -24,47 +24,50 @@ def run_fundamentals_update():
         database_manager.init_db(purpose='analysis')
         fundamentals_collection = database_manager.db.fundamentals
 
-        # --- FIX 1: Fetch the CURRENT stock universe ---
-        stock_universe = index_manager.get_nse_all_active_tickers()
+        # --- MODIFIED: Fetch the Nifty Smallcap 250 universe ---
+        log.info("Fetching Nifty Smallcap 250 ticker list...")
+        stock_universe = index_manager.get_nifty_smallcap_250_tickers()  # <-- CHANGED FUNCTION CALL
+        # --- END MODIFICATION ---
+
         if not stock_universe:
-            log.error("Could not fetch stock universe. Aborting fundamentals update.")
+            log.error("Could not fetch Smallcap 250 universe. Aborting fundamentals update.")
             return
 
-        log.info(f"Updating comprehensive fundamental data for {len(stock_universe)} tickers...")
+        log.info(f"Updating comprehensive fundamental data for {len(stock_universe)} Smallcap 250 tickers...")
 
         for i, ticker_symbol in enumerate(stock_universe):
             try:
                 log.info(f"({i+1}/{len(stock_universe)}) Processing {ticker_symbol}...")
                 ticker_obj = yf.Ticker(ticker_symbol)
                 latest_info = ticker_obj.info
-                
+
                 if not latest_info or not latest_info.get('marketCap'):
                     log.warning(f"No valid summary info found for {ticker_symbol}. Skipping.")
                     continue
 
-                # --- STRATEGY: Save the LATEST full data as a distinct document ---
+                # --- STRATEGY: Save the LATEST full data ---
                 latest_doc = get_curated_fundamentals(latest_info)
                 latest_doc['ticker'] = ticker_symbol
                 latest_doc['asOfDate'] = pd.to_datetime('today', utc=True).to_pydatetime()
+
                 fundamentals_collection.update_one(
                     {'ticker': ticker_symbol, 'asOfDate': latest_doc['asOfDate']},
                     {'$set': latest_doc},
                     upsert=True
                 )
-                log.info(f"Saved CURRENT snapshot for {ticker_symbol}.")
 
-                # --- FIX 2: Create PURE historical documents, free of lookahead bias ---
+                # --- Create PURE historical documents ---
                 quarterly_financials = ticker_obj.quarterly_financials
                 if quarterly_financials.empty:
                     log.warning(f"No quarterly financial data found for {ticker_symbol}.")
+                    time.sleep(1)  # Shorter delay when financials fail
                     continue
 
-                # Process the last 3 years (12 quarters) of historical data
-                for date_col in quarterly_financials.columns[:12]:
+                quarters_saved_count = 0
+                for date_col in quarterly_financials.columns[:12]:  # Last 3 years
                     as_of_date = pd.to_datetime(date_col, utc=True).to_pydatetime()
                     income_statement = quarterly_financials[date_col]
-                    
-                    # Create a NEW, clean document for each historical quarter
+
                     historical_doc = {
                         'ticker': ticker_symbol,
                         'asOfDate': as_of_date,
@@ -72,26 +75,27 @@ def run_fundamentals_update():
                         'netIncome': income_statement.get('Net Income'),
                         'grossProfit': income_statement.get('Gross Profit'),
                         'ebitda': income_statement.get('EBITDA'),
-                        # Note: We cannot get historical PE, D/E etc. from this source.
-                        # We are prioritizing correctness over completeness to avoid bias.
                     }
-                    
-                    # Calculate profit margin for this specific quarter
-                    if historical_doc['totalRevenue'] and historical_doc['totalRevenue'] > 0:
+
+                    # Derived field: Profit margins
+                    if historical_doc.get('totalRevenue') and historical_doc['totalRevenue'] > 0 and historical_doc.get('netIncome') is not None:
                         historical_doc['profitMargins'] = historical_doc['netIncome'] / historical_doc['totalRevenue']
-                    
-                    # Save the pure historical document
-                    fundamentals_collection.update_one(
+
+                    update_result = fundamentals_collection.update_one(
                         {'ticker': ticker_symbol, 'asOfDate': as_of_date},
-                        {'$set': {k: v for k, v in historical_doc.items() if v is not None}},
+                        {'$set': {k: v for k, v in historical_doc.items() if pd.notna(v)}},
                         upsert=True
                     )
-                
-                log.info(f"✅ Saved {len(quarterly_financials.columns[:12])} quarters of PURE historical fundamentals for {ticker_symbol}.")
-                time.sleep(2) # Rate limit yfinance calls
+
+                    if update_result.upserted_id or update_result.modified_count > 0:
+                        quarters_saved_count += 1
+
+                log.info(f"✅ Processed {ticker_symbol}: Saved CURRENT snapshot + {quarters_saved_count} historical quarters.")
+                time.sleep(2)  # Respect rate limits
 
             except Exception as e:
                 log.error(f"❌ Failed to process {ticker_symbol}: {e}")
+                time.sleep(1)  # Prevent hammering API
 
     except Exception as e:
         log.critical(f"A critical error occurred during the fundamentals update process: {e}", exc_info=True)

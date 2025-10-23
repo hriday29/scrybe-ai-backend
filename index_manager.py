@@ -148,3 +148,63 @@ def get_nse_all_active_tickers():
     except Exception as e:
         log.error(f"Unexpected error fetching NSE ticker list: {e}", exc_info=True)
         return []
+
+def get_nifty_smallcap_250_tickers():
+    """
+    Fetches the Nifty Smallcap 250 constituents list from NSE India.
+    Returns a list of ticker symbols formatted for yfinance (e.g., 'SYMBOL.NS').
+    Uses the static NIFTY_50 list as a fallback (less ideal, but better than nothing).
+    """
+    log.info("Attempting to fetch live Nifty Smallcap 250 constituents list...")
+
+    # NSE URL for Nifty Smallcap 250 constituents (Verify this URL is current)
+    url = "https://www.niftyindices.com/IndexConstituent/ind_niftysmallcap250list.csv"
+    # Older/Alternative might be needed if the above fails
+    # url = "https://archives.nseindia.com/content/indices/ind_niftysmallcap250list.csv"
+
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.5',
+        'Connection': 'keep-alive'
+    }
+
+    try:
+        response = requests.get(url, headers=headers, timeout=15)
+        response.raise_for_status()
+
+        csv_data = StringIO(response.content.decode('utf-8'))
+        # Skip rows if needed - NSE CSVs sometimes have header info before the table
+        # Try without skiprows first, add if necessary (e.g., skiprows=3)
+        df = pd.read_csv(csv_data)
+
+        # --- Find the correct symbol column ---
+        # NSE CSVs can have inconsistent column names ('Symbol', 'SYMBOL', ' Symbol')
+        symbol_col = None
+        possible_cols = ['Symbol', 'SYMBOL', ' Symbol']
+        for col in possible_cols:
+            if col in df.columns:
+                symbol_col = col
+                break
+        if symbol_col is None:
+             raise ValueError(f"CSV format error: Could not find symbol column in {df.columns}")
+        # --- End Find Symbol Column ---
+
+        if df.empty:
+            raise ValueError("Downloaded Smallcap 250 CSV is empty.")
+
+        # Append '.NS' for yfinance compatibility
+        tickers = (df[symbol_col].astype(str) + '.NS').tolist()
+
+        # Sanity check (expecting around 250 tickers)
+        if 200 <= len(tickers) <= 300:
+            log.info(f"✅ Successfully fetched {len(tickers)} Smallcap 250 tickers from NSE.")
+            return tickers
+        else:
+            log.warning(f"Live Smallcap 250 fetch returned an unusual number ({len(tickers)} tickers). Using fallback.")
+            # Fallback to Nifty50 is not ideal, but better than failing entirely
+            return config.NIFTY_50_TICKERS
+
+    except Exception as e:
+        log.error(f"Failed to fetch or parse live Nifty Smallcap 250 list: {e}. Using fallback.")
+        return config.NIFTY_50_TICKERS # Fallback
