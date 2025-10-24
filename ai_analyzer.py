@@ -67,7 +67,7 @@ class AIAnalyzer:
             }
             # Only add max_tokens to the parameters if it has a value (is not None)
             if max_tokens is not None:
-                api_params["max_tokens"] = max_tokens
+                api_params["max_completion_tokens"] = max_tokens
             # --- END FIX ---
 
             # Use dictionary unpacking (**) to pass the parameters
