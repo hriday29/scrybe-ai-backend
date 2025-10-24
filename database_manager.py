@@ -1,5 +1,6 @@
 #database_manager.py
 import pymongo
+from pymongo import ReplaceOne
 import certifi
 from logger_config import log
 import config
@@ -158,35 +159,100 @@ def get_precomputed_analysis(ticker: str) -> dict | None:
         log.error(f"Failed to fetch pre-computed analysis for {ticker}: {e}")
         return None
 
-def save_prediction_for_backtesting(prediction_doc: dict, batch_id: str):
-    """Saves a pre-formatted prediction document to the scheduler database without duplicates."""
+def get_open_backtest_trades(batch_id: str) -> list:
+    """
+    Fetches all trades from the 'predictions' collection that are 'open'
+    and belong to a specific batch_id.
+    """
     if predictions_collection is None:
-        log.error("Cannot save prediction, 'scheduler' database not initialized.")
+        log.error("Cannot get open trades, 'scheduler' database not initialized.")
+        return []
+    try:
+        query = {
+            "batch_id": batch_id,
+            "status": "open",
+            "signal": {"$in": ["BUY", "SHORT"]} # Only fetch actionable signals
+        }
+        trades = list(predictions_collection.find(query))
+        log.info(f"Found {len(trades)} open backtest trades for batch_id: {batch_id}")
+        return trades
+    except Exception as e:
+        log.error(f"Failed to fetch open backtest trades: {e}", exc_info=True)
+        return []
+
+def save_backtest_performance_trade(trade_doc: dict):
+    """
+    Saves a single completed (closed) trade to the 'performance' collection.
+    """
+    if performance_collection is None:
+        log.error("Cannot save performance trade, 'scheduler' db not initialized.")
         return
     try:
-        prediction_doc['batch_id'] = batch_id
+        # This doc comes from the simulator and is already complete
+        performance_collection.insert_one(trade_doc)
+        log.info(f"Saved closed performance trade for {trade_doc['ticker']} on {trade_doc['close_date']}.")
+    except Exception as e:
+        log.error(f"Failed to save performance trade for {trade_doc.get('ticker')}: {e}")
 
-        # Use a unique filter: ticker + prediction_date + batch_id
-        filter_query = {
-            "ticker": prediction_doc["ticker"],
-            "prediction_date": prediction_doc["prediction_date"],
-            "batch_id": batch_id
-        }
+def mark_backtest_prediction_processed(prediction_id, batch_id: str, new_status: str = "processed"):
+    """
+    Updates the status of a trade in the 'predictions' collection
+    from 'open' to 'processed' (or 'error') after simulation.
+    """
+    if predictions_collection is None:
+        log.error("Cannot update prediction status, 'scheduler' db not initialized.")
+        return
+    try:
+        predictions_collection.update_one(
+            {"_id": prediction_id, "batch_id": batch_id},
+            {"$set": {"status": new_status}}
+        )
+    except Exception as e:
+        log.error(f"Failed to mark prediction {prediction_id} as processed: {e}")
+        
+def save_predictions_for_backtesting_bulk(prediction_docs: list, batch_id: str):
+    """
+    Saves a list of prediction documents in a single, high-performance bulk write
+    operation to the scheduler database, preventing duplicates.
+    """
+    if predictions_collection is None:
+        log.error("Cannot save predictions, 'scheduler' database not initialized.")
+        return
+    
+    if not prediction_docs:
+        log.info("No prediction documents to save.")
+        return
 
-        # Upsert instead of blind insert
-        result = predictions_collection.update_one(
-            filter_query,
-            {"$set": prediction_doc},
-            upsert=True
+    try:
+        operations = []
+        for doc in prediction_docs:
+            doc['batch_id'] = batch_id
+            
+            # Use a unique filter: ticker + prediction_date + batch_id
+            filter_query = {
+                "ticker": doc["ticker"],
+                "prediction_date": doc["prediction_date"],
+                "batch_id": batch_id
+            }
+            
+            # Create a ReplaceOne operation for each document
+            # This will insert if not found, or replace if found (upsert)
+            operations.append(
+                ReplaceOne(filter_query, doc, upsert=True)
+            )
+
+        # Execute all operations in a single bulk write
+        result = predictions_collection.bulk_write(operations, ordered=False)
+        
+        log.info(
+            f"Successfully saved predictions in bulk for batch {batch_id}. "
+            f"Inserted: {result.upserted_count}, Modified: {result.modified_count}"
         )
 
-        if result.matched_count > 0:
-            log.info(f"Updated existing backtest prediction for {prediction_doc['ticker']} on {prediction_doc['prediction_date'].strftime('%Y-%m-%d')}.")
-        else:
-            log.info(f"Inserted new backtest prediction for {prediction_doc['ticker']} on {prediction_doc['prediction_date'].strftime('%Y-%m-%d')}.")
-
+    except pymongo.errors.BulkWriteError as bwe:
+        log.error(f"Bulk write error while saving predictions: {bwe.details}")
     except Exception as e:
-        log.error(f"Failed to save prediction doc for {prediction_doc.get('ticker')}. Error: {e}")
+        log.error(f"Failed to bulk save prediction docs. Error: {e}")
 
 def get_all_closed_trades(strategy_name: str) -> list:
     """Fetches all closed trades from the performance collection for a specific strategy."""

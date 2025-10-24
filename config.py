@@ -37,6 +37,17 @@ EMAIL_RECIPIENTS = [email.strip() for email in EMAIL_RECIPIENTS.split(",") if em
 if not EMAIL_RECIPIENTS:
     EMAIL_RECIPIENTS = BETA_TESTER_EMAILS
 
+# --- Directories ---
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(BASE_DIR, 'cache')
+LOGS_DIR = os.path.join(BASE_DIR, 'logs')
+REPORTS_DIR = os.path.join(BASE_DIR, 'reports')
+
+# Ensure directories exist
+os.makedirs(CACHE_DIR, exist_ok=True)
+os.makedirs(LOGS_DIR, exist_ok=True)
+os.makedirs(REPORTS_DIR, exist_ok=True)
+
 # --- Models (MODIFIED FOR AZURE) ---
 # These now refer to your DEPLOYMENT NAMES in Azure AI Studio.
 # Please set them in your .env file.
@@ -64,6 +75,8 @@ BACKTEST_PORTFOLIO_CONFIG = {
     "initial_capital": 100000.0,
     "risk_per_trade_pct": 1.5               # Slightly increased risk per trade, balanced by tighter stops.
 }
+
+MAX_AI_CONCURRENCY = 10         # Max parallel AI calls in the pipeline
 
 # --- Market & Screener Config ---
 HIGH_RISK_VIX_THRESHOLD = 22.0 # Lowered threshold for more cautious stance
@@ -103,3 +116,5 @@ LIVE_MACRO_CONTEXT = {
     "Key Global Factor": "Global market volatility influenced by US Federal Reserve policy.",
     "Domestic Consumer Sentiment": "Stable but cautious.",
 }
+
+RISK_FREE_RATE = 0.05           # 5% risk-free rate for options greeks

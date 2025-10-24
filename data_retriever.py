@@ -295,11 +295,11 @@ def get_intraday_data(ticker_symbol: str):
         to_date = datetime.now()
         from_date = to_date - timedelta(days=2) # Fetch last 2 days of data
         return angelone_retriever.get_historical_data(
-            ticker_symbol,
-            from_date.strftime('%Y-%m-%d %H:%M'),
-            to_date.strftime('%Y-%m-%d %H:%M'),
-            "FIFTEEN_MINUTE"
-        )
+                ticker_symbol,
+                from_date,    # Pass the datetime object
+                to_date,      # Pass the datetime object
+                "FIFTEEN_MINUTE"
+            )
     else:
         try:
             log.info(f"[yfinance] Getting 15-min intraday data for {ticker_symbol}...")
@@ -546,37 +546,88 @@ def get_benchmarks_data(period: str = "1y", end_date=None):
 
 def get_index_option_data(index_ticker: str) -> dict:
     """
-    Fetches key option chain data for a given index.
+    MODIFIED: Fetches key option chain data for a given index,
+    now using Angel One as the primary source if configured.
     """
-    log.info(f"Fetching option chain data for {index_ticker}...")
+    log.info(f"Fetching option chain data for index {index_ticker}...")
+    
+    if config.DATA_SOURCE == "angelone":
+        try:
+            # Map the yfinance ticker (e.g., ^NSEI) to the Angel One name (e.g., NIFTY 50)
+            index_name_map = {
+                "^NSEI": "NIFTY 50",
+                "^NSEBANK": "NIFTY BANK"
+                # Add other mappings as needed
+            }
+            index_name = index_name_map.get(index_ticker, index_ticker)
+
+            # Call the fast, pre-processed function from angelone_retriever
+            chain_data = angelone_retriever.get_index_option_chain_data(index_name)
+            
+            if not chain_data or not chain_data.get('chain'):
+                 log.warning(f"Angel One returned no chain data for index {index_name}.")
+                 # Do not return None yet, try yfinance as a fallback
+                 raise Exception("No chain data from Angel One")
+
+            df = pd.DataFrame(chain_data['chain'])
+            for col in ['openInterest', 'strikePrice', 'optionType']:
+                if col not in df.columns:
+                    log.error(f"Missing required column '{col}' in Angel One index option chain for {index_name}.")
+                    raise Exception(f"Missing column {col} from Angel One")
+                df[col] = pd.to_numeric(df[col], errors='coerce')
+            
+            df.dropna(subset=['openInterest', 'strikePrice'], inplace=True)
+
+            calls = df[df['optionType'] == 'CE']
+            puts = df[df['optionType'] == 'PE']
+
+            if calls.empty or puts.empty or calls['openInterest'].sum() == 0:
+                log.warning(f"Incomplete option chain for index {index_name} (missing calls, puts, or OI).")
+                raise Exception("Incomplete chain data from Angel One")
+
+            pcr = puts['openInterest'].sum() / calls['openInterest'].sum()
+            max_oi_call_strike = calls.loc[calls['openInterest'].idxmax()]['strikePrice']
+            max_oi_put_strike = puts.loc[puts['openInterest'].idxmax()]['strikePrice']
+
+            log.info(f"✅ Successfully calculated option metrics for index {index_name} from Angel One.")
+            return {
+                "pcr": round(pcr, 2),
+                "max_oi_call": max_oi_call_strike,
+                "max_oi_put": max_oi_put_strike
+            }
+
+        except Exception as e:
+            log.warning(f"Angel One index options failed ({e}). Falling back to yfinance...")
+            # Fallthrough to yfinance logic
+    
+    # --- yfinance logic (as fallback or primary) ---
     try:
+        log.info(f"Using yfinance for index option data for {index_ticker}...")
         ticker = yf.Ticker(index_ticker)
         
-        # --- THIS IS THE FIX ---
-        # First, check if there are any option expiry dates available
         if not ticker.options:
-            log.warning(f"No options chain data found for {index_ticker}.")
+            log.warning(f"No options chain data found for {index_ticker} on yfinance.")
             return None
-        # -------------------
 
-        # Get the option chain for the nearest expiry date
         opt_chain = ticker.option_chain(ticker.options[0])
+        calls, puts = opt_chain.calls, opt_chain.puts
         
-        calls = opt_chain.calls
-        puts = opt_chain.puts
+        if calls.empty or puts.empty or calls['openInterest'].sum() == 0:
+            log.warning(f"Incomplete yfinance option chain for index {index_ticker}.")
+            return None
 
         pcr = puts['openInterest'].sum() / calls['openInterest'].sum()
         max_oi_call_strike = calls.loc[calls['openInterest'].idxmax()]['strike']
         max_oi_put_strike = puts.loc[puts['openInterest'].idxmax()]['strike']
 
-        log.info(f"Successfully calculated option metrics for {index_ticker}.")
+        log.info(f"Successfully calculated option metrics for {index_ticker} from yfinance.")
         return {
             "pcr": round(pcr, 2),
             "max_oi_call": max_oi_call_strike,
             "max_oi_put": max_oi_put_strike
         }
     except Exception as e:
-        log.warning(f"Could not fetch or process option chain data for {index_ticker}. Error: {e}")
+        log.warning(f"yfinance could not fetch or process option chain data for {index_ticker}. Error: {e}")
         return None
     
 def get_social_sentiment(ticker_symbol: str):

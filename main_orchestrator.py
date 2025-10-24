@@ -16,26 +16,13 @@ from analysis_pipeline import AnalysisPipeline, BENCHMARK_TICKERS
 from pandas.tseries.offsets import BDay
 from performance_analyzer import generate_backtest_report
 
-STATE_FILE = 'simulation_state.json'
-
-def save_state(next_day_to_run):
-    with open(STATE_FILE, 'w') as f:
-        json.dump({'next_start_date': next_day_to_run.strftime('%Y-%m-%d')}, f)
-
-def load_state():
-    if os.path.exists(STATE_FILE):
-        with open(STATE_FILE, 'r') as f:
-            state = json.load(f)
-            log.warning(f"Resuming from saved state. Next day to run: {state['next_start_date']}")
-            return state['next_start_date']
-    return None
-
 api_call_timestamps = deque()
 
 def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: bool = False, tickers: list = None, batch_num: int = 1, total_batches: int = 1):
     """
     Runs a memory-efficient, day-by-day backtest simulation using on-demand data loading
     with file caching for the Angel One data source.
+    Phase 1: generate and save 'open' predictions to the DB.
     """
     overall_start = time.time()
     log.info("=" * 80)
@@ -46,14 +33,14 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
     pipeline = AnalysisPipeline()
     pipeline._setup(mode='scheduler')
 
-    # --- Fetch the Nifty Smallcap 250 universe ONCE for the entire backtest run --- # <-- MODIFIED COMMENT
-    log.info("Fetching the Nifty Smallcap 250 list for this backtest run...") # <-- MODIFIED LOG
-    backtest_universe = index_manager.get_nifty_smallcap_250_tickers() # <-- USE NEW FUNCTION
+    # --- Fetch the Nifty Smallcap 250 universe ONCE for the entire backtest run ---
+    log.info("Fetching the Nifty Smallcap 250 list for this backtest run...")
+    backtest_universe = index_manager.get_nifty_smallcap_250_tickers()
     if not backtest_universe:
-        log.fatal("[SETUP ERROR] Could not fetch the Smallcap ticker list. Aborting backtest.") # <-- MODIFIED LOG
+        log.fatal("[SETUP ERROR] Could not fetch the Smallcap ticker list. Aborting backtest.")
         pipeline.close()
         return
-    log.info(f"Using a static universe of {len(backtest_universe)} Smallcap tickers for this run.") # <-- MODIFIED LOG
+    log.info(f"Using a static universe of {len(backtest_universe)} Smallcap tickers for this run.")
     # --- End fetching universe ---
 
     # --- NEW: SLICE UNIVERSE FOR BATCH PROCESSING ---
@@ -88,14 +75,6 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
         if getattr(database_manager, "performance_collection", None) is not None:
             database_manager.performance_collection.delete_many({"batch_id": batch_id})
 
-    # --- Portfolio Setup ---
-    portfolio = {
-        'equity': config.BACKTEST_PORTFOLIO_CONFIG['initial_capital'],
-        'open_positions': [],
-        'closed_trades': [],
-        'daily_equity_log': []
-    }
-
     try:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         csv_path = os.path.join(script_dir, 'nifty50_historical_constituents.csv')
@@ -109,7 +88,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
     simulation_days = pd.bdate_range(start=start_date, end=end_date)
     total_days = len(simulation_days)
 
-    # --- Main Simulation Loop ---
+    # --- Main Simulation Loop (Phase 1: analysis generation) ---
     for i, current_day in enumerate(simulation_days):
         # --- NEW: Daily Session Health Check ---
         log.info(f"Performing daily session health check for Angel One...")
@@ -127,9 +106,7 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
             # ======================================================================
             # --- CORRECTED: Define Required Assets using Static Universe ---
             # ======================================================================
-            # The 'backtest_universe' variable was fetched *before* the loop started.
-            # We'll download essential indices separately, then download stocks excluding those indices.
-            essential_indices = list(set(list(CORE_SECTOR_INDICES.values()) + [BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())))  # [UPDATED]
+            essential_indices = list(set(list(CORE_SECTOR_INDICES.values()) + [BENCHMARK_INDEX] + list(BENCHMARK_TICKERS.values())))
             log.info(f"Attempting separate download for {len(essential_indices)} essential indices...")
 
             # --- NEW: Rate Limiting Parameters for yfinance ---
@@ -242,7 +219,6 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                 # Continue without index data; downstream code should handle missing keys gracefully
 
             # --- Now define assets for the main STOCK bulk download ---
-            # Exclude indices we already downloaded to avoid downloading them again
             stock_assets_for_today = [t for t in backtest_universe_batch if t not in essential_indices]
             log.info(f"[DATA] Preparing to load data for {len(stock_assets_for_today)} stock assets for {day_str}...")
 
@@ -365,302 +341,263 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                      f"Analysis: {len(data_for_analysis)} assets, Simulation: {len(data_for_simulation)} assets.")
             # ======================================================================
 
-            # --- Manage Exits ---
-            exits_start = time.time()
-            before_exits = len(portfolio['open_positions'])
-            _manage_exits_for_day(portfolio, current_day, data_for_simulation, batch_id)
-            closed_today = before_exits - len(portfolio['open_positions'])
-            log.info(f"[EXIT] {closed_today} positions closed in {time.time()-exits_start:.2f}s")
-
-            # --- Run Analysis Pipeline ---
+            # --- Run Analysis Pipeline (Phase 1) ---
+            # This generates and saves 'open' predictions to the database.
             pipeline_start = time.time()
             pipeline.run(
                 point_in_time=decision_date,
-                full_data_cache=data_for_analysis,
+                full_data_cache=data_for_analysis, # Use the 5y data cache
                 is_backtest=True,
                 batch_id=batch_id
             )
-            log.info(f"[PIPELINE] Completed in {time.time()-pipeline_start:.2f}s")
+            log.info(f"[PIPELINE] Completed analysis for {day_str} in {time.time()-pipeline_start:.2f}s")
+            # --- End Analysis Pipeline ---
 
-            # --- Manage Entries ---
-            entries_start = time.time()
-            signals_for_today = list(database_manager.predictions_collection.find({
-                "batch_id": batch_id,
-                "prediction_date": decision_date.to_pydatetime(),
-                "signal": {"$in": ["BUY", "SHORT"]}
-            }))
-            before_entries = len(portfolio['open_positions'])
-            _manage_entries_for_day(portfolio, signals_for_today, current_day, data_for_simulation)
-            opened_today = len(portfolio['open_positions']) - before_entries
-            log.info(f"[ENTRY] {len(signals_for_today)} signals processed, "
-                    f"{opened_today} trades opened in {time.time()-entries_start:.2f}s")
-
-            # --- Equity Logging ---
-            valuation_start = time.time()
-            open_value = 0
-            for pos in portfolio['open_positions']:
-                try:
-                    current_price = data_for_simulation[pos['ticker']].loc[current_day]['close']
-                    open_value += current_price * pos['num_shares']
-                except (KeyError, IndexError):
-                    open_value += pos['entry_price'] * pos['num_shares']
-
-            total_equity = portfolio['equity'] + open_value
-            portfolio['daily_equity_log'].append({'date': current_day, 'equity': total_equity})
-            log.info(f"[PORTFOLIO] End-of-Day Equity: ₹{total_equity:,.2f} "
-                    f"(valuation time {time.time()-valuation_start:.2f}s)")
-
-            log.info(f"--- Day {i+1}/{total_days} completed in {time.time()-day_start:.2f}s ---")
+            log.info(f"--- Day {i+1}/{total_days} analysis generated in {time.time()-day_start:.2f}s ---")
 
         except Exception as e:
-            log.error(f"[ERROR] Exception during simulation of {day_str}: {e}", exc_info=True)
-            continue
+            log.error(f"[ERROR] Exception during analysis generation for {day_str}: {e}", exc_info=True)
+            # Optionally add logic here to mark the day as failed if needed
+            continue # Continue to the next day even if one day fails
 
-    # --- Final Report ---
+    # --- End Main Simulation Loop (Phase 1) ---
+    log.info("=" * 80)
+    log.info("--- ✅ Analysis Generation (Phase 1) Finished! ---")
+    log.info(f"Total Analysis Generation Time: {time.time()-overall_start:.2f}s")
+    log.info("=" * 80)
+
+    # --- Run Backtest Simulation (Phase 2) ---
+    run_backtest_simulation(batch_id, start_date, end_date)
+
+    # --- Generate Final Report (Phase 3) ---
+    log.info("=" * 80)
+    log.info("--- Generating Final Backtest Report (Phase 3)... ---")
+    report_start_time = time.time()
+    # Call the report generator - assumes it reads from DB using batch_id
+    # We will need to modify performance_analyzer.py for this
+    generate_backtest_report(batch_id) # Pass batch_id instead of portfolio
+    log.info(f"--- ✅ Report Generation Finished in {time.time()-report_start_time:.2f}s ---")
+    log.info("=" * 80)
+
+
+def run_backtest_simulation(batch_id: str, start_date: str, end_date: str):
+    """
+    Phase 2: Simulates the lifecycle of all 'open' trades saved during Phase 1.
+    Reads 'open' trades, simulates them day-by-day using cached historical data,
+    saves closed trades to the 'performance' collection, and updates the
+    original prediction status.
+    """
     log.info("")
     log.info("=" * 80)
-    log.info("--- ✅ UNIFIED SIMULATION FINISHED! Generating Final Report... ---")
+    log.info(f"### STARTING BACKTEST SIMULATION (Phase 2) for Batch: {batch_id} ###")
+    log.info("=" * 80)
+    sim_start_time = time.time()
 
-    # --- NEW: Final Liquidation Step ---
-    log.info("--- Liquidating all open positions at the end of the backtest period... ---")
-    final_day = simulation_days[-1] if not simulation_days.empty else None
-    if final_day and portfolio['open_positions']:
-        # Important: Iterate over a copy of the list because we are modifying it
-        for position in portfolio['open_positions'][:]:
-            ticker = position['ticker']
-            close_reason = "End of Backtest Liquidation"
-            closing_price = None
+    open_trades = database_manager.get_open_backtest_trades(batch_id)
+    if not open_trades:
+        log.warning("No open trades found in the database for this batch_id. Cannot run simulation.")
+        return
 
-            try:
-                # Use the last available data cache to get the final closing price
-                if ticker in data_for_simulation and not data_for_simulation[ticker].empty:
-                    if final_day in data_for_simulation[ticker].index:
-                        closing_price = data_for_simulation[ticker].loc[final_day]['close']
-                    else:
-                        # Fallback if the stock didn't trade on the very last day
-                        closing_price = data_for_simulation[ticker]['close'].iloc[-1]
-                        log.warning(f"Ticker {ticker} had no data for final day {final_day.date()}. Using last available price: {closing_price}")
+    # Determine the full range needed for simulation data
+    sim_start_date = pd.to_datetime(start_date) - BDay(1) # Need data from the day *before* the first prediction
+    sim_end_date = pd.to_datetime(end_date)
+    simulation_days_range = pd.date_range(start=sim_start_date, end=sim_end_date, freq='B') # Use BDays
 
-                if closing_price is not None:
-                    closed_trade_doc, net_pnl = _calculate_closed_trade(position, closing_price, close_reason, final_day)
-                    log.info(f"[LIQUIDATE] Closing {ticker} ({position['signal']}) at {closing_price:.2f}. Net P&L: ₹{net_pnl:.2f}")
+    # --- Efficient Data Loading for Simulation ---
+    # Load data ONCE for all tickers needed across all open trades for the simulation period
+    log.info("Loading required historical data for simulation phase...")
+    tickers_needed = list(set(trade['ticker'] for trade in open_trades))
+    full_data_cache_sim = {}
+    total_tickers = len(tickers_needed)
+    from data_retriever import get_historical_stock_data # Local import
 
-                    portfolio['equity'] += net_pnl
-                    portfolio['closed_trades'].append(closed_trade_doc)
-                    portfolio['open_positions'].remove(position)
-                    database_manager.performance_collection.insert_one(closed_trade_doc)
-                else:
-                    log.error(f"[LIQUIDATE] Could not find final closing price for {ticker}.")
-            except Exception as e:
-                log.error(f"[LIQUIDATE] Error liquidating {ticker}: {e}", exc_info=True)
+    for i, ticker in enumerate(tickers_needed):
+        # Fetch data up to the end_date of the simulation.
+        # get_historical_stock_data uses file caching, so this is fast on subsequent runs.
+        df = get_historical_stock_data(ticker, end_date=sim_end_date.strftime('%Y-%m-%d'))
+        if df is not None and not df.empty:
+            # Only keep data within the simulation range + a buffer for indicators if needed
+            full_data_cache_sim[ticker] = df.loc[sim_start_date - pd.Timedelta(days=60):sim_end_date] # Keep ~2 months buffer
+        else:
+            log.warning(f"Could not load simulation data for {ticker}. Trades for this ticker will be skipped.")
+        if (i + 1) % 50 == 0:
+            log.info(f"Loaded simulation data for {i+1}/{total_tickers} tickers...")
 
-    if portfolio['daily_equity_log']:
-        portfolio['daily_equity_log'][-1]['equity'] = portfolio['equity']
+    log.info(f"✅ Simulation data loaded for {len(full_data_cache_sim)} tickers.")
+    # --- End Data Loading ---
 
-    # All reporting logic is now handled by the dedicated analyzer.
-    generate_backtest_report(portfolio, batch_id)
+    closed_trade_count = 0
+    processed_prediction_count = 0
+    strategy_config = config.APEX_SWING_STRATEGY # Load strategy params once
 
-    log.info(f"Total Simulation Time: {time.time()-overall_start:.2f}s")
+    # --- Simulate Each Open Trade ---
+    for trade in open_trades:
+        ticker = trade['ticker']
+        prediction_id = trade['_id'] # Use MongoDB's _id
+        entry_signal = trade['signal']
+        entry_date_dt = pd.to_datetime(trade['prediction_date']).tz_localize(None) + BDay(1) # Trade entry is T+1
+        entry_price_signal = trade['tradePlan']['entryPrice'] # This is usually the close of prediction day
+        stop_loss_initial = trade['tradePlan']['stopLoss']
+        target_initial = trade['tradePlan']['target']
+        holding_period = strategy_config['holding_period']
+
+        # Get the historical data for this specific ticker
+        hist_data = full_data_cache_sim.get(ticker)
+        if hist_data is None or hist_data.empty:
+            log.warning(f"Skipping simulation for {ticker} on {entry_date_dt.date()}: Missing historical data.")
+            database_manager.mark_backtest_prediction_processed(prediction_id, batch_id, new_status="error_missing_data")
+            continue
+
+        # Find the actual entry day's data (T+1)
+        try:
+            # Ensure entry_date_dt exists in the index
+            entry_day_data = hist_data.loc[entry_date_dt:entry_date_dt] # Select the row for entry day
+            if entry_day_data.empty:
+                 # Try finding the next available business day if T+1 was a holiday
+                 next_bday = entry_date_dt
+                 while next_bday <= sim_end_date:
+                     entry_day_data = hist_data.loc[next_bday:next_bday]
+                     if not entry_day_data.empty:
+                         entry_date_dt = next_bday # Update actual entry date
+                         log.info(f"Adjusted entry date for {ticker} to next BDay: {entry_date_dt.date()}")
+                         break
+                     next_bday += BDay(1)
+                 if entry_day_data.empty:
+                     raise IndexError("Could not find valid entry day data within simulation range.")
+
+            actual_entry_price = entry_day_data['open'].iloc[0] # Enter at T+1 open
+
+            # Check for immediate stop-out on gap
+            if entry_signal == 'BUY' and actual_entry_price <= stop_loss_initial:
+                closing_price = actual_entry_price
+                close_reason = "Stop-Loss Hit (Gap Down at Entry)"
+                close_date_dt = entry_date_dt
+            elif entry_signal == 'SHORT' and actual_entry_price >= stop_loss_initial:
+                closing_price = actual_entry_price
+                close_reason = "Stop-Loss Hit (Gap Up at Entry)"
+                close_date_dt = entry_date_dt
+            else:
+                 # --- Day-by-day simulation loop ---
+                 close_reason = None
+                 closing_price = None
+                 close_date_dt = None
+                 trailing_stop = stop_loss_initial # Initialize trailing stop
+
+                 # Iterate from the day *after* entry up to holding period or end_date
+                 sim_days_for_trade = simulation_days_range[simulation_days_range > entry_date_dt]
+
+                 for current_sim_day in sim_days_for_trade:
+                     if (current_sim_day - entry_date_dt).days >= holding_period:
+                         close_reason = "Time Exit (Holding Period)"
+                         closing_price = hist_data.loc[current_sim_day]['close'] # Exit at close on expiry day
+                         close_date_dt = current_sim_day
+                         break
+
+                     try:
+                         day_data = hist_data.loc[current_sim_day]
+                         open_p, high_p, low_p, close_p = day_data['open'], day_data['high'], day_data['low'], day_data['close']
+
+                         # Trailing Stop Logic (simplified example - needs ATR calculation if using config)
+                         # Add ATR calculation here if use_trailing_stop is True in config
+                         # For now, using fixed initial stop as trailing stop for simplicity
+
+                         # Check Exit Conditions (Priority: Gap SL > Intraday SL > Target)
+                         if entry_signal == 'BUY':
+                             if open_p <= stop_loss_initial: # Gap Check
+                                 close_reason, closing_price = "Stop-Loss Hit (Gap Down)", open_p
+                             elif low_p <= trailing_stop: # Intraday Stop Check (using trailing stop)
+                                 close_reason, closing_price = "Trailing Stop Hit", trailing_stop
+                             elif low_p <= stop_loss_initial: # Intraday Original Stop Check
+                                 close_reason, closing_price = "Stop-Loss Hit", stop_loss_initial
+                             elif target_initial and high_p >= target_initial: # Target Check
+                                 close_reason, closing_price = "Target Hit", target_initial
+                         elif entry_signal == 'SHORT':
+                             if open_p >= stop_loss_initial: # Gap Check
+                                 close_reason, closing_price = "Stop-Loss Hit (Gap Up)", open_p
+                             elif high_p >= trailing_stop: # Intraday Stop Check (using trailing stop)
+                                 close_reason, closing_price = "Trailing Stop Hit", trailing_stop
+                             elif high_p >= stop_loss_initial: # Intraday Original Stop Check
+                                 close_reason, closing_price = "Stop-Loss Hit", stop_loss_initial
+                             elif target_initial and low_p <= target_initial: # Target Check
+                                 close_reason, closing_price = "Target Hit", target_initial
+
+                         if close_reason:
+                             close_date_dt = current_sim_day
+                             break # Exit found
+
+                     except KeyError:
+                         # Skip if data for current_sim_day is missing for this ticker
+                         continue
+                     except Exception as day_e:
+                         log.error(f"Error simulating day {current_sim_day.date()} for {ticker}: {day_e}")
+                         close_reason = "Error During Simulation"
+                         closing_price = hist_data.loc[current_sim_day]['close'] if current_sim_day in hist_data.index else actual_entry_price # Fallback exit price
+                         close_date_dt = current_sim_day
+                         break
+
+                 # If loop finished without exit, it's a time exit on the last possible day
+                 if not close_reason:
+                     last_valid_day = hist_data.index[-1]
+                     if last_valid_day > entry_date_dt:
+                          close_reason = "Time Exit (End of Data)"
+                          closing_price = hist_data.loc[last_valid_day]['close']
+                          close_date_dt = last_valid_day
+                     else: # Handle case where there's no data after entry
+                          close_reason = "Error - No Data Post Entry"
+                          closing_price = actual_entry_price
+                          close_date_dt = entry_date_dt
+
+            # --- Calculate P&L and Save Performance ---
+            # Re-calculate PnL based on actual entry and simulated exit
+            if entry_signal == 'BUY':
+                gross_pnl_share = closing_price - actual_entry_price
+            elif entry_signal == 'SHORT':
+                gross_pnl_share = actual_entry_price - closing_price
+            else:
+                gross_pnl_share = 0
+
+            # NOTE: We don't have num_shares here as position sizing wasn't done yet.
+            # We save % return instead of absolute PnL.
+            net_return_pct = (gross_pnl_share / actual_entry_price) * 100 if actual_entry_price != 0 else 0
+
+            # Apply Costs (can refine this later)
+            costs = config.BACKTEST_CONFIG
+            total_costs_pct = (costs['brokerage_pct'] * 2) + (costs['slippage_pct'] * 2) + costs.get('stt_pct', 0.1) # Added STT default
+            final_net_return_pct = net_return_pct - total_costs_pct
+
+            performance_doc = {
+                "prediction_id": prediction_id, # Link back to the original prediction
+                "ticker": ticker,
+                "strategy": trade['strategy'],
+                "signal": entry_signal,
+                "status": "Closed",
+                "open_date": entry_date_dt.to_pydatetime(), # Actual entry date/time
+                "close_date": close_date_dt.to_pydatetime(),
+                "entry_price": round(actual_entry_price, 2),
+                "close_price": round(closing_price, 2),
+                "closing_reason": close_reason,
+                "net_pnl": None, # Cannot calculate without num_shares
+                "net_return_pct": round(final_net_return_pct, 2),
+                "batch_id": batch_id
+            }
+            database_manager.save_backtest_performance_trade(performance_doc)
+            database_manager.mark_backtest_prediction_processed(prediction_id, batch_id) # Mark original prediction
+            closed_trade_count += 1
+            processed_prediction_count += 1
+
+        except IndexError:
+             log.warning(f"Skipping trade simulation for {ticker}: Could not find valid entry day data around {entry_date_dt.date()}. Marking as error.")
+             database_manager.mark_backtest_prediction_processed(prediction_id, batch_id, new_status="error_no_entry_data")
+        except Exception as sim_e:
+            log.error(f"CRITICAL ERROR simulating trade for {ticker} (PredID: {prediction_id}): {sim_e}", exc_info=True)
+            database_manager.mark_backtest_prediction_processed(prediction_id, batch_id, new_status="error_simulation_failed")
+
+    log.info(f"--- Backtest Simulation (Phase 2) Finished ---")
+    log.info(f"Processed {processed_prediction_count}/{len(open_trades)} open predictions.")
+    log.info(f"Saved {closed_trade_count} closed trades to performance collection.")
+    log.info(f"Phase 2 completed in {time.time() - sim_start_time:.2f} seconds.")
     log.info("=" * 80)
 
-# --- Helper Functions (Exits, Entries, P&L) ---
-
-def _manage_exits_for_day(portfolio: dict, point_in_time: pd.Timestamp, data_cache: dict, batch_id: str):
-    """
-    MODIFIED: Manages exits with a new, sophisticated trailing stop-loss logic.
-    """
-    for position in portfolio['open_positions'][:]:
-        ticker = position['ticker']
-        try:
-            day_data = data_cache[ticker].loc[point_in_time]
-        except (KeyError, IndexError):
-            continue
-
-        close_reason, closing_price = None, None
-        open_price, high_price, low_price, close_price = day_data['open'], day_data['high'], day_data['low'], day_data['close']
-        
-        # Initialize trailing_stop for this iteration
-        trailing_stop = position.get('trailing_stop', position['stop_loss'])
-        stop_loss = position['stop_loss']
-        target = position['target']
-        
-        # --- Trailing Stop Logic ---
-        use_trailing_stop = config.APEX_SWING_STRATEGY.get('use_trailing_stop', False)
-        
-        if use_trailing_stop:
-            initial_risk_per_share = abs(position['entry_price'] - position['stop_loss'])
-            activation_threshold = config.APEX_SWING_STRATEGY.get('trailing_stop_activation_r', 0) * initial_risk_per_share
-            
-            should_trail = False
-            if position['signal'] == 'BUY' and close_price > position['entry_price'] + activation_threshold:
-                should_trail = True
-            elif position['signal'] == 'SHORT' and close_price < position['entry_price'] - activation_threshold:
-                should_trail = True
-
-            if should_trail:
-                try:
-                    atr_df = data_cache[ticker].loc[:point_in_time].copy()
-                    atr_df.ta.atr(length=14, append=True)
-                    current_atr = atr_df['ATRr_14'].iloc[-1]
-                    trail_amount = current_atr * config.APEX_SWING_STRATEGY['trailing_stop_atr_multiplier']
-
-                    if position['signal'] == 'BUY':
-                        new_trail = close_price - trail_amount
-                        if new_trail > trailing_stop:
-                            position['trailing_stop'] = new_trail
-                            trailing_stop = new_trail
-                    elif position['signal'] == 'SHORT':
-                        new_trail = close_price + trail_amount
-                        if new_trail < trailing_stop:
-                            position['trailing_stop'] = new_trail
-                            trailing_stop = new_trail
-                except Exception as e:
-                    log.warning(f"Could not calculate trailing stop for {ticker}: {e}")
-
-        # --- Exit Priority ---
-        if position['signal'] == 'BUY':
-            if open_price <= stop_loss:
-                close_reason, closing_price = "Stop-Loss Hit (Gap Down)", open_price
-            elif low_price <= trailing_stop:
-                close_reason, closing_price = "Trailing Stop Hit", trailing_stop
-            elif low_price <= stop_loss:
-                close_reason, closing_price = "Stop-Loss Hit (Intraday)", stop_loss
-            elif target and high_price >= target:
-                close_reason, closing_price = "Target Hit", target
-        elif position['signal'] == 'SHORT':
-            if open_price >= stop_loss:
-                close_reason, closing_price = "Stop-Loss Hit (Gap Up)", open_price
-            elif high_price >= trailing_stop:
-                close_reason, closing_price = "Trailing Stop Hit", trailing_stop
-            elif high_price >= stop_loss:
-                close_reason, closing_price = "Stop-Loss Hit (Intraday)", stop_loss
-            elif target and low_price <= target:
-                close_reason, closing_price = "Target Hit", target
-
-        if not close_reason and (point_in_time - position['open_date']).days >= position['holding_period']:
-            close_reason, closing_price = "Time Exit", close_price
-
-        if close_reason:
-            closed_trade_doc, net_pnl = _calculate_closed_trade(position, closing_price, close_reason, point_in_time)
-            log.info(f"[EXIT] Closing {ticker} ({position['signal']}) → {close_reason}. Net P&L: ₹{net_pnl:.2f}")
-            
-            portfolio['equity'] += net_pnl
-            portfolio['closed_trades'].append(closed_trade_doc)
-            portfolio['open_positions'].remove(position)
-            database_manager.performance_collection.insert_one(closed_trade_doc)
-
-def _manage_entries_for_day(portfolio: dict, signals_for_today: list, point_in_time: pd.Timestamp, data_cache: dict):
-    """
-    MODIFIED: Manages entries with a new, conviction-based dynamic position sizing model.
-    """
-    # Sort signals by the absolute value of their score to prioritize highest conviction
-    sorted_signals = sorted(signals_for_today, key=lambda x: abs(x.get('scrybeScore', 0)), reverse=True)
-    
-    for signal in sorted_signals:
-        if len(portfolio['open_positions']) >= PORTFOLIO_CONSTRAINTS['max_concurrent_trades']:
-            log.warning("[ENTRY] Skipping further signals: Max concurrent trade limit reached.")
-            break
-        if any(p['ticker'] == signal['ticker'] for p in portfolio['open_positions']):
-            log.debug(f"[ENTRY] Skipping {signal['ticker']}: Position already open.")
-            continue
-
-        ticker = signal['ticker']
-        trade_plan = signal.get('tradePlan', {})
-        stop_loss_price = trade_plan.get('stopLoss')
-
-        if not stop_loss_price:
-            log.warning(f"[ENTRY] Skipping {ticker}: Signal has no stop-loss price.")
-            continue
-
-        try:
-            day_data = data_cache[ticker].loc[point_in_time]
-            actual_entry_price = day_data['open']
-        except (KeyError, IndexError):
-            log.warning(f"[ENTRY] Skipping {ticker}: No simulation data available for today.")
-            continue
-
-        # Pre-trade gap risk check (no change here)
-        if signal['signal'] == 'BUY' and actual_entry_price <= stop_loss_price:
-            log.warning(f"[ENTRY] VETO (BUY): {ticker} gapped down at open below stop-loss.")
-            continue
-        elif signal['signal'] == 'SHORT' and actual_entry_price >= stop_loss_price:
-            log.warning(f"[ENTRY] VETO (SHORT): {ticker} gapped up at open above stop-loss.")
-            continue
-        
-        # --- DYNAMIC POSITION SIZING LOGIC ---
-        scrybe_score = signal.get('scrybeScore', 0)
-        base_risk_pct = config.BACKTEST_PORTFOLIO_CONFIG['risk_per_trade_pct']
-        
-        # Define conviction tiers and corresponding risk multipliers
-        if abs(scrybe_score) >= 70:      # Very High Conviction
-            risk_multiplier = 1.0       # Risk the full 1%
-            conviction_level = "VERY HIGH"
-        elif abs(scrybe_score) >= 40:    # High Conviction
-            risk_multiplier = 0.75      # Risk 0.75%
-            conviction_level = "HIGH"
-        else:                            # Medium Conviction (score is between 25-39)
-            risk_multiplier = 0.5       # Risk only 0.5%
-            conviction_level = "MEDIUM"
-            
-        final_risk_pct = base_risk_pct * risk_multiplier
-        risk_amount = portfolio['equity'] * (final_risk_pct / 100.0)
-        log.info(f"Conviction for {ticker} is {conviction_level} (Score: {scrybe_score}). Adjusting risk to {final_risk_pct:.2f}%.")
-        # --- *** END OF NEW LOGIC *** ---
-
-        risk_per_share = abs(actual_entry_price - stop_loss_price)
-        if risk_per_share <= 0.01:
-            log.warning(f"[ENTRY] Skipping {ticker}: Risk per share is zero.")
-            continue
-            
-        num_shares = int(risk_amount / risk_per_share)
-        
-        if num_shares == 0:
-            log.warning(f"[ENTRY] Skipping {ticker}: Position size is zero shares.")
-            continue
-
-        new_position = {
-            'prediction_id': signal['_id'], 'ticker': ticker, 'signal': signal['signal'],
-            'entry_price': actual_entry_price, 'num_shares': num_shares, 'stop_loss': stop_loss_price,
-            'target': trade_plan.get('target'), 'open_date': point_in_time,
-            'holding_period': config.APEX_SWING_STRATEGY['holding_period'],
-            'strategy': signal['strategy'], 'batch_id': signal['batch_id']
-        }
-        portfolio['open_positions'].append(new_position)
-        log.info(f"[ENTRY] {signal['signal']} {num_shares} shares of {ticker} @ OPEN {actual_entry_price:.2f}")
-
-def _calculate_closed_trade(position: dict, closing_price: float, closing_reason: str, close_date: pd.Timestamp):
-    entry_price = position['entry_price']
-    num_shares = position['num_shares']
-    signal = position['signal']
-
-    if signal == 'BUY':
-        gross_pnl = (closing_price - entry_price) * num_shares
-    elif signal == 'SHORT':
-        gross_pnl = (entry_price - closing_price) * num_shares
-    else:
-        gross_pnl = 0 # Or handle other signals if they exist
-
-    costs = config.BACKTEST_CONFIG
-    turnover = (entry_price * num_shares) + (closing_price * num_shares)
-    brokerage = turnover * (costs['brokerage_pct'] / 100.0)
-    stt = turnover * (costs['stt_pct'] / 100.0)
-    other_charges = turnover * (costs['slippage_pct'] / 100.0)
-    total_transaction_costs = brokerage + stt + other_charges
-    net_pnl = gross_pnl - total_transaction_costs
-
-    initial_investment = entry_price * num_shares
-    net_return_pct = (net_pnl / initial_investment) * 100 if initial_investment != 0 else 0
-
-    performance_doc = {
-        "prediction_id": position['prediction_id'], "ticker": position['ticker'],
-        "strategy": position['strategy'], "signal": signal, "status": "Closed",
-        "open_date": position['open_date'].to_pydatetime(), "close_date": close_date.to_pydatetime(),
-        "closing_reason": closing_reason,
-        "net_pnl": round(net_pnl, 2),
-        "net_return_pct": round(net_return_pct, 2),
-        "batch_id": position['batch_id']
-    }
-    return performance_doc, net_pnl
 
 # --- CLI Execution ---
 if __name__ == "__main__":

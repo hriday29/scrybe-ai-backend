@@ -8,13 +8,11 @@ import market_regime_analyzer
 import sector_analyzer
 import quantitative_screener
 import technical_analyzer
-import time             
-import random           
+import concurrent.futures      
 from collections import deque
 import pandas_ta as ta
 import uuid 
 from datetime import datetime, timezone
-import performance_context
 import pandas as pd
 import yfinance as yf
 
@@ -165,41 +163,37 @@ class AnalysisPipeline:
         )
         
         return candidates
-
-    def _run_ai_analysis(self, candidates, full_data_cache, market_state, point_in_time, is_backtest, batch_id=None):
+    
+    def _process_single_candidate(self, candidate_data, full_data_cache, market_state, point_in_time, is_backtest):
         """
-        Runs the "Committee of Experts" AI analysis pipeline using the new
-        Volatility/Futures analyst instead of Sentiment. Handles potentially more candidates.
+        Helper function to run the full AI analysis for a single candidate.
+        This function is designed to be run in a concurrent thread pool.
         """
-        log.info(f"--- Running 'Committee of Experts' AI Analysis for {len(candidates)} Candidate(s) ---") # Handles larger list
+        ticker, screener_reason = candidate_data
+        log.info(f"--- Convening Committee for {ticker} (Reason: {screener_reason}) ---")
 
-        final_synthesized_results = []
-        nifty_data_for_rs = full_data_cache.get("^NSEI") # Fetch Nifty data once for RS calc
-
-        for i, (ticker, screener_reason) in enumerate(candidates):
-            log.info(f"--- ({i+1}/{len(candidates)}) Convening Committee for {ticker} (Reason: {screener_reason}) ---")
-
+        try:
             # --- Build Full Context ---
             point_in_time_data = full_data_cache.get(ticker)
             if point_in_time_data is None:
-                 log.warning(f"Skipping {ticker}: No data found in cache for point_in_time.")
-                 continue
+                log.warning(f"Skipping {ticker}: No data found in cache for point_in_time.")
+                return None
 
             # Ensure data slicing is correct
             point_in_time_data_slice = point_in_time_data.loc[:point_in_time].copy()
 
-            if len(point_in_time_data_slice) < 50: # Check length *after* slicing
+            if len(point_in_time_data_slice) < 50:  # Check length *after* slicing
                 log.warning(f"Skipping {ticker}: Insufficient historical data ({len(point_in_time_data_slice)} days) for analysis.")
-                continue
+                return None
 
-            # Build the context using the sliced data and pass the full cache for futures lookup
+            nifty_data_for_rs = full_data_cache.get("^NSEI")
             full_context = technical_analyzer.build_analysis_context(
                 ticker=ticker,
-                historical_data=point_in_time_data_slice, # Use the sliced data
+                historical_data=point_in_time_data_slice,
                 market_state=market_state,
                 is_backtest=is_backtest,
                 full_nifty_data=nifty_data_for_rs,
-                full_data_cache=full_data_cache # Pass the main cache here
+                full_data_cache=full_data_cache
             )
 
             # --- Call Specialist Analysts ---
@@ -209,53 +203,93 @@ class AnalysisPipeline:
             log.info(f"[AI Committee] Getting Fundamental Verdict for {ticker}...")
             fund_verdict = self.ai_analyzer.get_fundamental_verdict(full_context.get('fundamental_data', {}), ticker)
 
-            # --- MODIFIED: Call New Volatility/Futures Analyst ---
             log.info(f"[AI Committee] Getting Volatility/Futures Verdict for {ticker}...")
             vol_fut_verdict = self.ai_analyzer.get_volatility_and_futures_verdict(full_context.get('volatility_futures_data', {}), ticker)
-            # --- END MODIFICATION ---
 
             # --- Sanity Check on Specialist Reports ---
-            # --- MODIFIED: Check new verdict variable ---
             if "error" in tech_verdict or "error" in fund_verdict or "error" in vol_fut_verdict:
                 log.error(f"Could not proceed with final synthesis for {ticker} due to an error in a specialist analysis. Skipping.")
-                # Optionally log the specific error details here
-                if "error" in tech_verdict: log.error(f"  Technical Error: {tech_verdict['error']}")
-                if "error" in fund_verdict: log.error(f"  Fundamental Error: {fund_verdict['error']}")
-                if "error" in vol_fut_verdict: log.error(f"  Vol/Futures Error: {vol_fut_verdict['error']}")
-                continue
-            # --- END MODIFICATION ---
+                if "error" in tech_verdict:
+                    log.error(f"  Technical Error: {tech_verdict['error']}")
+                if "error" in fund_verdict:
+                    log.error(f"  Fundamental Error: {fund_verdict['error']}")
+                if "error" in vol_fut_verdict:
+                    log.error(f"  Vol/Futures Error: {vol_fut_verdict['error']}")
+                return None
 
             # --- Call Head of Strategy for Final Synthesis ---
-            try:
-                log.info(f"[AI Committee] Passing reports to Head of Strategy for {ticker}...")
-                # --- MODIFIED: Pass new verdict variable ---
-                final_analysis = self.ai_analyzer.get_apex_analysis(
-                    ticker=ticker,
-                    technical_verdict=tech_verdict,
-                    fundamental_verdict=fund_verdict,
-                    volatility_futures_verdict=vol_fut_verdict, # Pass the new verdict
-                    market_state=market_state,
-                    screener_reason=screener_reason
-                )
-                # --- END MODIFICATION ---
+            log.info(f"[AI Committee] Passing reports to Head of Strategy for {ticker}...")
+            final_analysis = self.ai_analyzer.get_apex_analysis(
+                ticker=ticker,
+                technical_verdict=tech_verdict,
+                fundamental_verdict=fund_verdict,
+                volatility_futures_verdict=vol_fut_verdict,
+                market_state=market_state,
+                screener_reason=screener_reason
+            )
 
-                if final_analysis and "error" not in final_analysis : # Check for errors from apex call itself
-                    final_synthesized_results.append({
-                        "ticker": ticker,
-                        "ai_analysis": final_analysis,
-                        "point_in_time_data": point_in_time_data_slice # Save the data used for analysis
-                    })
-                elif final_analysis and "error" in final_analysis:
-                     log.error(f"Final APEX synthesis for {ticker} failed: {final_analysis.get('error')}")
-                else:
-                    log.error(f"Final APEX synthesis for {ticker} returned no result.")
+            if final_analysis and "error" not in final_analysis:
+                return {
+                    "ticker": ticker,
+                    "ai_analysis": final_analysis,
+                    "point_in_time_data": point_in_time_data_slice
+                }
+            elif final_analysis and "error" in final_analysis:
+                log.error(f"Final APEX synthesis for {ticker} failed: {final_analysis.get('error')}")
+                return None
+            else:
+                log.error(f"Final APEX synthesis for {ticker} returned no result.")
+                return None
 
-            except Exception as e:
-                log.critical(f"The Head of Strategy (APEX Synthesis) failed critically for {ticker}: {e}", exc_info=True)
-                continue # Continue to the next candidate
+        except Exception as e:
+            log.critical(f"The Head of Strategy (APEX Synthesis) failed critically for {ticker}: {e}", exc_info=True)
+            return None
+
+    def _run_ai_analysis(self, candidates, full_data_cache, market_state, point_in_time, is_backtest, batch_id=None):
+        """
+        Runs the 'Committee of Experts' AI analysis CONCURRENTLY for all candidates
+        using a ThreadPoolExecutor to avoid the 6-hour GHA limit.
+        """
+        log.info(f"--- Running 'Committee of Experts' AI Analysis CONCURRENTLY for {len(candidates)} Candidate(s) ---")
+
+        final_synthesized_results = []
+
+        # Use a ThreadPoolExecutor to run analyses in parallel
+        # We set max_workers to a reasonable number to avoid overwhelming the AI API and getting rate-limited.
+        # config.MAX_AI_CONCURRENCY (e.g., 10) should be defined in your config.py
+        max_workers = getattr(config, 'MAX_AI_CONCURRENCY', 10)
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=max_workers) as executor:
+            # Submit all candidate processing tasks to the thread pool
+            future_to_candidate = {
+                executor.submit(
+                    self._process_single_candidate,
+                    candidate_data,
+                    full_data_cache,
+                    market_state,
+                    point_in_time,
+                    is_backtest
+                ): candidate_data for candidate_data in candidates
+            }
+
+            # Process results as they are completed
+            for i, future in enumerate(concurrent.futures.as_completed(future_to_candidate)):
+                candidate_data = future_to_candidate[future]
+                ticker = candidate_data[0]
+                log.info(f"--- ({i + 1}/{len(candidates)}) AI Committee has reported back on {ticker} ---")
+
+                try:
+                    result = future.result()
+                    if result:
+                        final_synthesized_results.append(result)
+                    else:
+                        log.warning(f"No result returned for {ticker} (likely skipped or failed).")
+                except Exception as e:
+                    log.critical(f"An unexpected error occurred while processing result for {ticker}: {e}", exc_info=True)
 
         log.info(f"--- AI Committee Concluded. {len(final_synthesized_results)} stocks have a final verdict. ---")
         return final_synthesized_results
+
     
     def _apply_strategy_overlay(self, ai_results, market_state, is_backtest):
         """
@@ -353,28 +387,46 @@ class AnalysisPipeline:
         log.info(f"--- Persisting {len(final_signals)} Final Signal(s) to Database ---")
         
         if is_backtest:
+            # --- MODIFIED: Use Bulk Save ---
+            predictions_to_save = []
             for result in final_signals:
                 final_signal = result['final_signal']
                 
                 # Determine status based on the final signal and any veto reason
                 status = 'open'
                 if final_signal not in ['BUY', 'SHORT']:
-                    status = 'hold'
-                if result.get('veto_reason'):
-                    status = 'vetoed'
+                    status = 'hold' # If AI said HOLD, or signal was vetoed
+                # Keep 'open' status even if vetoed, the simulator will ignore it based on signal
+                # Veto reason is still saved for analysis.
+
+                # --- Ensure prediction_date is timezone-naive UTC for consistency ---
+                prediction_ts = result['point_in_time_data'].index[-1]
+                # Convert to UTC if timezone-aware, then remove tz info
+                if prediction_ts.tzinfo is not None:
+                     prediction_dt_utc = prediction_ts.tz_convert(timezone.utc).replace(tzinfo=None)
+                else:
+                     # Assume it's already naive (e.g., from yfinance)
+                     prediction_dt_utc = prediction_ts.to_pydatetime()
+                # --- End Date Handling ---
 
                 prediction_doc = {
                     **result['ai_analysis'],
                     'ticker': result['ticker'],
-                    'prediction_date': result['point_in_time_data'].index[-1].to_pydatetime(),
+                    # Use the timezone-naive UTC datetime object
+                    'prediction_date': prediction_dt_utc,
                     'price_at_prediction': result['point_in_time_data']['close'].iloc[-1],
-                    'status': status,
+                    'status': status, # Will be 'open' for BUY/SHORT, 'hold' otherwise
                     'strategy': self.active_strategy['name'],
-                    'signal': final_signal,  # This will now correctly be 'BUY', 'SHORT', or 'HOLD'
+                    'signal': final_signal,
                     'veto_reason': result.get('veto_reason'),
                     'tradePlan': result.get('trade_plan')
                 }
-                database_manager.save_prediction_for_backtesting(prediction_doc, batch_id)
+                predictions_to_save.append(prediction_doc)
+
+            # Call the new bulk save function from database_manager
+            if predictions_to_save:
+                database_manager.save_predictions_for_backtesting_bulk(predictions_to_save, batch_id)
+            # --- END MODIFICATION ---
         else:
             # LIVE PERSISTENCE LOGIC
             for result in final_signals:

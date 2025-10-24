@@ -201,10 +201,10 @@ def get_nifty_smallcap_250_tickers():
             log.info(f"✅ Successfully fetched {len(tickers)} Smallcap 250 tickers from NSE.")
             return tickers
         else:
-            log.warning(f"Live Smallcap 250 fetch returned an unusual number ({len(tickers)} tickers). Using fallback.")
-            # Fallback to Nifty50 is not ideal, but better than failing entirely
-            return config.NIFTY_50_TICKERS
+            log.warning(f"Live Smallcap 250 fetch returned an unusual number ({len(tickers)} tickers). Fetch failed.")
+            # Return an empty list to signal failure clearly
+            return [] 
 
     except Exception as e:
-        log.error(f"Failed to fetch or parse live Nifty Smallcap 250 list: {e}. Using fallback.")
-        return config.NIFTY_50_TICKERS # Fallback
+        log.error(f"Failed to fetch or parse live Nifty Smallcap 250 list: {e}. Fetch failed.")
+        return [] 

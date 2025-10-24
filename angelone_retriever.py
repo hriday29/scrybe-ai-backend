@@ -9,17 +9,16 @@ from logger_config import log
 import config  # To get API keys and credentials
 import time
 from datetime import datetime
-import sys
 import os
-import logging  # Make sure logging is imported
 import pyotp  # ADDED: For dynamic TOTP generation
 import requests  # ADDED: For downloading instrument list
 from functools import wraps
-from py_vollib_vectorized import vectorized_implied_volatility, vectorized_delta, vectorized_gamma, vectorized_theta
+import json
+from py_vollib_vectorized import vectorized_implied_volatility, vectorized_delta, vectorized_gamma, vectorized_theta  # type: ignore
 
 # You must install the Angel One SDK first:
 # pip install smartapi-python
-from smartapi_client.smartConnect import SmartConnect
+from smartapi_client.smartConnect import SmartConnect  # type: ignore
 
 # --- Rate Limiting Decorator ---
 API_CALL_DELAY = 0.35 # Delay of 350ms between calls
@@ -37,33 +36,71 @@ def rate_limited(func):
 # --- Module-Level API Session & Cache Management ---
 smart_api_session = None
 TOKEN_CACHE = {}  # In-memory cache for instrument tokens to improve speed.
-INSTRUMENT_LIST = None  # Cache for the entire instrument list
+INSTRUMENT_LIST = None  # Cache for the entire instrument map (was list)
+
+# Cache for the master instrument list on disk
+INSTRUMENT_CACHE_FILE = os.path.join(config.CACHE_DIR, 'angelone_instrument_master.json')
+INSTRUMENT_CACHE_TTL_HOURS = 24  # Cache for 24 hours
+
+# NEW: Pre-processed maps for O(1) expiry lookups
+OPTION_EXPIRY_MAP = {"STK": {}, "IDX": {}}
+FUTURES_EXPIRY_MAP = {"STK": {}, "IDX": {}}
 
 # Angel One master instrument list URL
 INSTRUMENT_LIST_URL = "https://margincalculator.angelbroking.com/OpenAPI_File/files/OpenAPIScripMaster.json"
 
-def _download_instrument_list() -> list | None:
+def _load_instrument_list(cache_file: str, ttl_hours: int) -> list | None:
     """
-    Downloads the master instrument list from Angel One's CDN.
-    Returns a list of instrument dictionaries or None on failure.
+    Downloads the master instrument list from Angel One's CDN or loads
+    it from a local cache if it's not stale.
     """
+    # 1. Check if a valid cache file exists
+    if os.path.exists(cache_file):
+        try:
+            file_mod_time = datetime.fromtimestamp(os.path.getmtime(cache_file))
+            if (datetime.now() - file_mod_time).total_seconds() < ttl_hours * 3600:
+                log.info(f"Loading instrument list from cache file: {cache_file}")
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    instruments = json.load(f)
+                    if isinstance(instruments, list) and len(instruments) > 0:
+                        log.info(f"Successfully loaded {len(instruments)} instruments from cache.")
+                        return instruments
+            else:
+                log.info("Instrument cache is stale. Re-downloading...")
+        except (json.JSONDecodeError, IOError) as e:
+            log.warning(f"Could not read cache file {cache_file}: {e}. Re-downloading...")
+        except Exception as e:
+            log.warning(f"Unexpected error reading cache file: {e}. Re-downloading...")
+    else:
+        log.info("No instrument cache found. Downloading new list...")
+
+    # 2. If cache is invalid or missing, download from URL
     try:
-        log.info("Downloading instrument list from Angel One...")
+        log.info(f"Downloading instrument list from Angel One CDN: {INSTRUMENT_LIST_URL}")
         response = requests.get(INSTRUMENT_LIST_URL, timeout=30)
         response.raise_for_status()
         
         instruments = response.json()
-        if isinstance(instruments, list) and len(instruments) > 0:
-            log.info(f"Successfully downloaded {len(instruments)} instruments.")
-            return instruments
-        else:
+        if not (isinstance(instruments, list) and len(instruments) > 0):
             log.error("Downloaded instrument list is empty or invalid format.")
             return None
+
+        log.info(f"Successfully downloaded {len(instruments)} instruments.")
+        
+        # 3. Save the new list to cache
+        try:
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(instruments, f)
+            log.info(f"Saved new instrument list to cache: {cache_file}")
+        except IOError as e:
+            log.error(f"Could not write to cache file {cache_file}: {e}")
+        
+        return instruments
             
     except requests.RequestException as e:
         log.error(f"Network error downloading instrument list: {e}", exc_info=True)
         return None
-    except ValueError as e:
+    except ValueError as e: # Renamed from json.JSONDecodeError
         log.error(f"JSON parsing error for instrument list: {e}", exc_info=True)
         return None
     except Exception as e:
@@ -120,26 +157,65 @@ def initialize_angelone_session() -> bool:
             except Exception as e:
                 log.warning(f"Could not fetch user profile: {e}")
 
-            # --- Download and PROCESS the instrument list for fast lookups ---
-            raw_instrument_list = _download_instrument_list()
+            # --- Download/Load and PROCESS the instrument list for fast lookups ---
+            # Use the new caching function
+            raw_instrument_list = _load_instrument_list(INSTRUMENT_CACHE_FILE, INSTRUMENT_CACHE_TTL_HOURS)
+            
             if raw_instrument_list:
                 INSTRUMENT_MAP = {}
+                # Clear expiry maps for this new list
+                global OPTION_EXPIRY_MAP, FUTURES_EXPIRY_MAP
+                OPTION_EXPIRY_MAP = {"STK": {}, "IDX": {}}
+                FUTURES_EXPIRY_MAP = {"STK": {}, "IDX": {}}
+
                 for item in raw_instrument_list:
                     if not isinstance(item, dict): continue
+                    
                     symbol = item.get('symbol')
                     name = item.get('name')
                     exch = item.get('exch_seg')
                     token = item.get('token')
+                    expiry = item.get('expiry')
+                    inst_type = item.get('instrumenttype')
                     
+                    # 1. Build the fast token lookup map
                     if symbol and exch and token:
                         INSTRUMENT_MAP[f"{symbol.upper()}_{exch}"] = item
                     if name and exch and token:
-                        INSTRUMENT_MAP[f"{name.upper()}_{exch}"] = item
+                        # Use name lookup as a fallback (symbols are more unique)
+                        key = f"{name.upper()}_{exch}"
+                        if key not in INSTRUMENT_MAP:
+                            INSTRUMENT_MAP[key] = item
+
+                    # 2. Build the fast expiry lookup maps
+                    if not (name and expiry and inst_type and exch == 'NFO'):
+                        continue
+                    
+                    target_map = None
+
+                    if inst_type == 'OPTSTK':
+                        target_map = OPTION_EXPIRY_MAP["STK"]
+                    elif inst_type == 'OPTIDX':
+                        target_map = OPTION_EXPIRY_MAP["IDX"]
+                    elif inst_type == 'FUTSTK':
+                        target_map = FUTURES_EXPIRY_MAP["STK"]
+                    elif inst_type == 'FUTIDX':
+                        target_map = FUTURES_EXPIRY_MAP["IDX"]
+                    
+                    if target_map is not None:
+                        if name not in target_map:
+                            target_map[name] = set()
+                        target_map[name].add(expiry)
+
+                INSTRUMENT_LIST = INSTRUMENT_MAP # This is a map, not a list. Variable name is a bit confusing but we'll keep it.
                 
-                INSTRUMENT_LIST = INSTRUMENT_MAP
                 log.info(f"✅ Successfully processed and cached {len(INSTRUMENT_LIST)} instruments for fast lookups.")
+                log.info(f"Pre-processed {len(OPTION_EXPIRY_MAP['STK'])} stocks with options.")
+                log.info(f"Pre-processed {len(FUTURES_EXPIRY_MAP['STK'])} stocks with futures.")
+                log.info(f"Pre-processed {len(OPTION_EXPIRY_MAP['IDX'])} indices with options.")
+                log.info(f"Pre-processed {len(FUTURES_EXPIRY_MAP['IDX'])} indices with futures.")
             else:
-                log.warning("⚠️ Could not download instrument list. Token lookups will fail.")
+                log.warning("⚠️ Could not download or load instrument list. Token lookups and derivative features will fail.")
 
             return True
         else:
@@ -268,7 +344,7 @@ def get_historical_data(symbol: str, from_date: datetime, to_date: datetime, int
     return None  # Return None to trigger the yfinance fallback in data_retriever.py
 
 @rate_limited
-def get_full_quote(symbol: str, exchange: str = "NSE", token: str = None) -> dict | None:
+def get_full_quote(symbol: str, exchange: str = "NSE", token: str | None = None) -> dict | None:
     """
     Fetches a full quote including LTP, open, high, low, close, and volume.
     
@@ -358,20 +434,14 @@ def get_option_chain_data(symbol: str, exchange: str = "NFO") -> dict | None:
     if (not smart_api_session or not INSTRUMENT_LIST) and not initialize_angelone_session():
         return None
 
-    underlying_symbol = symbol.replace('.NS', '')
+    underlying_symbol = symbol.replace('.NS', '').upper() # Use upper to match map key
 
-    # Step 1: Find all expiry dates for the given stock from the cached instrument list
+    # Step 1: Find all expiry dates using the pre-processed O(1) map
     try:
-        expiry_dates = set()
-        for inst in INSTRUMENT_LIST.values():
-            if (isinstance(inst, dict) and
-                inst.get('instrumenttype') == 'OPTSTK' and
-                inst.get('name') == underlying_symbol and
-                inst.get('exch_seg') == exchange):
-                expiry_dates.add(inst.get('expiry'))
+        expiry_dates = OPTION_EXPIRY_MAP["STK"].get(underlying_symbol)
 
         if not expiry_dates:
-            log.warning(f"No option expiry dates found for {symbol} in the instrument list.")
+            log.warning(f"No option expiry dates found for {symbol} in the pre-processed map.")
             return None
 
         # Step 2: Find the nearest expiry date
@@ -462,16 +532,18 @@ def get_option_greeks(symbol: str) -> dict | None:
         strike_array = atm_strikes_df['strikePrice'].values
         flag_array = atm_strikes_df['optionType'].apply(lambda x: 'c' if x == 'CE' else 'p').values
         
-        # Calculate Implied Volatility
+        # Get risk-free rate from config, default to 5% if not set
+        risk_free_rate = getattr(config, 'RISK_FREE_RATE', 0.05)
+        
         iv_array = vectorized_implied_volatility(
-            price=price_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, flag=flag_array, return_as='numpy', on_error='warn'
+            price=price_array, S=ltp, K=strike_array, t=time_to_expiry, r=risk_free_rate, flag=flag_array, return_as='numpy', on_error='warn'
         )
         
         # --- FIX: Calculate Greeks individually ---
         greeks = {
-            'delta': vectorized_delta(flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, sigma=iv_array),
-            'gamma': vectorized_gamma(flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, sigma=iv_array),
-            'theta': vectorized_theta(flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=0.05, sigma=iv_array)
+            'delta': vectorized_delta(flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=risk_free_rate, sigma=iv_array),
+            'gamma': vectorized_gamma(flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=risk_free_rate, sigma=iv_array),
+            'theta': vectorized_theta(flag=flag_array, S=ltp, K=strike_array, t=time_to_expiry, r=risk_free_rate, sigma=iv_array)
         }
 
         # --- Format Output ---
@@ -538,20 +610,14 @@ def get_futures_contract_data(symbol: str, exchange: str = "NFO") -> dict | None
     if (not smart_api_session or not INSTRUMENT_LIST) and not initialize_angelone_session():
         return None
 
-    underlying_symbol = symbol.replace('.NS', '')
+    underlying_symbol = symbol.replace('.NS', '').upper() # Use upper to match map key
 
-    # Step 1: Find all futures expiry dates for the given stock
+    # Step 1: Find all futures expiry dates using the pre-processed O(1) map
     try:
-        futures_expiries = set()
-        for inst in INSTRUMENT_LIST.values():
-            if (isinstance(inst, dict) and
-                inst.get('instrumenttype') == 'FUTSTK' and # Changed to FUTSTK
-                inst.get('name') == underlying_symbol and
-                inst.get('exch_seg') == exchange):
-                futures_expiries.add(inst.get('expiry'))
+        futures_expiries = FUTURES_EXPIRY_MAP["STK"].get(underlying_symbol)
 
         if not futures_expiries:
-            log.warning(f"No futures expiry dates found for {symbol} in the instrument list.")
+            log.warning(f"No futures expiry dates found for {symbol} in the pre-processed map.")
             return None
 
         # Step 2: Find the nearest expiry date
@@ -669,27 +735,202 @@ def get_key_oi_levels(symbol: str, num_levels: int = 3) -> dict | None:
 
 # Convenience function for Indices (Indices use FUTIDX/OPTIDX)
 def get_index_futures_data(index_name: str) -> dict | None:
-    """Gets futures data specifically for indices like NIFTY, BANKNIFTY."""
-    # This requires finding the correct index name/symbol mapping in INSTRUMENT_LIST
-    # and using 'instrumenttype' = 'FUTIDX'
-    # For now, we can adapt the get_futures_contract_data logic if needed,
-    # ensuring the correct instrument type and exchange ("NFO") are used.
-    # We might need a specific mapping for index names to their base names in the instrument list.
+    """
+    Gets futures data specifically for indices like NIFTY, BANKNIFTY.
+    Uses 'FUTIDX' instrument type and the pre-processed index expiry map.
+    """
+    log.info(f"[AO] Getting nearest index futures contract data for {index_name}...")
+    if (not smart_api_session or not INSTRUMENT_LIST) and not initialize_angelone_session():
+        return None
 
-    # Placeholder - Adapt logic from get_futures_contract_data
-    log.warning("get_index_futures_data needs specific implementation based on index names in INSTRUMENT_LIST")
-    # Example call structure (needs refinement based on instrument list inspection)
-    # return get_futures_contract_data(index_name, exchange="NFO") # Might need symbol mapping first
-    return None
+    underlying_name = index_name.upper() # e.g., "NIFTY 50"
+    exchange = "NFO"
+
+    # Step 1: Find all futures expiry dates using the pre-processed O(1) map
+    try:
+        futures_expiries = FUTURES_EXPIRY_MAP["IDX"].get(underlying_name)
+        if not futures_expiries:
+            # Fallback for common aliases
+            if underlying_name == "NIFTY":
+                futures_expiries = FUTURES_EXPIRY_MAP["IDX"].get("NIFTY 50")
+            elif underlying_name == "BANKNIFTY":
+                futures_expiries = FUTURES_EXPIRY_MAP["IDX"].get("NIFTY BANK")
+
+        if not futures_expiries:
+            log.warning(f"No futures expiry dates found for index {index_name} in the pre-processed map.")
+            return None
+
+        # Step 2: Find the nearest expiry date
+        today = datetime.now()
+        parsed_dates = []
+        for d in futures_expiries:
+            try:
+                parsed_dates.append(datetime.strptime(d, '%d%b%Y'))
+            except Exception:
+                log.debug(f"Ignoring unparsable index futures expiry date entry: {d}")
+
+        if not parsed_dates:
+            log.warning(f"No parsable index futures expiry dates found for {index_name}.")
+            return None
+
+        nearest = min(d for d in parsed_dates if d >= today) # Ensure expiry is not in the past
+        nearest_expiry_str = nearest.strftime('%d%b%Y').upper()
+
+        log.info(f"Nearest index futures expiry date for {index_name} is {nearest_expiry_str}.")
+
+        # Step 3: Find the specific instrument token for this future
+        future_token = None
+        future_trading_symbol = None
+        
+        # We must iterate here, but only on matches for the *name*, which is still fast
+        search_key_prefix = f"{underlying_name.upper()}{nearest_expiry_str}"
+
+        for key, inst in INSTRUMENT_LIST.items():
+            if (isinstance(inst, dict) and
+                inst.get('name') == underlying_name and # Match the index name
+                inst.get('instrumenttype') == 'FUTIDX' and # Match instrument type
+                inst.get('exch_seg') == exchange and
+                inst.get('expiry') == nearest_expiry_str):
+                
+                future_token = inst.get('token')
+                future_trading_symbol = inst.get('symbol') # Get the exact symbol
+                break
+
+        if not future_token or not future_trading_symbol:
+            log.error(f"Could not find instrument token/symbol for {underlying_name} index future expiring {nearest_expiry_str}.")
+            return None
+
+        log.info(f"Found index future instrument: Symbol='{future_trading_symbol}', Token='{future_token}'")
+
+        # Step 4: Fetch the quote data using the token
+        quote_data = smart_api_session.ltpData(exchange, future_trading_symbol, future_token)
+
+        if quote_data and quote_data.get('status') and quote_data.get('data'):
+            data = quote_data.get('data')
+            log.info(f"✅ Successfully fetched index futures quote for {future_trading_symbol}.")
+            return {
+                "symbol": future_trading_symbol,
+                "expiry_date": nearest_expiry_str,
+                "ltp": data.get('ltp'),
+                "open_interest": data.get('opnInterest'),
+                "volume": data.get('volume'),
+                "last_traded_time": data.get('exchFeedTime')
+            }
+        else:
+            err_msg = quote_data.get('message') if isinstance(quote_data, dict) else "Unknown API error"
+            log.error(f"API error fetching index futures quote for {future_trading_symbol}: {err_msg}")
+            return None
+
+    except Exception as e:
+        log.error(f"Error getting index futures contract data for {index_name}: {e}", exc_info=True)
+        return None
+
+def get_index_option_chain_data(index_name: str, exchange: str = "NFO") -> dict | None:
+    """
+    Fetches the nearest expiry date and the full option chain for that date
+    for an INDEX (e.g., NIFTY 50, NIFTY BANK).
+    """
+    log.info(f"[AO] Getting full option chain for INDEX: {index_name}...")
+    if (not smart_api_session or not INSTRUMENT_LIST) and not initialize_angelone_session():
+        return None
+
+    underlying_name = index_name.upper() # e.g., "NIFTY 50"
+
+    # Step 1: Find all expiry dates using the pre-processed O(1) map
+    try:
+        expiry_dates = OPTION_EXPIRY_MAP["IDX"].get(underlying_name)
+        if not expiry_dates:
+            # Fallback for common aliases
+            if underlying_name == "NIFTY":
+                expiry_dates = OPTION_EXPIRY_MAP["IDX"].get("NIFTY 50")
+            elif underlying_name == "BANKNIFTY":
+                expiry_dates = OPTION_EXPIRY_MAP["IDX"].get("NIFTY BANK")
+        
+        if not expiry_dates:
+            log.warning(f"No option expiry dates found for index {index_name} in the pre-processed map.")
+            return None
+
+        # Step 2: Find the nearest expiry date
+        today = datetime.now()
+        parsed_dates = []
+        for d in expiry_dates:
+            try:
+                parsed_dates.append(datetime.strptime(d, '%d%b%Y'))
+            except Exception:
+                log.debug(f"Ignoring unparsable index option expiry date entry: {d}")
+
+        if not parsed_dates:
+            log.warning(f"No parsable index option expiry dates found for {index_name}.")
+            return None
+
+        nearest = min(d for d in parsed_dates if d >= today.replace(hour=0, minute=0, second=0))
+        nearest_expiry = nearest.strftime('%d%b%Y').upper()
+
+        log.info(f"Nearest index option expiry date for {index_name} is {nearest_expiry}.")
+
+    except Exception as e:
+        log.error(f"Error finding expiry date for index {index_name}: {e}", exc_info=True)
+        return None
+
+    # Step 3: Fetch the option chain for the nearest expiry
+    try:
+        # Use the underlying_name for the API call
+        chain_data = smart_api_session.getOptionChain(exchange, underlying_name, nearest_expiry)
+
+        if chain_data and chain_data.get('status') and chain_data.get('data'):
+            log.info(f"✅ Successfully fetched option chain for index {index_name} on {nearest_expiry}.")
+            return {
+                "underlying_price": chain_data['data'].get('underlyingValue'),
+                "expiry_date": nearest_expiry,
+                "chain": chain_data['data'].get('options', [])
+            }
+        else:
+            err_msg = chain_data.get('message') if isinstance(chain_data, dict) else "Unknown API error"
+            log.error(f"API error fetching option chain for index {index_name}: {err_msg}")
+            return None
+
+    except Exception as e:
+        log.error(f"Error in get_index_option_chain_data for {index_name}: {e}", exc_info=True)
+        return None
 
 def get_index_key_oi_levels(index_name: str, num_levels: int = 5) -> dict | None:
-    """Gets key OI levels specifically for indices."""
-    # Similar to index futures, this requires finding the index in INSTRUMENT_LIST
-    # and using 'instrumenttype' = 'OPTIDX' when filtering/fetching.
-    # The get_option_chain_data function might need adaptation or a specific index version.
+    """
+    Gets key OI levels specifically for indices by calling the
+    new index-specific option chain function.
+    """
+    log.info(f"[AO] Getting Top {num_levels} High OI Strikes for INDEX: {index_name}...")
+    try:
+        # Call the new index-specific function
+        chain_data = get_index_option_chain_data(index_name) 
+        if not chain_data or not chain_data.get('chain'):
+            log.warning(f"No option chain data available for index {index_name} to find high OI levels.")
+            return None
 
-    # Placeholder - Adapt logic from get_key_oi_levels
-    log.warning("get_index_key_oi_levels needs specific implementation based on index names in INSTRUMENT_LIST")
-    # Example call structure (needs refinement based on instrument list inspection)
-    # return get_key_oi_levels(index_name, num_levels=num_levels) # Might need symbol mapping and option chain adjustments
-    return None
+        df = pd.DataFrame(chain_data['chain'])
+        required_cols = ['strikePrice', 'optionType', 'openInterest']
+        if not all(col in df.columns for col in required_cols):
+            log.warning(f"Index option chain for {index_name} missing columns for OI analysis.")
+            return None
+
+        # Convert to numeric, coercing errors
+        df['strikePrice'] = pd.to_numeric(df['strikePrice'], errors='coerce')
+        df['openInterest'] = pd.to_numeric(df['openInterest'], errors='coerce')
+        df.dropna(subset=['strikePrice', 'openInterest'], inplace=True)
+
+        calls = df[df['optionType'] == 'CE'].nlargest(num_levels, 'openInterest')
+        puts = df[df['optionType'] == 'PE'].nlargest(num_levels, 'openInterest')
+
+        high_oi_calls = calls[['strikePrice', 'openInterest']].to_dict('records')
+        high_oi_puts = puts[['strikePrice', 'openInterest']].to_dict('records')
+
+        log.info(f"✅ Identified High OI levels for index {index_name}. Calls: {[c['strikePrice'] for c in high_oi_calls]}, Puts: {[p['strikePrice'] for p in high_oi_puts]}")
+        return {
+            "expiry_date": chain_data.get("expiry_date"),
+            "underlying_price": chain_data.get("underlying_price"),
+            "high_oi_calls": high_oi_calls,
+            "high_oi_puts": high_oi_puts
+        }
+
+    except Exception as e:
+        log.error(f"Error getting key OI levels for index {index_name}: {e}", exc_info=True)
+        return None

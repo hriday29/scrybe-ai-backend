@@ -1,20 +1,17 @@
 #ai_analyzer.py
 import time
 import os
-from openai import AzureOpenAI # Replaced google.generativeai
+from openai import AzureOpenAI # Replaced google.generativeai  # type: ignore
 import config
 import json
-import base64
-import pandas as pd
-import data_retriever
 from logger_config import log
 # Removed google.generativeai.types as it's no longer needed
-import pandas_ta as ta
+from typing import Optional, Any, Dict
 
 class AIAnalyzer:
     """A class to handle all interactions with the Azure OpenAI model."""
 
-    def __init__(self, model_name: str = None):
+    def __init__(self, model_name: Optional[str] = None):
         # Expecting Azure credentials from environment variables now
         try:
             self.azure_endpoint = os.getenv("AZURE_AI_ENDPOINT")
@@ -31,6 +28,8 @@ class AIAnalyzer:
             api_key=self.api_key,
             api_version="2024-02-01"  # Or your desired API version
         )
+        # Preserve model_name for potential future use to avoid unused-arg warnings
+        self.model_name = model_name
         
         # The model names in config.py should now correspond to your Azure deployment names
         # e.g., config.PRO_MODEL = "gpt-4-deployment"
@@ -40,7 +39,7 @@ class AIAnalyzer:
         
         log.info(f"AIAnalyzer initialized with Azure endpoint: {self.azure_endpoint}")
 
-    def _make_azure_call(self, system_instruction: str, user_prompt: str, deployment_name: str, output_schema: dict, timeout: int = 120, max_tokens: int = None):
+    def _make_azure_call(self, system_instruction: str, user_prompt: str, deployment_name: str, output_schema: dict, timeout: int = 120, max_tokens: Optional[int] = None):
         """Helper function to make calls to Azure OpenAI, enforcing JSON output."""
 
         prompt_with_schema = f"""
@@ -57,6 +56,7 @@ class AIAnalyzer:
         ]
 
         try:
+            response_text = ""
             # --- FIX: Conditionally create API call parameters ---
             api_params = {
                 "model": deployment_name,
@@ -67,7 +67,7 @@ class AIAnalyzer:
             }
             # Only add max_tokens to the parameters if it has a value (is not None)
             if max_tokens is not None:
-                api_params["max_completion_tokens"] = max_tokens
+                api_params["max_tokens"] = max_tokens
             # --- END FIX ---
 
             # Use dictionary unpacking (**) to pass the parameters
@@ -292,7 +292,7 @@ class AIAnalyzer:
                 user_prompt=prompt_content,
                 deployment_name=self.pro_deployment, # Still use Pro for the final synthesis
                 output_schema=output_schema,
-                timeout=300,
+                timeout=180,
                 max_tokens=8192 # Keep max tokens high for complex synthesis
             )
 
@@ -303,13 +303,29 @@ class AIAnalyzer:
             log.info(f"✅ Success on APEX synthesis for {ticker}.")
             return analysis_result
         except Exception as e:
-            log.critical(f"CRITICAL: APEX synthesis failed for {ticker}. Error: {e}")
-            # Consider returning a default HOLD/Error structure instead of raising Exception
-            # to prevent pipeline failure for one bad stock.
-            # For now, keeping the exception raise as per original design.
-            raise Exception(f"APEX synthesis failed for deployment {self.pro_deployment}.")
+            log.critical(f"CRITICAL: APEX synthesis failed for {ticker}. Error: {e}. Returning a default HOLD signal.")
+            # Return a default "error" or "HOLD" structure that matches the schema
+            return {
+                "scrybeScore": 0,
+                "signal": "HOLD",
+                "thesisType": "Error",
+                "confidence": "Low",
+                "keyInsight": f"APEX analysis failed due to an internal error: {e}",
+                "analystVerdict": "Inconclusive due to analysis failure.",
+                "keyRisks_and_Mitigants": {
+                    "risk_1": "Analysis engine failure.",
+                    "risk_2": "No data available.",
+                    "mitigant": "Defaulting to HOLD. No action taken."
+                },
+                "keyObservations": {
+                    "confluencePoints": [],
+                    "contradictionPoints": ["APEX synthesis failed to run."]
+                },
+                "model_used": self.pro_deployment,
+                "error": str(e)  # Add an explicit error field
+            }
 
-    def get_single_news_impact_analysis(self, article: dict) -> dict:
+    def get_single_news_impact_analysis(self, article: dict) -> Optional[Dict[str, Any]]:
         """
         Analyzes a single news article to determine its likely impact on a stock's price.
         """
@@ -350,7 +366,7 @@ class AIAnalyzer:
         return result if "error" not in result else None
 
     
-    def get_intraday_short_signal(self, prompt_data: dict) -> dict:
+    def get_intraday_short_signal(self, prompt_data: dict) -> Optional[Dict[str, Any]]:
         """
         Analyzes holistic data to find high-probability intraday short candidates
         using the powerful Pro model.
@@ -399,71 +415,110 @@ class AIAnalyzer:
         )
         return result if "error" not in result else None
 
-    def get_index_analysis(self, index_name: str, index_ticker: str, macro_context: dict) -> dict:
+    def get_index_analysis(
+        self,
+        index_name: str,
+        macro_context: dict,
+        latest_technicals: dict,
+        vix_value: Optional[str],
+        options_data: dict
+    ) -> Optional[Dict[str, Any]]:
         """
-        Generates a CIO-grade, in-depth analysis for a market index, including a fallback for deriving key levels from technicals if options data is unavailable.
+        Generates a CIO-grade, in-depth analysis for a market index,
+        including a fallback for deriving key levels from technicals
+        if options data is unavailable.
         """
         log.info(f"Generating definitive CIO-grade index analysis for {index_name}...")
-        
+
         system_instruction = """
         You are the Chief Investment Officer (CIO) of a global macro fund. Your task is to synthesize technical, macroeconomic, and (when available) options market data into a clear, institutional-grade strategic report on a major stock market index.
 
         **Multi-Factor Synthesis Protocol:**
-        1.  **Technical Health Assessment:** Analyze the provided technical indicator data (Price vs. MAs, RSI) to determine the current trend strength and momentum.
-        2.  **Key Levels Analysis (CRITICAL):**
+        1. **Technical Health Assessment:** Analyze the provided technical indicator data (Price vs. MAs, RSI) to determine the current trend strength and momentum.
+        2. **Key Levels Analysis (CRITICAL):**
             - If options data (Max OI) is provided, you MUST use the high OI strike prices as the primary psychological support/resistance levels.
             - **If options data is "Not Available", you MUST derive the Key Support and Resistance levels from the technical data provided (e.g., recent swing highs/lows, significant moving averages).** The report must contain key levels.
-        **3. Correlation & Context Check:**
+        3. **Correlation & Context Check:**
             - Analyze the stock's correlation to the NIFTY 50. Is it moving with the market (high positive correlation) or against it?
             - A 'BUY' signal in a stock that is strongly correlated with a bearish NIFTY 50 requires extra caution and a pristine setup. Acknowledge this context in your verdict.
-        4.  **Sentiment Analysis:** Use the Put-Call Ratio (PCR) and Volatility Index (VIX) to gauge current market sentiment.
-        5.  **Macroeconomic Overlay:** Interpret how the macro data influences the index's trajectory.
-        6.  **Final Synthesis:** Combine all factors to produce a cohesive report, completing all fields in the required JSON format with detailed, well-reasoned insights.
+        4. **Sentiment Analysis:** Use the Put-Call Ratio (PCR) and Volatility Index (VIX) to gauge current market sentiment.
+        5. **Macroeconomic Overlay:** Interpret how the macro data influences the index's trajectory.
+        6. **Final Synthesis:** Combine all factors to produce a cohesive report, completing all fields in the required JSON format with detailed, well-reasoned insights.
         """
 
         output_schema = {
-            "type": "OBJECT", "properties": {
-                "marketPulse": {"type": "OBJECT", "properties": {"overallBias": {"type": "STRING"}, "volatilityIndexStatus": {"type": "STRING"}}, "required": ["overallBias", "volatilityIndexStatus"]},
-                "trendAnalysis": {"type": "OBJECT", "properties": {"shortTermTrend": {"type": "STRING"}, "mediumTermTrend": {"type": "STRING"}, "keyTrendIndicators": {"type": "STRING"}}, "required": ["shortTermTrend", "mediumTermTrend", "keyTrendIndicators"]},
-                "keyLevels": {"type": "OBJECT", "properties": {"resistance": {"type": "ARRAY", "items": {"type": "STRING"}}, "support": {"type": "ARRAY", "items": {"type": "STRING"}}}, "required": ["resistance", "support"]},
-                "optionsMatrix": {"type": "OBJECT", "properties": {"maxOpenInterestCall": {"type": "STRING"}, "maxOpenInterestPut": {"type": "STRING"}, "putCallRatioAnalysis": {"type": "STRING"}}, "required": ["maxOpenInterestCall", "maxOpenInterestPut", "putCallRatioAnalysis"]},
-                "forwardOutlook": {"type": "OBJECT", "properties": {"next7Days": {"type": "STRING"}, "primaryRisk": {"type": "STRING"}}, "required": ["next7Days", "primaryRisk"]}
-            }, "required": ["marketPulse", "trendAnalysis", "keyLevels", "optionsMatrix", "forwardOutlook"]
+            "type": "OBJECT",
+            "properties": {
+                "marketPulse": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "overallBias": {"type": "STRING"},
+                        "volatilityIndexStatus": {"type": "STRING"}
+                    },
+                    "required": ["overallBias", "volatilityIndexStatus"]
+                },
+                "trendAnalysis": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "shortTermTrend": {"type": "STRING"},
+                        "mediumTermTrend": {"type": "STRING"},
+                        "keyTrendIndicators": {"type": "STRING"}
+                    },
+                    "required": ["shortTermTrend", "mediumTermTrend", "keyTrendIndicators"]
+                },
+                "keyLevels": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "resistance": {"type": "ARRAY", "items": {"type": "STRING"}},
+                        "support": {"type": "ARRAY", "items": {"type": "STRING"}}
+                    },
+                    "required": ["resistance", "support"]
+                },
+                "optionsMatrix": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "maxOpenInterestCall": {"type": "STRING"},
+                        "maxOpenInterestPut": {"type": "STRING"},
+                        "putCallRatioAnalysis": {"type": "STRING"}
+                    },
+                    "required": ["maxOpenInterestCall", "maxOpenInterestPut", "putCallRatioAnalysis"]
+                },
+                "forwardOutlook": {
+                    "type": "OBJECT",
+                    "properties": {
+                        "next7Days": {"type": "STRING"},
+                        "primaryRisk": {"type": "STRING"}
+                    },
+                    "required": ["next7Days", "primaryRisk"]
+                }
+            },
+            "required": ["marketPulse", "trendAnalysis", "keyLevels", "optionsMatrix", "forwardOutlook"]
         }
-        
-        historical_data = data_retriever.get_historical_stock_data(index_ticker)
-        vix_data = data_retriever.get_historical_stock_data("^INDIAVIX")
-        options_data = data_retriever.get_index_option_data(index_ticker)
-        
-        if historical_data is None or len(historical_data) < 50:
-            return {"error": "Not enough historical data to analyze the index."}
-            
-        historical_data.ta.rsi(length=14, append=True)
-        historical_data.ta.ema(length=20, append=True)
-        historical_data.ta.ema(length=50, append=True)
-        historical_data.dropna(inplace=True)
-        latest_data = historical_data.iloc[-1]
-        
-        vix_value_str = f"{vix_data.iloc[-1]['close']:.2f}" if vix_data is not None and not vix_data.empty else "Not Available"
-        options_data_str = json.dumps(options_data) if options_data else "Not Available"
 
-        
+        # Convert inputs to strings for the prompt
+        vix_value_str = vix_value if vix_value else "Not Available"
+        options_data_str = json.dumps(options_data) if options_data else "Not Available"
+        technicals_str = json.dumps(latest_technicals) if latest_technicals else "Not Available"
+
         prompt = f"""
         Generate a CIO-level strategic report for the {index_name}. Synthesize all of the following data:
-        - Latest Technicals: Price({latest_data['close']:.2f}), 20-EMA({latest_data['EMA_20']:.2f}), 50-EMA({latest_data['EMA_50']:.2f}), RSI({latest_data['RSI_14']:.2f})
+        - Latest Technicals: {technicals_str}
         - Latest Volatility Index (India VIX): {vix_value_str}
         - Latest Options Data: {options_data_str}
         - Macroeconomic Context: {json.dumps(macro_context)}
-        Provide your full analysis in the required JSON format. If options data is not available, you must still provide key support and resistance levels based on technicals.
+        Provide your full analysis in the required JSON format.
+        If options data is not available, you must still provide key support and resistance levels based on technicals.
         """
-        
+
         result = self._make_azure_call(
             system_instruction=system_instruction,
             user_prompt=prompt,
             deployment_name=self.flash_deployment,
             output_schema=output_schema
         )
+        
         return result if "error" not in result else None
+
 
     def get_volatility_qualifier(self, technical_indicators: dict) -> str:
         """
@@ -488,7 +543,7 @@ class AIAnalyzer:
             log.error(f"[Volatility Qualifier] An unexpected error occurred: {e}")
             return ""
             
-    def get_dvm_scores(self, live_financial_data: dict, technical_indicators: dict) -> dict:
+    def get_dvm_scores(self, live_financial_data: dict, technical_indicators: dict) -> Optional[Dict[str, Any]]:
         """A method to generate Durability, Valuation, and Momentum scores."""
         log.info("Generating DVM scores...")
         
@@ -558,7 +613,7 @@ class AIAnalyzer:
         log.error(f"[DVM Scoring] Failed after {max_retries} attempts.")
         return None
     
-    def get_conversational_answer(self, question: str, analysis_context: dict) -> dict:
+    def get_conversational_answer(self, question: str, analysis_context: dict) -> Optional[Dict[str, Any]]:
         """
         Answers a user's question based on the context of a specific stock analysis.
         """
