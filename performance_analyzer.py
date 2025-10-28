@@ -7,6 +7,9 @@ import config
 from logger_config import log
 import database_manager
 
+# --- IMPORT THE NEW, CORRECT ANALYZER ---
+from analyze_backtest_db import analyze_backtest_from_db
+
 
 def calculate_historical_performance(historical_data: pd.DataFrame) -> dict:
     """
@@ -84,96 +87,30 @@ def calculate_correlations(
 def generate_backtest_report(batch_id: str) -> dict | None:
     """
     Generates a comprehensive performance summary for a completed backtest
-    by fetching closed trades directly from the database using the batch_id.
-    Focuses on trade-based metrics.
+    by calling the consolidated 'analyze_backtest_from_db' function
+    and then saving its full results to the analysis database.
     """
     log.info(f"--- Generating Final Performance Report for Batch: {batch_id} ---")
+    log.info("Calling main analyzer 'analyze_backtest_from_db'...")
 
-    # --- Fetch Closed Trades from Database ---
     try:
-        if getattr(database_manager, "performance_collection", None) is None:
-            database_manager.init_db(purpose="scheduler")
-            if getattr(database_manager, "performance_collection", None) is None:
-                log.error(
-                    "[REPORT] Cannot generate report: "
-                    "'scheduler' database performance collection not available."
-                )
-                return None
+        # Call the new, consolidated analyzer.
+        # This function now handles all calculations AND prints the detailed report.
+        report_metrics = analyze_backtest_from_db(batch_id)
 
-        closed_trades_list = list(
-            database_manager.performance_collection.find(
-                {"batch_id": batch_id, "status": "Closed"}
-            )
-        )
-
-        if not closed_trades_list:
-            log.warning(
-                f"[REPORT] Found 0 closed trades in the database for batch_id '{batch_id}'."
-            )
-            print("\n" + "=" * 80)
-            print(f"### Backtest Performance Summary: Batch '{batch_id}' ###")
-            print("=" * 80)
-            print("No closed trades found for this batch.")
-            print("=" * 80)
-            return {"status": "No closed trades found", "batch_id": batch_id}
-
-        closed_trades_df = pd.DataFrame(closed_trades_list)
-        log.info(f"Fetched {len(closed_trades_df)} closed trades from database for analysis.")
-
-        if "net_return_pct" not in closed_trades_df.columns:
-            log.error("[REPORT] 'net_return_pct' column missing in performance data.")
-            return None
-
-        closed_trades_df["net_return_pct"] = pd.to_numeric(
-            closed_trades_df["net_return_pct"], errors="coerce"
-        )
-        closed_trades_df.dropna(subset=["net_return_pct"], inplace=True)
-
-        if closed_trades_df.empty:
-            log.warning("[REPORT] No valid closed trades remain after cleaning PnL data.")
-            return {"status": "No valid closed trades found after cleaning", "batch_id": batch_id}
+        if not report_metrics:
+            log.warning(f"[REPORT] analyze_backtest_from_db returned no metrics for batch {batch_id}.")
+            return {"status": "No metrics returned from analyzer", "batch_id": batch_id}
+        
+        # Add batch_id to the metrics if it's not already there
+        report_metrics.setdefault("batch_id", batch_id)
 
     except Exception as e:
-        log.error(f"[REPORT] Error fetching or processing trades: {e}", exc_info=True)
+        log.error(f"[REPORT] Error running 'analyze_backtest_from_db': {e}", exc_info=True)
         return None
 
-    # --- Trade Metric Calculations ---
-    total_trades = len(closed_trades_df)
-    _ = config.BACKTEST_PORTFOLIO_CONFIG.get("initial_capital", 0)
-
-    wins_df = closed_trades_df[closed_trades_df["net_return_pct"] > 0]
-    losses_df = closed_trades_df[closed_trades_df["net_return_pct"] <= 0]
-
-    win_rate = (len(wins_df) / total_trades) * 100 if total_trades > 0 else 0
-    avg_win_pct = wins_df["net_return_pct"].mean() if not wins_df.empty else 0
-    avg_loss_pct = losses_df["net_return_pct"].mean() if not losses_df.empty else 0
-
-    expectancy_pct = (
-        (win_rate / 100 * avg_win_pct) + ((100 - win_rate) / 100 * avg_loss_pct)
-        if total_trades > 0
-        else 0
-    )
-
-    # --- Print the Report ---
-    print("\n" + "=" * 80)
-    print(f"### Backtest Performance Summary: Batch '{batch_id}' ###")
-    print("=" * 80)
-    print(f"{'Total Trades Closed:':<25} {total_trades}")
-    print(f"{'Win Rate (%):':<25} {win_rate:.2f}%")
-    print(f"{'Avg Win (%):':<25} {avg_win_pct:.2f}%")
-    print(f"{'Avg Loss (%):':<25} {avg_loss_pct:.2f}%")
-    print(f"{'Expectancy per Trade (%):':<25} {expectancy_pct:.2f}%")
-    print("=" * 80)
-
-    # --- Metrics Dict ---
-    report_metrics = {
-        "batch_id": batch_id,
-        "total_trades": total_trades,
-        "win_rate_pct": round(win_rate, 2),
-        "avg_win_pct": round(avg_win_pct, 2),
-        "avg_loss_pct": round(avg_loss_pct, 2),
-        "expectancy_pct": round(expectancy_pct, 2),
-    }
+    # --- Metrics Dict (is now populated with ALL metrics from the analyzer) ---
+    log.info(f"Analyzer returned {len(report_metrics)} metrics. Proceeding to save to DB.")
 
     # --- Save Report to DB ---
     try:
@@ -184,31 +121,49 @@ def generate_backtest_report(batch_id: str) -> dict | None:
                     "[REPORT] Cannot save report: "
                     "'analysis' database reports collection not available."
                 )
-                return report_metrics
+                return report_metrics  # Return the metrics even if saving fails
 
         report_name = f"{config.APEX_SWING_STRATEGY['name']}_Batch_{batch_id}"
 
+        # The report_metrics dict already has everything:
+        # (final_equity, total_net_pnl, total_return_pct, max_drawdown_pct, 
+        # sharpe_ratio, profit_factor, total_trades, win_rate_pct, etc.)
+        
+        # We just need to add the metadata
         report_data_to_save = report_metrics.copy()
-        report_data_to_save.update(
-            {
-                "report_name": report_name,
-                "last_updated": datetime.now(timezone.utc),
-                "backtest_start_date": closed_trades_df["open_date"].min()
-                if not closed_trades_df.empty
-                else None,
-                "backtest_end_date": closed_trades_df["close_date"].max()
-                if not closed_trades_df.empty
-                else None,
-            }
-        )
+        report_data_to_save["report_name"] = report_name
+        report_data_to_save["last_updated"] = datetime.now(timezone.utc)
+        
+        # Fetch start/end dates from the performance DB
+        try:
+            if getattr(database_manager, "performance_collection", None) is None:
+                database_manager.init_db(purpose="scheduler")
+            
+            pipeline = [
+                {"$match": {"batch_id": batch_id, "status": "Closed"}},
+                {"$group": {
+                    "_id": "$batch_id",
+                    "backtest_start_date": {"$min": "$open_date"},
+                    "backtest_end_date": {"$max": "$close_date"}
+                }}
+            ]
+            date_agg = list(database_manager.performance_collection.aggregate(pipeline))
+            if date_agg:
+                report_data_to_save["backtest_start_date"] = date_agg[0].get("backtest_start_date")
+                report_data_to_save["backtest_end_date"] = date_agg[0].get("backtest_end_date")
+            else:
+                log.warning("Could not find trades to aggregate start/end dates for report.")
+        except Exception as date_e:
+            log.warning(f"Could not aggregate start/end dates for report: {date_e}")
 
+        # Now, we save the COMPLETE report dictionary
         database_manager.backtest_reports_collection.update_one(
             {"batch_id": batch_id},
             {"$set": report_data_to_save},
             upsert=True,
         )
         log.info(
-            f"✅ Successfully saved backtest report metrics to ANALYSIS database for batch {batch_id}."
+            f"✅ Successfully saved FULL backtest report to ANALYSIS database for batch {batch_id}."
         )
 
     except Exception as e:

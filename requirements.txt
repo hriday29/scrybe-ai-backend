@@ -21,6 +21,7 @@ pandas-ta
 pandas_market_calendars
 yfinance
 matplotlib
+quantstats
 
 # --- External Services & SDKs ---
 google-generativeai
