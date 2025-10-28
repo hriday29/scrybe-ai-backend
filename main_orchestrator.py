@@ -138,7 +138,8 @@ def run_simulation(batch_id: str, start_date: str, end_date: str, is_fresh_run: 
                             end=simulation_date_str,
                             period="5y",
                             progress=False,
-                            ignore_tz=True
+                            ignore_tz=True,
+                            auto_adjust=True
                         )
                         if index_analysis_raw is not None and not index_analysis_raw.empty:
                             log.info("Index analysis download successful.")
