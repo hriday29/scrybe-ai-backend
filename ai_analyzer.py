@@ -259,6 +259,7 @@ class AIAnalyzer:
         # --- END MODIFIED PROMPT CONTENT ---
 
         log.info(f"--- Attempting APEX synthesis with model '{self.primary_model}' ---")
+        log.info(f"--- VERIFICATION: Model name length is {len(self.primary_model)}, ends with 'pro': {self.primary_model.lower().endswith('pro')} ---")
         try:
             analysis_result = self._make_azure_call(
                 system_instruction=system_instruction,
