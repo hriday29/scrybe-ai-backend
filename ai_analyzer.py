@@ -259,7 +259,9 @@ class AIAnalyzer:
         # --- END MODIFIED PROMPT CONTENT ---
 
         log.info(f"--- Attempting APEX synthesis with model '{self.primary_model}' ---")
-        log.info(f"--- VERIFICATION: Model name length is {len(self.primary_model)}, ends with 'pro': {self.primary_model.lower().endswith('pro')} ---")
+        # Securely verify the model name by logging its hash
+        model_hash = hashlib.sha256(self.primary_model.encode()).hexdigest()
+        log.info(f"--- VERIFICATION: SHA256 hash of the primary model name starts with '{model_hash[:10]}' ---")
         try:
             analysis_result = self._make_azure_call(
                 system_instruction=system_instruction,
