@@ -472,9 +472,23 @@ def save_faq_submission(submission_data: dict, user_id: str): # <-- 1. Add user_
         return None
 
 def close_db_connection():
-    """Closes the global MongoDB client connection if it's open."""
-    global client
+    """Closes the global MongoDB client connection and clears all cached collections."""
+    global client, db, predictions_collection, performance_collection
+    global analysis_results_collection, backtest_reports_collection
+    global live_predictions_collection, live_performance_collection
+
     if client:
-        client.close()
-        client = None # Reset the client
-        log.info("--- Database connection successfully closed. ---")
+        try:
+            client.close()
+            log.info("--- Database connection successfully closed. ---")
+        except Exception as e:
+            log.warning(f"Error while closing MongoDB client: {e}")
+    # Always clear references so future code can re-init cleanly
+    client = None
+    db = None
+    predictions_collection = None
+    performance_collection = None
+    analysis_results_collection = None
+    backtest_reports_collection = None
+    live_predictions_collection = None
+    live_performance_collection = None

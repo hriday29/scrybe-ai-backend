@@ -50,7 +50,16 @@ def analyze_backtest_from_db(batch_id: str):
 
         log.info(f"Fetching closed trades for batch_id '{batch_id}' from performance collection...")
         query = {"batch_id": batch_id, "status": "Closed"}
-        closed_trades_list = list(database_manager.performance_collection.find(query))
+        try:
+            closed_trades_list = list(database_manager.performance_collection.find(query))
+        except pymongo.errors.InvalidOperation as inv_e:
+            # Handle stale/closed client case gracefully by re-initializing once
+            if "after close" in str(inv_e):
+                log.warning("Performance collection bound to a closed MongoClient. Re-initializing DB (scheduler) and retrying once...")
+                database_manager.init_db(purpose="scheduler")
+                closed_trades_list = list(database_manager.performance_collection.find(query))
+            else:
+                raise
 
         if not closed_trades_list:
             log.warning(f"No closed trades found in the database for batch_id '{batch_id}'.")
