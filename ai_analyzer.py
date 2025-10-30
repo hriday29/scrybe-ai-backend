@@ -6,6 +6,7 @@ import json
 from logger_config import log
 from typing import Optional, Any, Dict
 from ai_providers import get_provider_from_env
+import hashlib
 
 class AIAnalyzer:
     """A class to handle all interactions with the selected AI provider (Azure OpenAI or Azure AI Foundry)."""
