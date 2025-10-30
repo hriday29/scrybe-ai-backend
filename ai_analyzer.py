@@ -6,7 +6,6 @@ import json
 from logger_config import log
 from typing import Optional, Any, Dict
 from ai_providers import get_provider_from_env
-import hashlib
 
 class AIAnalyzer:
     """A class to handle all interactions with the selected AI provider (Azure OpenAI or Azure AI Foundry)."""
@@ -259,10 +258,7 @@ class AIAnalyzer:
         ])
         # --- END MODIFIED PROMPT CONTENT ---
 
-        log.info(f"--- Attempting APEX synthesis with model '{self.primary_model}' ---")
-        # Securely verify the model name by logging its hash
-        model_hash = hashlib.sha256(self.primary_model.encode()).hexdigest()
-        log.info(f"--- VERIFICATION: SHA256 hash of the primary model name starts with '{model_hash[:10]}' ---")
+        log.info(f"--- Attempting APEX synthesis with model '[{self.primary_model}]' ---")
         try:
             analysis_result = self._make_azure_call(
                 system_instruction=system_instruction,
