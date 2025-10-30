@@ -22,6 +22,7 @@ pandas_market_calendars
 yfinance
 matplotlib
 quantstats
+IPython
 
 # --- External Services & SDKs ---
 firebase-admin
