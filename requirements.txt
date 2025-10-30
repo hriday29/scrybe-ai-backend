@@ -24,9 +24,10 @@ matplotlib
 quantstats
 
 # --- External Services & SDKs ---
-google-generativeai
 firebase-admin
 openai
+azure-ai-inference
+requests
 sentry-sdk[flask]
 # smartapi-python  # Using local smartapi_client instead
 pyotp

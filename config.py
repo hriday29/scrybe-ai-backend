@@ -4,9 +4,21 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# --- Azure AI Credentials ---
-AZURE_AI_ENDPOINT = os.getenv("AZURE_AI_ENDPOINT")
-AZURE_AI_API_KEY = os.getenv("AZURE_AI_API_KEY")
+# --- AI Provider & Credentials ---
+# Select between Azure OpenAI and Azure AI Foundry (Models as a Service)
+# Values: "azure-openai" (default) | "azure-foundry"
+AI_PROVIDER = os.getenv("AI_PROVIDER", "azure-openai").lower()
+
+# Azure OpenAI (classic) variables
+AZURE_AI_ENDPOINT = os.getenv("AZURE_AI_ENDPOINT") or os.getenv("AZURE_OPENAI_ENDPOINT")
+AZURE_AI_API_KEY = os.getenv("AZURE_AI_API_KEY") or os.getenv("AZURE_OPENAI_API_KEY")
+AZURE_OPENAI_API_VERSION = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-01")
+
+# Azure AI Foundry Inference variables (for Grok and other non-OpenAI models)
+# Endpoint can be the global endpoint below or a regional endpoint like https://<region>.models.ai.azure.com
+AZURE_INFERENCE_ENDPOINT = os.getenv("AZURE_INFERENCE_ENDPOINT", "https://models.inference.ai.azure.com")
+AZURE_INFERENCE_API_KEY = os.getenv("AZURE_INFERENCE_API_KEY")
+AZURE_INFERENCE_API_VERSION = os.getenv("AZURE_INFERENCE_API_VERSION")  # optional
 
 # --- Data Source Control ---
 # This is the master switch. Set to "angelone" or "yfinance".
@@ -22,9 +34,6 @@ ANGELONE_API_KEY = os.getenv("ANGELONE_API_KEY")
 ANGELONE_CLIENT_ID = os.getenv("ANGELONE_CLIENT_ID")
 ANGELONE_PASSWORD = os.getenv("ANGELONE_PASSWORD")
 ANGELONE_TOTP_SECRET = os.getenv("ANGELONE_TOTP_SECRET")
-
-# --- Gemini API Key Pool (REMOVED) ---
-# This is no longer needed as we use a single Azure endpoint and key.
 
 # --- Email Configuration ---
 GMAIL_ADDRESS = os.getenv("GMAIL_ADDRESS")
@@ -48,11 +57,38 @@ os.makedirs(CACHE_DIR, exist_ok=True)
 os.makedirs(LOGS_DIR, exist_ok=True)
 os.makedirs(REPORTS_DIR, exist_ok=True)
 
-# --- Models (MODIFIED FOR AZURE) ---
-# These now refer to your DEPLOYMENT NAMES in Azure AI Studio.
-# Please set them in your .env file.
-PRO_MODEL = os.getenv("AZURE_PRO_DEPLOYMENT", "gpt-4.1")
-FLASH_MODEL = os.getenv("AZURE_FLASH_DEPLOYMENT", "gpt-4.1")
+# --- Models (OpenAI-compatible names) ---
+"""
+Model selection has been renamed from PRO/FLASH to primary/secondary to be provider-agnostic
+and consistent across Azure OpenAI and Azure AI Foundry.
+
+Backward compatibility: we still honor old env vars if the new ones are not set.
+Resolution order (first non-empty wins):
+- PRIMARY_MODEL: AZURE_PRIMARY_DEPLOYMENT, PRIMARY_MODEL, AZURE_PRO_DEPLOYMENT, PRO_MODEL
+- SECONDARY_MODEL: AZURE_SECONDARY_DEPLOYMENT, SECONDARY_MODEL, AZURE_FLASH_DEPLOYMENT, FLASH_MODEL
+
+For AI_PROVIDER=azure-openai: these should be Azure deployment names.
+For AI_PROVIDER=azure-foundry: these should be model IDs, e.g., "grok-2", "mistral-large", "gpt-4o-mini".
+"""
+
+PRIMARY_MODEL = (
+    os.getenv("AZURE_PRIMARY_DEPLOYMENT")
+    or os.getenv("PRIMARY_MODEL")
+    or os.getenv("AZURE_PRO_DEPLOYMENT")
+    or os.getenv("PRO_MODEL")
+    or "gpt-4.1"
+)
+
+SECONDARY_MODEL = (
+    os.getenv("AZURE_SECONDARY_DEPLOYMENT")
+    or os.getenv("SECONDARY_MODEL")
+    or os.getenv("AZURE_FLASH_DEPLOYMENT")
+    or os.getenv("FLASH_MODEL")
+    or "gpt-4.1"
+)
+
+# Optional explicit Grok model name when using Foundry
+GROK_MODEL = os.getenv("GROK_MODEL", "grok-2")
 
 # --- Strategy & Portfolio ---
 APEX_SWING_STRATEGY = {
@@ -101,6 +137,19 @@ NIFTY_50_TICKERS = [
     "SHRIRAMFIN.NS","SUNPHARMA.NS","TATACONSUM.NS","TATAMOTORS.NS","TATASTEEL.NS","TCS.NS",
     "TECHM.NS","TITAN.NS","ULTRACEMCO.NS","WIPRO.NS",
 ]
+
+# Public indices to expose via API and analysis endpoints
+INDEX_LIST = {
+    "NIFTY 50": "^NSEI",
+    "NIFTY BANK": "^NSEBANK",
+}
+
+# Live trading universe for the app; can be overridden via env as a comma-separated list
+_live_universe_env = os.getenv("LIVE_TRADING_UNIVERSE", "")
+if _live_universe_env:
+    LIVE_TRADING_UNIVERSE = [s.strip() for s in _live_universe_env.split(",") if s.strip()]
+else:
+    LIVE_TRADING_UNIVERSE = NIFTY_50_TICKERS
 
 MAJOR_ECONOMIC_EVENTS = [
     {"date": "2025-10-14", "event": "CPI Inflation Data Release (Monthly)"},

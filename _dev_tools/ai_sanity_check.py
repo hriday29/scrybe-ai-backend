@@ -13,8 +13,8 @@ def run_ai_sanity_check():
     log.info("--- 🚀 STARTING AI SANITY CHECK ---")
     
     try:
-        # Initialize the AI Analyzer
-        analyzer = AIAnalyzer(api_key=config.GEMINI_API_KEY)
+        # Initialize the AI Analyzer with dynamic provider selection
+        analyzer = AIAnalyzer()
 
         # --- TEST CASE 1: The "Perfect" Momentum Buy Setup ---
         # A fundamentally sound, technically strong stock in a bullish market.

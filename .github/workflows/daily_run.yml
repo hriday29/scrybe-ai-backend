@@ -47,18 +47,21 @@ jobs:
           GMAIL_ADDRESS: ${{ secrets.GMAIL_ADDRESS }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           EMAIL_RECIPIENTS: ${{ secrets.EMAIL_RECIPIENTS }}
-          
-          # Gemini API Key Pool
-          GOOGLE_API_KEY_1: ${{ secrets.GOOGLE_API_KEY_1 }}
-          GOOGLE_API_KEY_2: ${{ secrets.GOOGLE_API_KEY_2 }}
-          GOOGLE_API_KEY_3: ${{ secrets.GOOGLE_API_KEY_3 }}
-          GOOGLE_API_KEY_4: ${{ secrets.GOOGLE_API_KEY_4 }}
-          GOOGLE_API_KEY_5: ${{ secrets.GOOGLE_API_KEY_5 }}
-          GOOGLE_API_KEY_6: ${{ secrets.GOOGLE_API_KEY_6 }}
-          GOOGLE_API_KEY_7: ${{ secrets.GOOGLE_API_KEY_7 }}
-          GOOGLE_API_KEY_8: ${{ secrets.GOOGLE_API_KEY_8 }}
-          GOOGLE_API_KEY_9: ${{ secrets.GOOGLE_API_KEY_9 }}
-          GOOGLE_API_KEY_10: ${{ secrets.GOOGLE_API_KEY_10 }}
+
+          # AI Provider Configuration (Azure OpenAI or Azure AI Foundry)
+          AI_PROVIDER: ${{ secrets.AI_PROVIDER }}
+          # Azure OpenAI credentials
+          AZURE_AI_ENDPOINT: ${{ secrets.AZURE_AI_ENDPOINT }}
+          AZURE_AI_API_KEY: ${{ secrets.AZURE_AI_API_KEY }}
+          # Model names (provider-agnostic)
+          AZURE_PRIMARY_DEPLOYMENT: ${{ secrets.AZURE_PRIMARY_DEPLOYMENT }}
+          AZURE_SECONDARY_DEPLOYMENT: ${{ secrets.AZURE_SECONDARY_DEPLOYMENT }}
+          # Backward compatibility
+          AZURE_PRO_DEPLOYMENT: ${{ secrets.AZURE_PRO_DEPLOYMENT }}
+          AZURE_FLASH_DEPLOYMENT: ${{ secrets.AZURE_FLASH_DEPLOYMENT }}
+          # Azure AI Foundry inference (for models like Grok)
+          AZURE_INFERENCE_ENDPOINT: ${{ secrets.AZURE_INFERENCE_ENDPOINT }}
+          AZURE_INFERENCE_API_KEY: ${{ secrets.AZURE_INFERENCE_API_KEY }}
         run: python run_daily_jobs.py
 
       - name: Send Daily Report

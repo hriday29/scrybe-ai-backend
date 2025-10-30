@@ -1,43 +1,29 @@
 #ai_analyzer.py
 import time
 import os
-from openai import AzureOpenAI # Replaced google.generativeai  # type: ignore
 import config
 import json
 from logger_config import log
-# Removed google.generativeai.types as it's no longer needed
 from typing import Optional, Any, Dict
+from ai_providers import get_provider_from_env
 
 class AIAnalyzer:
-    """A class to handle all interactions with the Azure OpenAI model."""
+    """A class to handle all interactions with the selected AI provider (Azure OpenAI or Azure AI Foundry)."""
 
     def __init__(self, model_name: Optional[str] = None):
-        # Expecting Azure credentials from environment variables now
-        try:
-            self.azure_endpoint = os.getenv("AZURE_AI_ENDPOINT")
-            self.api_key = os.getenv("AZURE_AI_API_KEY")
-            if not self.azure_endpoint or not self.api_key:
-                raise ValueError("AZURE_AI_ENDPOINT and AZURE_AI_API_KEY environment variables must be set.")
-        except ValueError as e:
-            log.critical(f"Azure credentials error: {e}")
-            raise
-
-        # Initialize the AzureOpenAI client
-        self.client = AzureOpenAI(
-            azure_endpoint=self.azure_endpoint,
-            api_key=self.api_key,
-            api_version="2024-02-01"  # Or your desired API version
-        )
+        # Initialize AI provider (factory validates required environment variables)
+        self.provider = get_provider_from_env()
         # Preserve model_name for potential future use to avoid unused-arg warnings
         self.model_name = model_name
         
-        # The model names in config.py should now correspond to your Azure deployment names
-        # e.g., config.PRO_MODEL = "gpt-4-deployment"
-        # e.g., config.FLASH_MODEL = "gpt-35-turbo-deployment"
-        self.pro_deployment = config.PRO_MODEL
-        self.flash_deployment = config.FLASH_MODEL
-        
-        log.info(f"AIAnalyzer initialized with Azure endpoint: {self.azure_endpoint}")
+        # The model names in config.py should now correspond to either:
+        # - Azure OpenAI deployment names (for AI_PROVIDER=azure-openai)
+        # - Foundry model IDs (for AI_PROVIDER=azure-foundry, e.g., "grok-2")
+        # Renamed to provider-agnostic terms: primary/secondary
+        self.primary_model = config.PRIMARY_MODEL
+        self.secondary_model = config.SECONDARY_MODEL
+
+        log.info("AIAnalyzer initialized with dynamic provider selection")
 
     def _make_azure_call(self, system_instruction: str, user_prompt: str, deployment_name: str, output_schema: dict, timeout: int = 120, max_tokens: Optional[int] = None):
         """Helper function to make calls to Azure OpenAI, enforcing JSON output."""
@@ -56,25 +42,13 @@ class AIAnalyzer:
         ]
 
         try:
-            response_text = ""
-            # --- FIX: Conditionally create API call parameters ---
-            api_params = {
-                "model": deployment_name,
-                "messages": messages,
-                "response_format": {"type": "json_object"},
-                # "temperature": 0.1,
-                "timeout": timeout,
-            }
-            # Only add max_tokens to the parameters if it has a value (is not None)
-            if max_tokens is not None:
-                api_params["max_completion_tokens"] = max_tokens
-            # --- END FIX ---
-
-            # Use dictionary unpacking (**) to pass the parameters
-            response = self.client.chat.completions.create(**api_params)
-
-            response_text = response.choices[0].message.content
-            # Attempt to parse the JSON immediately after receiving
+            response_text = self.provider.chat_completions(
+                messages=messages,
+                model=deployment_name,
+                response_format={"type": "json_object"},
+                timeout=timeout,
+                max_tokens=max_tokens,
+            )
             return json.loads(response_text)
 
         except json.JSONDecodeError as json_err:
@@ -115,7 +89,7 @@ class AIAnalyzer:
         return self._make_azure_call(
             system_instruction=system_instruction,
             user_prompt=prompt,
-            deployment_name=self.flash_deployment,
+            deployment_name=self.secondary_model,
             output_schema=output_schema
         )
 
@@ -142,7 +116,7 @@ class AIAnalyzer:
         return self._make_azure_call(
             system_instruction=system_instruction,
             user_prompt=prompt,
-            deployment_name=self.flash_deployment,
+            deployment_name=self.secondary_model,
             output_schema=output_schema
         )
 
@@ -170,7 +144,7 @@ class AIAnalyzer:
     #     return self._make_azure_call(
     #         system_instruction=system_instruction,
     #         user_prompt=prompt,
-    #         deployment_name=self.flash_deployment,
+    #         deployment_name=self.secondary_model,
     #         output_schema=output_schema
     #     )
 
@@ -208,7 +182,7 @@ class AIAnalyzer:
         return self._make_azure_call(
             system_instruction=system_instruction,
             user_prompt=prompt,
-            deployment_name=self.flash_deployment, # Use the faster model for this focused task
+            deployment_name=self.secondary_model, # Use the secondary (typically faster) model for this focused task
             output_schema=output_schema
         )
         
@@ -284,13 +258,12 @@ class AIAnalyzer:
         ])
         # --- END MODIFIED PROMPT CONTENT ---
 
-
-        log.info(f"--- Attempting APEX synthesis with Azure deployment '{self.pro_deployment}' ---")
+        log.info(f"--- Attempting APEX synthesis with model '{self.primary_model}' ---")
         try:
             analysis_result = self._make_azure_call(
                 system_instruction=system_instruction,
                 user_prompt=prompt_content,
-                deployment_name=self.pro_deployment, # Still use Pro for the final synthesis
+                deployment_name=self.primary_model, # Use primary model for the final synthesis
                 output_schema=output_schema,
                 timeout=180,
                 max_tokens=8192 # Keep max tokens high for complex synthesis
@@ -299,7 +272,7 @@ class AIAnalyzer:
             if "error" in analysis_result:
                 raise Exception(analysis_result["error"])
 
-            analysis_result["model_used"] = self.pro_deployment
+            analysis_result["model_used"] = self.primary_model
             log.info(f"✅ Success on APEX synthesis for {ticker}.")
             return analysis_result
         except Exception as e:
@@ -321,7 +294,7 @@ class AIAnalyzer:
                     "confluencePoints": [],
                     "contradictionPoints": ["APEX synthesis failed to run."]
                 },
-                "model_used": self.pro_deployment,
+                "model_used": self.primary_model,
                 "error": str(e)  # Add an explicit error field
             }
 
@@ -360,7 +333,7 @@ class AIAnalyzer:
         result = self._make_azure_call(
             system_instruction=system_instruction,
             user_prompt=prompt,
-            deployment_name=self.flash_deployment,
+            deployment_name=self.secondary_model,
             output_schema=output_schema
         )
         return result if "error" not in result else None
@@ -368,11 +341,11 @@ class AIAnalyzer:
     
     def get_intraday_short_signal(self, prompt_data: dict) -> Optional[Dict[str, Any]]:
         """
-        Analyzes holistic data to find high-probability intraday short candidates
-        using the powerful Pro model.
+    Analyzes holistic data to find high-probability intraday short candidates
+    using the primary model.
         """
         ticker = prompt_data.get("ticker", "N/A")
-        log.info(f"[AI] Getting intraday short signal for {ticker} with FLASH model...")
+        log.info(f"[AI] Getting intraday short signal for {ticker} with secondary model...")
 
         system_instruction = """
         You are an elite HFT analyst specializing in identifying high-probability intraday short-selling opportunities for the NEXT trading session. Your analysis must be swift, data-driven, and decisive.
@@ -410,7 +383,7 @@ class AIAnalyzer:
         result = self._make_azure_call(
             system_instruction=system_instruction,
             user_prompt=prompt,
-            deployment_name=self.flash_deployment,
+            deployment_name=self.secondary_model,
             output_schema=output_schema
         )
         return result if "error" not in result else None
@@ -513,7 +486,7 @@ class AIAnalyzer:
         result = self._make_azure_call(
             system_instruction=system_instruction,
             user_prompt=prompt,
-            deployment_name=self.flash_deployment,
+            deployment_name=self.secondary_model,
             output_schema=output_schema
         )
         
@@ -596,7 +569,7 @@ class AIAnalyzer:
                 result = self._make_azure_call(
                     system_instruction=system_instruction,
                     user_prompt=prompt,
-                    deployment_name=self.flash_deployment,
+                    deployment_name=self.secondary_model,
                     output_schema=output_schema
                 )
                 if "error" not in result:
@@ -646,13 +619,12 @@ class AIAnalyzer:
         ]
         
         try:
-            response = self.client.chat.completions.create(
-                model=self.flash_deployment,
+            answer_text = self.provider.chat_completions(
+                model=self.secondary_model,
                 messages=messages,
                 temperature=0,
-                timeout=120
+                timeout=120,
             )
-            answer_text = response.choices[0].message.content
             return {"answer": answer_text}
         except Exception as e:
             log.error(f"Conversational Q&A call failed. Error: {e}")

@@ -22,7 +22,8 @@ def run_single_prompt_test():
 
     # --- 2. PREPARATION: Recreate the exact data the AI will see ---
     try:
-        analyzer = AIAnalyzer(api_key=config.GEMINI_API_KEY_POOL[0]) # Use a key from the pool
+        # Initialize with dynamic provider selection (no API key parameter needed)
+        analyzer = AIAnalyzer()
 
         full_historical_data = data_retriever.get_historical_stock_data(TICKER_TO_TEST, end_date=DATE_TO_TEST)
         if full_historical_data is None or len(full_historical_data) < 100:

@@ -101,6 +101,35 @@ Seamless experience across all devices - desktop, tablet, and mobile - built wit
 
 ---
 
+## 🤖 Backend AI configuration (Azure OpenAI and Azure AI Foundry/Grok)
+
+This repository now supports both Azure OpenAI and Azure AI Foundry (Models as a Service) so you can use OpenAI family models and third-party models like Grok.
+
+Quick setup:
+
+1) Copy `.env.example` to `.env` and fill in your keys.
+
+2) Choose your provider with `AI_PROVIDER`:
+- `azure-openai` (default): uses your Azure OpenAI resource and deployment names.
+- `azure-foundry`: uses the global/region Foundry inference endpoint and model IDs (e.g., `grok-2`).
+
+3) Set models (provider-agnostic):
+- For `azure-openai`, set `AZURE_PRIMARY_DEPLOYMENT` and `AZURE_SECONDARY_DEPLOYMENT` to your deployment names.
+- For `azure-foundry`, set `PRIMARY_MODEL`/`SECONDARY_MODEL` to model IDs; to use Grok, set `PRIMARY_MODEL=grok-2` or set `GROK_MODEL` and use it.
+
+Environment keys expected:
+- Azure OpenAI: `AZURE_OPENAI_ENDPOINT`, `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_API_VERSION` (optional default provided).
+- Azure AI Foundry: `AZURE_INFERENCE_ENDPOINT` (defaults to `https://models.inference.ai.azure.com`), `AZURE_INFERENCE_API_KEY`.
+
+No code changes are needed to switch providers—`ai_analyzer.py` uses a provider factory (`ai_providers.get_provider_from_env`) to route requests.
+
+Notes:
+- The Foundry path uses an OpenAI-compatible REST API under `/v1/chat/completions` and supports `response_format={"type":"json_object"}`.
+- Backward compatibility: existing `PRO_MODEL`/`FLASH_MODEL` and `AZURE_PRO_DEPLOYMENT`/`AZURE_FLASH_DEPLOYMENT` env vars are still honored if the new primary/secondary names aren’t set.
+- You can mix providers if needed: e.g., keep Azure OpenAI for the secondary model and point the primary model to Grok on Foundry.
+
+---
+
 ## 🏁 Getting Started
 
 ### **Prerequisites**

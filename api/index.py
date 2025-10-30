@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 import pandas as pd
 import yfinance as yf
 import os
+import time
 import database_manager
 import data_retriever
 import config
@@ -90,15 +91,27 @@ frontend_urls = [
 CORS(app, resources={r"/api/*": {"origins": list(set(frontend_urls))}})
 log.info(f"CORS configured for origins: {list(set(frontend_urls))}")
 
+# Allow default API limits to be configured via env (comma-separated)
+_default_limits_env = os.getenv("API_RATE_LIMITS_DEFAULT", "").strip()
+if _default_limits_env:
+    _default_limits = [s.strip() for s in _default_limits_env.split(",") if s.strip()]
+else:
+    _default_limits = ["200 per day", "50 per hour"]
+
 limiter = Limiter(
     get_remote_address,
     app=app,
-    default_limits=["200 per day", "50 per hour"]
+    default_limits=_default_limits
 )
 
-# Change "config" to "cache_config"
+# Per-endpoint limit env overrides
+LIMIT_ANALYZE_ONE = os.getenv("API_LIMIT_ANALYZE_ONE", "10 per day")
+LIMIT_VOTE = os.getenv("API_LIMIT_VOTE", "50 per day")
+LIMIT_FEEDBACK = os.getenv("API_LIMIT_FEEDBACK", "10 per hour")
+LIMIT_FAQ = os.getenv("API_LIMIT_FAQ", "5 per hour")
+
+# Cache configuration
 cache_config = {
-    "DEBUG": True,          # some Flask specific configs
     "CACHE_TYPE": "SimpleCache",  # use SimpleCache for development
     "CACHE_DEFAULT_TIMEOUT": 300 # default timeout in seconds
 }
@@ -107,14 +120,10 @@ cache = Cache(app)
 
 # Initialize the AI Analyzer once on startup for efficiency
 try:
-    # Use the first key from the pool to initialize the AI Analyzer for the API
-    if config.GEMINI_API_KEY_POOL:
-        ai_analyzer_instance = AIAnalyzer(config.GEMINI_API_KEY_POOL[0])
-    else:
-        # Handle the case where no keys are configured
-        log.error("CRITICAL: No Gemini API keys found in the configuration. AI features will fail.")
-        ai_analyzer_instance = None 
-except ValueError as e:
+    # The AIAnalyzer now uses the provider factory pattern and reads credentials from config
+    ai_analyzer_instance = AIAnalyzer()
+    log.info("AI Analyzer initialized successfully with dynamic provider selection.")
+except Exception as e:
     log.fatal(f"Could not initialize AI Analyzer: {e}")
     ai_analyzer_instance = None
 
@@ -123,11 +132,100 @@ database_manager.init_db(purpose='analysis')
 
 @app.route('/', methods=['GET'])
 def health_check():
-    return jsonify({"status": "healthy", "message": "Scrybe AI Backend is running."}), 200
+    """Deep health check with DB ping, AI readiness (shallow by default), and cache test.
+
+    Query params:
+      - deep=true to perform an actual tiny AI call (may take longer and consume tokens)
+    """
+    checks = {}
+    overall_ok = True
+
+    # 1) DB ping
+    t0 = time.perf_counter()
+    try:
+        if database_manager.client is None:
+            # Attempt to initialize if not done
+            database_manager.init_db(purpose='analysis')
+        database_manager.client.admin.command('ping')
+        checks['db'] = {"ok": True, "latency_ms": round((time.perf_counter() - t0) * 1000, 1)}
+    except Exception as e:
+        overall_ok = False
+        checks['db'] = {"ok": False, "error": str(e)}
+
+    # 2) Cache test (SimpleCache)
+    try:
+        cache.set("__health_probe__", "1", timeout=5)
+        checks['cache'] = {"ok": cache.get("__health_probe__") == "1"}
+        if not checks['cache']['ok']:
+            overall_ok = False
+    except Exception as e:
+        overall_ok = False
+        checks['cache'] = {"ok": False, "error": str(e)}
+
+    # 3) AI provider readiness (shallow by default)
+    deep = request.args.get('deep', 'false').lower() in ('1', 'true', 'yes') or os.getenv('AI_HEALTHCHECK_DEEP', 'false').lower() in ('1', 'true', 'yes')
+    try:
+        if ai_analyzer_instance is None:
+            raise RuntimeError("AI Analyzer not initialized")
+        # Shallow: verify model names present
+        ai_ok = bool(ai_analyzer_instance.primary_model and ai_analyzer_instance.secondary_model)
+        ai_detail = {"ok": ai_ok, "deep": False}
+        if deep and ai_ok:
+            # Perform a minimal completion request
+            messages = [
+                {"role": "system", "content": "You are a health-check probe."},
+                {"role": "user", "content": "Reply with the single word: ok"}
+            ]
+            try:
+                txt = ai_analyzer_instance.provider.chat_completions(
+                    messages=messages,
+                    model=ai_analyzer_instance.secondary_model,
+                    temperature=0,
+                    timeout=15,
+                    max_tokens=4,
+                )
+                ai_detail = {"ok": isinstance(txt, str) and ("ok" in txt.lower()), "deep": True}
+            except Exception as aie:
+                ai_detail = {"ok": False, "deep": True, "error": str(aie)}
+        checks['ai_provider'] = ai_detail
+        if not ai_detail.get('ok', False):
+            overall_ok = False
+    except Exception as e:
+        overall_ok = False
+        checks['ai_provider'] = {"ok": False, "error": str(e)}
+
+    status = "ok" if overall_ok else "degraded"
+    return jsonify({
+        "status": status,
+        "checks": checks,
+        "timestamp": datetime.now().isoformat()
+    }), 200 if overall_ok else 503
+
+@app.route('/ready', methods=['GET'])
+def readiness_probe():
+    """Shallow readiness probe suitable for load balancers.
+    Checks that DB and AI analyzer are initialized and config is present.
+    """
+    ok = True
+    details = {}
+
+    if database_manager.db is None:
+        ok = False
+        details['db'] = False
+    else:
+        details['db'] = True
+
+    if ai_analyzer_instance is None or not (config.PRIMARY_MODEL and config.SECONDARY_MODEL):
+        ok = False
+        details['ai'] = False
+    else:
+        details['ai'] = True
+
+    return jsonify({"ready": ok, **details}), 200 if ok else 503
 
 @app.route('/api/news/analyze-one', methods=['POST'])
 @token_required
-@limiter.limit("10 per day") # Apply the specific rate limit for this endpoint
+@limiter.limit(LIMIT_ANALYZE_ONE) # Apply the specific rate limit for this endpoint
 def analyze_single_news_article(current_user):
     log.info("API call received for /api/news/analyze-one")
     
@@ -229,9 +327,55 @@ def get_index_analysis_data(index_ticker):
 
     try:
         current_macro_context = config.LIVE_MACRO_CONTEXT
-        
-        analysis_data = ai_analyzer_instance.get_index_analysis(index_name, index_ticker, current_macro_context)
-        
+
+        # Build latest technicals for the index (price vs MAs, RSI)
+        latest_technicals = None
+        try:
+            hist = yf.Ticker(index_ticker).history(period="200d", interval="1d")
+            if not hist.empty:
+                df = hist.copy()
+                df['MA_20'] = df['Close'].rolling(window=20).mean()
+                df['MA_50'] = df['Close'].rolling(window=50).mean()
+                df['MA_200'] = df['Close'].rolling(window=200).mean()
+                # Simple RSI implementation
+                delta = df['Close'].diff()
+                gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+                loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+                rs = gain / (loss.replace(0, 1e-9))
+                df['RSI_14'] = 100 - (100 / (1 + rs))
+                last = df.iloc[-1]
+                latest_technicals = {
+                    "lastClose": float(last['Close']),
+                    "MA_20": float(last['MA_20']) if pd.notna(last['MA_20']) else None,
+                    "MA_50": float(last['MA_50']) if pd.notna(last['MA_50']) else None,
+                    "MA_200": float(last['MA_200']) if pd.notna(last['MA_200']) else None,
+                    "RSI_14": float(last['RSI_14']) if pd.notna(last['RSI_14']) else None,
+                    "above_50dma": bool(last['Close'] > last['MA_50']) if pd.notna(last['MA_50']) else None,
+                    "above_200dma": bool(last['Close'] > last['MA_200']) if pd.notna(last['MA_200']) else None,
+                }
+        except Exception as te:
+            log.warning(f"Failed to compute latest technicals for {index_ticker}: {te}")
+
+        # Get latest VIX value (India VIX)
+        vix_value = None
+        try:
+            vix_hist = yf.Ticker("^INDIAVIX").history(period="5d", interval="1d")
+            if not vix_hist.empty:
+                vix_value = str(float(vix_hist['Close'].iloc[-1]))
+        except Exception as ve:
+            log.warning(f"Failed to fetch India VIX: {ve}")
+
+        # Options chain data for the index (primary via Angel One with yfinance fallback)
+        options_data = data_retriever.get_index_option_data(index_ticker)
+
+        analysis_data = ai_analyzer_instance.get_index_analysis(
+            index_name=index_name,
+            macro_context=current_macro_context,
+            latest_technicals=latest_technicals,
+            vix_value=vix_value,
+            options_data=options_data
+        )
+
         if analysis_data is None or "error" in analysis_data:
             return jsonify({"error": analysis_data.get("error", "Failed to generate index analysis.")}), 500
 
@@ -343,7 +487,7 @@ def log_user_trade(current_user): # Add the decorator and current_user
 
 @app.route('/api/vote', methods=['POST'])
 @token_required
-@limiter.limit("50 per day")
+@limiter.limit(LIMIT_VOTE)
 def record_analysis_vote(current_user):
     log.info("API call received for /api/analysis/vote")
     
@@ -392,7 +536,7 @@ def get_analysis_votes(analysis_id):
     
 @app.route('/api/feedback/submit', methods=['POST'])
 @token_required
-@limiter.limit("10 per hour") # Prevent spam
+@limiter.limit(LIMIT_FEEDBACK) # Prevent spam
 def submit_feedback(current_user):
     log.info(f"API call received for /api/feedback/submit from user {current_user['uid']}")
     
@@ -421,7 +565,7 @@ def submit_feedback(current_user):
     
 @app.route('/api/faq/submit', methods=['POST'])
 @token_required
-@limiter.limit("5 per hour") # Prevent spam
+@limiter.limit(LIMIT_FAQ) # Prevent spam
 def submit_faq_question(current_user):
     log.info(f"API call received for /api/faq/submit from user {current_user['uid']}")
     
@@ -472,5 +616,13 @@ def get_my_trades_endpoint(current_user):
 if __name__ == '__main__':
     log.info("Initializing default database connection...")
     database_manager.init_db(purpose='analysis')
-    log.info("Starting Flask server on http://localhost:5001")
-    app.run(host='0.0.0.0', port=5001, debug=True)
+    
+    # Determine if we're in development or production
+    is_development = os.getenv('FLASK_ENV') == 'development'
+    
+    if is_development:
+        log.warning("⚠️  RUNNING IN DEVELOPMENT MODE - Debug is enabled")
+        app.run(host='0.0.0.0', port=5001, debug=True)
+    else:
+        log.info("Starting Flask server in PRODUCTION mode on http://localhost:5001")
+        app.run(host='0.0.0.0', port=5001, debug=False)

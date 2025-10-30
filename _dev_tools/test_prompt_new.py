@@ -12,9 +12,9 @@ def run_single_prompt_test():
     log.info("--- Starting Single Prompt Generation Test ---")
 
     try:
-        # 1. Initialize the AI Analyzer with your primary API key
+        # 1. Initialize the AI Analyzer with dynamic provider selection
         # Make sure your .env file is configured correctly
-        analyzer = AIAnalyzer(api_key=config.GEMINI_API_KEY)
+        analyzer = AIAnalyzer()
 
         # 2. Define the exact data that caused the block for CIPLA.NS
         ticker_to_test = "CIPLA.NS"
