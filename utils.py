@@ -1,4 +1,18 @@
-# utils.py
+"""
+utils.py
+
+Purpose
+- Small, shared helpers used across modules. Currently provides a context
+    sanitizer that normalizes null-like values to a consistent placeholder for UI/AI.
+
+How it fits
+- Used before serializing or feeding objects into AI prompts to avoid noisy
+    "None/N/A/unavailable" variants and improve readability.
+
+Main role
+- Keep incidental utilities centralized and lightweight; expand cautiously to
+    avoid turning into a catch-all dependency.
+"""
 import config
 from logger_config import log
 

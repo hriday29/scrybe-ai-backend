@@ -1,4 +1,18 @@
-# run_daily_jobs.py
+"""
+run_daily_jobs.py
+
+Purpose
+- Entry point for the live daily analysis job. Fetches the current Nifty 50 universe,
+    preloads required market/benchmark data, runs the AnalysisPipeline in live mode, and
+    ensures resources are closed.
+
+How it fits
+- Scheduled by cron/CI to produce daily analysis and predictions persisted via database_manager.
+
+Main role
+- Minimal orchestration shell that prepares inputs for the pipeline and guards runtime with
+    logging and safe shutdown.
+"""
 
 import pandas as pd
 from logger_config import log

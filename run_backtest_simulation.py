@@ -2,14 +2,20 @@
 run_backtest_simulation.py
 
 Purpose
-- Add a modular, risk-based backtest simulator that does NOT modify existing backtester logic.
-- Position sizing is based on risk % of current equity (capital compounds over time).
-- Calculates number of shares from risk-based sizing and tracks absolute net_pnl and net_return_pct.
-- Writes closed trades to the existing 'performance' collection with backward-compatible fields.
+- Modular, risk-based backtest simulator that sizes positions by risk % of current equity (compounding),
+    computes absolute and percentage P&L, and writes Closed trades to the `performance` collection.
+
+How it fits
+- Phase 2 of the backtest flow: after Phase 1 writes predictions for a `batch_id`, this simulator
+    replays entries/exits per trade plan (SL/target/time) and persists results used by reporting.
+
+Main role
+- Convert signal documents into portfolio outcomes with realistic costs and position sizing; update
+    prediction statuses and prepare data for `analyze_backtest_db` and the final report.
 
 Notes
-- This module is additive and does not change or remove existing logic.
-- It relies on predictions saved for a given batch_id and simulates entries/exits based on the trade plan.
+- Additive module that leaves earlier backtesting logic intact.
+- Relies on saved predictions for the given `batch_id` and historical price data in cache/backends.
 """
 
 from __future__ import annotations

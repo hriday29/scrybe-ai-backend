@@ -1,4 +1,27 @@
-#ai_analyzer.py
+"""
+AI Analyzer
+-----------
+Provider-agnostic AI orchestration used by the analysis pipeline to obtain expert verdicts and a final
+APEX synthesis for each candidate.
+
+Role in the system:
+- Wraps calls to Azure OpenAI or Azure AI Foundry via ai_providers, enforcing structured JSON outputs.
+- Exposes specialist endpoints: technical verdict, fundamental verdict, and volatility/futures verdict.
+- Produces the final APEX synthesis (signal, scrybeScore, thesis, risks/observations) that the strategy overlay filters.
+
+Key behaviors:
+- Strict JSON schemas and robust error handling; returns HOLD on failures to keep the pipeline resilient.
+- Uses a faster secondary model for focused sub-analyses and a primary model for the final synthesis.
+- Includes optional utilities such as index analysis, DVM scoring, intraday short checklist, news impact,
+  conversational Q&A, and a deterministic volatility qualifier.
+
+Inputs/Outputs:
+- Inputs: context dicts (technicals, fundamentals, volatility/futures, market_state) and a ticker symbol.
+- Outputs: structured dicts matching predefined schemas; for APEX, includes signal and scrybeScore.
+
+Dependencies:
+- ai_providers.get_provider_from_env for provider selection; config for model names; logger_config for logging.
+"""
 import time
 import os
 import config

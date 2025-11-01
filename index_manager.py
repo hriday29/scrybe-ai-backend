@@ -1,4 +1,25 @@
-# index_manager.py
+"""
+Index Manager
+-------------
+Reliable universe and index constituent retrieval with live-first, fallback-safe logic.
+
+Role in the system:
+- Provides current Nifty 50 constituents (live NSE CSV with fallback to config),
+    point-in-time Nifty 50 lists from a local historical CSV, full NSE active tickers,
+    and Nifty Smallcap 250 constituents (live CSV).
+
+Key behaviors:
+- Uses robust HTTP headers/timeouts, CSV parsing with defensive validation, and
+    sensible fallbacks when live sources fail or return incomplete data.
+- Formats tickers for yfinance compatibility by appending the .NS suffix.
+
+Inputs/Outputs:
+- Inputs: None (functions perform network/file I/O); optional date for point-in-time.
+- Outputs: Python lists of tickers (strings) ready for use by data retrieval and pipeline modules.
+
+Dependencies:
+- requests/pandas for fetching and parsing; config for fallback lists; logger_config for observability.
+"""
 import pandas as pd
 import requests
 from io import StringIO

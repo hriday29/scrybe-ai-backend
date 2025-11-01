@@ -1,7 +1,28 @@
-# data_retriever.py 
-# This file serves as the single, stable data gateway for the entire application.
-# It uses a control switch in config.py to decide whether to fetch data from
-# the new, high-fidelity Angel One API or fall back to the yfinance API.
+"""
+Data Retriever
+--------------
+Unified data gateway for the application. Centralizes all market data access with a switchable
+primary source (Angel One) and robust fallback to yfinance. Also manages lightweight file caching
+to reduce latency and API load.
+
+Role in the system:
+- Historical OHLCV for stocks and indices with cache-first reads (Feather files per ticker/date/source).
+- Live financials (hybrid: Angel One LTP + yfinance fundamentals), intraday 15m bars, options chain and greeks
+    for stocks, index options metrics (PCR, max OI strikes), market depth with OBI, Nifty50 performance,
+    curated upcoming events, benchmark closes, news fetch with relevance filtering, and stock-sector map caching.
+
+Key behaviors:
+- Initializes Angel One session at import if configured; uses AO→YF fallback for resilient data retrieval.
+- Ensures point-in-time fundamentals from Mongo via database_manager when requested.
+- Provides conservative error handling and detailed logging for observability.
+
+Inputs/Outputs:
+- Inputs: tickers, dates/periods, and configuration via config.DATA_SOURCE and API keys.
+- Outputs: pandas DataFrames or structured dicts; writes/reads local caches under cache/ and data_cache/.
+
+Dependencies:
+- angelone_retriever, yfinance, index_manager, database_manager, requests; config for source selection and keys.
+"""
 
 import yfinance as yf
 import pandas as pd

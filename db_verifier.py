@@ -1,4 +1,17 @@
-# db_verifier.py
+"""
+db_verifier.py
+
+Purpose
+- Ad-hoc utility script to inspect prediction documents for a batch, summarize signal distribution,
+    and verify whether tradeable signals exist using the same filter used by the backtester.
+
+How it fits
+- Helps diagnose pipeline-to-database issues during development by confirming that the orchestrator
+    saved BUY/SELL signals or identifying when only HOLDs were persisted.
+
+Main role
+- Quick CLI for developers to connect to MongoDB and print human-readable diagnostics for a batch.
+"""
 import os
 import argparse
 import pandas as pd

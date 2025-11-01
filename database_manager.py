@@ -1,3 +1,21 @@
+"""
+database_manager.py
+
+Purpose
+- Centralizes MongoDB connectivity and collections for two contexts:
+    • scheduler/backtester (predictions, performance)
+    • live analysis/API (analysis_results, backtest_reports, live_* and user data)
+
+How it fits
+- Acts as the persistence boundary for the analysis pipeline, backtest simulator, and Flask API.
+- Provides init/close helpers, bulk upserts for predictions, performance/report writers, and
+    read helpers for UI endpoints (e.g., open trades, track record, precomputed analysis).
+
+Main role
+- Single source of truth for DB handles and CRUD utilities, avoiding scattered client creation.
+- Ensures safe reconnection on stale clients and adds light business logic when building response
+    objects for the app (e.g., enriched open-trades view, voting/feedback submissions).
+"""
 #database_manager.py
 import pymongo
 from pymongo import ReplaceOne

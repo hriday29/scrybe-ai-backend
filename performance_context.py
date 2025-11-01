@@ -1,4 +1,19 @@
 # performance_context.py
+"""
+performance_context.py
+
+Purpose
+- Provides lightweight context snippets for reports and UIs, such as a 30-day
+    strategy summary and the last few closed trades for a ticker within a batch.
+
+How it fits
+- Consumed by the analysis pipeline or API layer to add recent-history blurbs to
+    AI prompts or human-readable summaries during reporting.
+
+Main role
+- Query performance data and render compact, human-friendly strings to embed in
+    downstream outputs without heavy post-processing.
+"""
 from logger_config import log
 import database_manager
 import pandas as pd

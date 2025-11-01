@@ -1,4 +1,22 @@
-# quantitative_screener.py
+"""
+Quantitative Screener
+---------------------
+Point-in-time candidate generator that scans the universe for significant daily candlestick patterns
+using TA-Lib and forwards all matches to the AI committee without ranking.
+
+Role in the system:
+- Acts as a master dispatcher for candidate selection; the strategy/AI layers decide conviction.
+- Keeps logic simple and bias-free by focusing only on patterns at the decision date.
+
+Inputs/Outputs:
+- Inputs: market_state (currently unused but reserved), full_data_cache dict of OHLCV DataFrames,
+  point_in_time for slicing.
+- Output: list of (ticker, reason) tuples like ("RELIANCE.NS", "Bullish Pattern: Hammer").
+
+Notes:
+- Requires at least ~20 bars per ticker and standard OHLC column names.
+- Handles TA-Lib errors defensively and de-duplicates results.
+"""
 import pandas as pd
 from logger_config import log
 import pandas_ta as ta # Keep pandas_ta if needed for other potential future indicators

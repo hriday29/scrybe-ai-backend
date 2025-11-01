@@ -1,20 +1,28 @@
 """
 ai_providers.py
 
-Provider abstraction to support both Azure OpenAI and Azure AI Foundry (Models as a Service),
-including third-party models like Grok, Mistral, Llama, etc.
+Purpose
+- Unified provider abstraction for Azure OpenAI and Azure AI Foundry (Models as a Service),
+    supporting OpenAI-compatible chat.completions across first- and third-party models (e.g., Grok,
+    Mistral, Llama, GPT families).
 
-Usage:
-- Select provider via config.AI_PROVIDER ("azure-openai" or "azure-foundry").
-- Pass OpenAI-compatible messages and optional parameters.
+How it fits
+- Consumed by `AIAnalyzer` and the Flask API to issue model-agnostic chat completions. Environment
+    variables determine which backend to use and how to authenticate.
 
-This module intentionally uses the OpenAI-style chat.completions schema for both providers:
-[
-    {"role": "system", "content": "..."},
-    {"role": "user", "content": "..."}
-]
+Main role
+- Provide a single `BaseAIProvider` interface with concrete `AzureOpenAIProvider` and
+    `AzureFoundryProvider` implementations. Normalize parameters (temperature, max tokens, response
+    format) and return message content strings.
 
-For Foundry, requests are sent to the global inference endpoint using an OpenAI-compatible API.
+Notes
+- Uses the OpenAI-style messages schema for both backends:
+    [
+        {"role": "system", "content": "..."},
+        {"role": "user", "content": "..."}
+    ]
+- Foundry requests go to an OpenAI-compatible endpoint (global or regional) with `api-key` auth.
+- Factory `get_provider_from_env()` selects the provider based on env vars.
 """
 from __future__ import annotations
 

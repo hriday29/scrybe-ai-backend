@@ -1,4 +1,19 @@
 # index.py
+"""
+api/index.py
+
+Purpose
+- Flask API for Scrybe AI: exposes health probes, cached analysis retrieval, index analysis,
+    market pulse, track record, news, conversational Q&A, voting/feedback/FAQ, and user trade logs.
+
+How it fits
+- Serves the frontend via CORS with rate limiting and caching, reads from analysis and live
+    collections, and delegates AI tasks to AIAnalyzer configured with provider abstraction.
+
+Main role
+- Public HTTP layer that validates/authenticates requests (Firebase), orchestrates DB reads/writes,
+    and shapes JSON responses for the UI and integrations.
+"""
 from flask import Flask, jsonify, Response, request
 from flask_cors import CORS
 import json

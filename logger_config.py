@@ -1,4 +1,16 @@
-# logger_config.py
+"""
+logger_config.py
+
+Purpose
+- Provide a single, standardized application logger configured for console output.
+
+How it fits
+- Imported by all modules to ensure consistent formatting and to avoid duplicate handler setup.
+
+Main role
+- Create and export `log`, an INFO-level logger with timestamped messages suitable for both
+    local runs and container logs.
+"""
 import logging
 import sys
 

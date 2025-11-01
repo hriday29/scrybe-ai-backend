@@ -1,4 +1,19 @@
 # check_market_open.py
+"""
+check_market_open.py
+
+Purpose
+- CI/cron guard that checks whether the last relevant NSE trading day was open; exits with
+    code 1 to skip downstream jobs on holidays/weekends, or 0 to proceed.
+
+How it fits
+- Used in automated workflows before running the daily analysis pipeline to avoid wasting
+    compute on non-trading days.
+
+Main role
+- Compute the appropriate prior market day (handles Monday -> Friday) in IST and probe the
+    NSE calendar via pandas_market_calendars.
+"""
 import pandas_market_calendars as mcal
 from datetime import datetime, timedelta
 import pytz

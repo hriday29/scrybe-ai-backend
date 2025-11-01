@@ -1,4 +1,35 @@
-# main_orchestrator.py
+"""
+Main Orchestrator
+-----------------
+Three-phase backtest runner that coordinates the entire system over a historical window.
+
+Role in the system:
+- Phase 1 (Analysis generation): For each business day, prepares point-in-time data caches, runs the
+    AnalysisPipeline to generate and persist predictions/signals to the DB.
+- Phase 2 (Simulation): Invokes the risk-based backtest simulator to size positions and evaluate outcomes.
+- Phase 3 (Reporting): Triggers the performance analyzer to compile a final backtest report for the batch.
+
+What it does:
+- Builds the universe (Nifty Smallcap 250), optionally slices it into batches, and iterates day-by-day.
+- Downloads index data separately from stocks with retry and pacing, avoiding rate limits.
+- Ensures Angel One session health daily (if configured) and constructs two caches:
+    - Analysis cache: up to 5 years, sliced to decision_date for point-in-time correctness.
+    - Simulation cache: recent months up to simulation_date for the simulator.
+- Calls AnalysisPipeline.run with is_backtest=True to persist predictions for each decision_date.
+- After the loop, runs run_backtest_simulation(batch_id) and generate_backtest_report(batch_id).
+
+Inputs/Outputs:
+- CLI args: batch_id, start_date, end_date, fresh_run, optional tickers; plus batch slicing controls.
+- Output: Data is persisted to MongoDB by downstream modules; final report stored via performance analyzer.
+
+Key dependencies:
+- analysis_pipeline.AnalysisPipeline, index_manager, sector_analyzer, yfinance
+- database_manager for pre-clean (fresh runs), run_backtest_simulation, performance_analyzer
+
+Notes:
+- Uses business-day calendars, robust retry logic for yfinance, and careful point-in-time slicing
+    to avoid lookahead during analysis generation.
+"""
 import pandas as pd
 import time
 import config

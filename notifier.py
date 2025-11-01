@@ -1,3 +1,17 @@
+"""
+notifier.py
+
+Purpose
+- Builds and sends a styled HTML daily email summarizing new signals and closed trades.
+
+How it fits
+- Called by scheduled jobs after the pipeline run to communicate key actions to users.
+  Pulls sender/recipients and SMTP details from config.
+
+Main role
+- Transform lists of signals/trades into a clean, branded digest and deliver via Gmail SMTP
+  using app passwords.
+"""
 import smtplib
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart

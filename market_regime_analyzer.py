@@ -1,4 +1,20 @@
-# market_regime_analyzer.py
+"""
+Market Regime Analyzer
+----------------------
+Determines market and volatility regimes from point-in-time data to drive top-of-funnel decisioning.
+
+Role in the system:
+- Classifies market regime (Uptrend, Downtrend, Bullish Pullback, Bearish Rally, Sideways) using EMA
+    crossovers on NIFTY data, and volatility regime (High-Risk, Low, Normal) from India VIX levels.
+- Consumed by AnalysisPipeline to guide sector selection and downstream AI analysis context.
+
+Inputs/Outputs:
+- Inputs: pre-sliced historical DataFrames for NIFTY and India VIX to avoid lookahead.
+- Output: a dict with market_regime and volatility_regime sections including source metadata.
+
+Notes:
+- Conservative defaults on insufficient data and robust error handling: returns safe neutral states on error.
+"""
 
 import data_retriever
 from logger_config import log

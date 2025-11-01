@@ -1,4 +1,20 @@
-# sector_analyzer.py
+"""
+Sector Analyzer
+---------------
+Measures relative sector strength and weakness versus the NIFTY 50 over a short lookback window,
+returning top outperformers and bottom underperformers using point-in-time slices.
+
+Role in the system:
+- Helps the pipeline create a balanced “actionable sectors” list (strong + weak) to find both long and
+    short candidates aligned with the current market regime.
+
+Inputs/Outputs:
+- Inputs: full_data_cache dict[ticker->DataFrame] and a point_in_time timestamp used to slice all series.
+- Outputs: ordered lists of sector names for strongest and weakest relative performance.
+
+Notes:
+- Defensive handling for missing/short data; logs decisions and thresholds; maps tickers back to friendly names.
+"""
 import pandas as pd
 from logger_config import log
 

@@ -1,4 +1,19 @@
-# performance_analyzer.py
+"""
+performance_analyzer.py
+
+Purpose
+- Generates a comprehensive backtest performance report by delegating core
+    computations to analyze_backtest_from_db, and persists the final report document
+    to the analysis database for the UI.
+
+How it fits
+- Called after the risk-based backtest simulator writes closed trades. Wraps the
+    analyzer output with batch metadata and saves to the reports collection.
+
+Main role
+- Orchestrate analysis/report saving and provide small helpers like historical
+    performance snapshots and market correlations to enrich views when needed.
+"""
 
 import pandas as pd
 import numpy as np

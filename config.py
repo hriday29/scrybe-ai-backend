@@ -1,4 +1,18 @@
-#config.py
+"""
+config.py
+
+Purpose
+- Central configuration and environment variable resolution for AI providers, data sources,
+    database URIs, email, directories, strategy/portfolio parameters, and static lists.
+
+How it fits
+- Consumed across the pipeline, API, and simulators to keep settings in one place with sensible
+    defaults and directory bootstrapping.
+
+Main role
+- Normalize env var naming across Azure OpenAI and Azure AI Foundry, expose model selections,
+    and provide constants used by analyzers, retrievers, and reporting modules.
+"""
 import os
 from dotenv import load_dotenv
 

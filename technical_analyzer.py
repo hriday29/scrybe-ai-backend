@@ -1,4 +1,24 @@
-# technical_analyzer.py
+"""
+Technical Analyzer
+------------------
+Computes robust technical indicators, relative strength versus NIFTY, and focused charts across
+multiple timeframes, then assembles a clean, NaN-safe analysis context for AI consumers.
+
+Role in the system:
+- Generates comprehensive technical features (MACD, BBands, RSI, ADX, ATR, volume stats) and interprets
+    them into human-readable summaries.
+- Computes 5-day relative strength vs NIFTY using point-in-time alignment to avoid lookahead.
+- Produces 3M/1M/1W daily charts and a 1D intraday price+VWAP visualization as base64 images.
+- Builds the final analysis context including technicals, point-in-time fundamentals, and volatility/futures
+    proxies (ATR%, BBW%, Futures-Spot Basis) for downstream AI analysis.
+
+Inputs/Outputs:
+- Inputs: OHLCV historical_data for the stock, market_state, optional full_nifty_data and full_data_cache.
+- Outputs: dict context with technical_indicators, fundamental_data, volatility_futures_data.
+
+Notes:
+- Defensive NaN handling with log-based diagnostics; avoids dropping rows to preserve latest values.
+"""
 import matplotlib
 matplotlib.use('Agg')
 import pandas as pd

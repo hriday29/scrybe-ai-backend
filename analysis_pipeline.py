@@ -1,4 +1,37 @@
-# analysis_pipeline.py
+"""
+Analysis Pipeline
+-----------------
+Central engine that runs the end-to-end daily/backtest analysis for equities and indices.
+
+Role in the system:
+- Orchestrates the full decision flow for a given day: diagnose market context, screen candidates,
+  convene the AI “committee of experts” per candidate, apply the strategy overlay, and persist results.
+- Used by both the live daily run and the backtest orchestrator.
+
+High-level steps:
+1) Market diagnosis: Classifies overall trend and volatility regimes using NIFTY and India VIX, adds
+    benchmark performance and breadth, and identifies both strongest and weakest sectors to consider.
+2) Candidate generation: Calls the quantitative screener to get regime-aligned tickers to analyze.
+3) AI analysis (concurrent): For each candidate, builds a point-in-time context (technicals, fundamentals,
+    volatility/futures) and obtains specialist verdicts, then synthesizes a final APEX decision.
+4) Strategy overlay: Applies portfolio-manager rules (conviction thresholds, regime alignment, shorts policy)
+    and, if actionable, creates a simple ATR-based trade plan (entry/target/stop).
+5) Persistence: Saves analyses and signals to MongoDB; uses bulk upserts during backtests.
+
+Inputs/Outputs:
+- Input: point_in_time (pd.Timestamp), full_data_cache: dict[ticker->OHLCV DataFrame] preloaded by caller,
+  flags for is_backtest and batch_id.
+- Output: Persists AI analyses and final signals to DB; returns nothing.
+
+Key dependencies:
+- market_regime_analyzer, sector_analyzer, quantitative_screener, technical_analyzer
+- AIAnalyzer (provider-agnostic LLM interface via ai_providers)
+- database_manager for saves; config for strategy and concurrency settings
+
+Error handling and concurrency:
+- Robust logging, per-candidate try/except, and concurrent.futures with max workers configurable via config.
+- Uses point-in-time slicing to avoid lookahead during backtests.
+"""
 from logger_config import log
 import config
 import database_manager

@@ -1,8 +1,30 @@
-# angelone_retriever.py
-# DESIGN PHILOSOPHY:
-# This module is the single, comprehensive gateway for all Angel One API data.
-# It prioritizes data richness and completeness over efficiency. The goal is to
-# extract every valuable piece of information available to power the Scrybe AI.
+"""
+Angel One Retriever
+-------------------
+Comprehensive gateway for all Angel One (SmartAPI) data: authentication, instrument caching,
+historical candles, quotes, option chains and Greeks, market depth (L2), and futures data.
+
+Role in the system:
+- Primary broker-source data provider when config.DATA_SOURCE == "angelone".
+- Initializes and maintains a session with TOTP-based login, caches instrument metadata on disk,
+    and builds fast in-memory maps for O(1) token and expiry lookups to accelerate downstream calls.
+- Supplies rich derivatives analytics (option chain, OI levels, vectorized Greeks, futures quotes)
+    used for volatility/futures context in AI analysis and index/stock-specific signals.
+
+Key behaviors:
+- Rate-limited API calls with retries and exponential backoff for resilience.
+- Instrument master file is downloaded and cached with TTL, then preprocessed into token/expiry maps
+    for stocks and indices (options and futures).
+- Provides robust symbol resolution including yfinance→Angel One mappings for common indices.
+
+Inputs/Outputs:
+- Inputs: symbols (stock or index names), date ranges, and intervals; environment-backed credentials.
+- Outputs: pandas DataFrames for historical candles; structured dicts for quotes, chains, Greeks,
+    futures, and market depth; writes/reads instrument cache under config.CACHE_DIR.
+
+Dependencies:
+- smartapi_client (Angel One SDK), requests, pyotp, py_vollib_vectorized for Greeks; config for creds.
+"""
 
 import pandas as pd
 from logger_config import log

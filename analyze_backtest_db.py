@@ -1,4 +1,19 @@
-#analyze_backtest_db.py
+"""
+analyze_backtest_db.py
+
+Purpose
+- Reads closed trades for a given batch from MongoDB and computes portfolio-level
+    metrics (equity curve, total P&L/return, drawdown, Sharpe, profit factor) and
+    trade statistics, writing a human-readable summary file and returning key metrics.
+
+How it fits
+- Invoked by performance_analyzer.generate_backtest_report to centralize all
+    calculations; complements the simulator that persists trades.
+
+Main role
+- Source of truth for post-simulation analytics, including generating an optional
+    QuantStats HTML report for deeper inspection.
+"""
 import os
 import pandas as pd
 import numpy as np

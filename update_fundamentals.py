@@ -1,4 +1,18 @@
-# update_fundamentals.py (Final UTC-Aware Version)
+"""
+update_fundamentals.py
+
+Purpose
+- Populate and refresh fundamentals for the live analysis database using yfinance,
+    saving a current snapshot and point-in-time quarterly history for the Smallcap 250 universe.
+
+How it fits
+- Supports the AI and UI with richer fundamentals beyond price/technicals, stored under
+    the analysis DB for consumption during inference and display.
+
+Main role
+- Batch job that iterates the target universe, curates fields, and upserts documents with
+    UTC-aware timestamps, handling rate limits and partial data gracefully.
+"""
 import yfinance as yf
 from logger_config import log
 import database_manager
